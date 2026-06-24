@@ -1,0 +1,68 @@
+---
+title: Roadmap
+description: What @adonis-agora/media intentionally defers in 0.1.0 — resumable/tus uploads, direct S3 presign, a browser/React client, more stores, and richer conversions. The seams exist; the features are not built yet.
+icon: Map
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@adonis-agora/media` 0.1.0 ships a focused core: owner collections, column attachments, image conversions, a pluggable store and processor, and a testing kit — all over `@adonisjs/drive`. Several adjacent capabilities are intentionally **left out** of this release. The SPIs were designed with these in mind (the seams exist), but the features themselves are not built yet.
+
+<Callout type="info" title="Why call it out">
+  The point of this page is honesty about scope. If you're evaluating the library for a use case below, you'll know it isn't there in 0.1.0 — and roughly where it would slot in when it lands.
+</Callout>
+
+---
+
+## Deferred for 0.1.0
+
+### Resumable / tus uploads
+
+Large-file, resumable uploads (the [tus](https://tus.io) protocol) and chunked upload sessions are not implemented. Today an upload is a single `attach` / `createFromFile` call that buffers the contents and writes once. A resumable layer would sit in front of the library, assembling chunks before handing the completed file to `attach`.
+
+### Direct S3 multipart presign
+
+The library can produce **signed read** URLs (`signedUrl`) on presign-capable disks, but there's no **direct upload** path yet — i.e. presigning an S3 multipart upload so the browser uploads straight to the bucket (the "direct" mode), versus proxying bytes through your server (the "proxy" mode it does today). Both modes are anticipated; only proxy exists in 0.1.0.
+
+### A browser client + React package
+
+There is no companion browser/React package yet — no `useMediaUpload` hook or `MediaUploader` component. The current surface is server-side only; you wire your own front-end upload UI to a controller that calls the library. A first-party client (with progress, direct presign, and previews) is planned.
+
+### More `MediaStore` drivers
+
+0.1.0 ships the in-memory and Lucid stores. Additional drivers (e.g. a document/Redis store) aren't built — but the `MediaStore` interface is small and stable, so you can [write your own](/docs/media/stores-and-processors#writing-your-own-store) today.
+
+### Richer conversions
+
+The sharp processor covers resize / crop / format / quality for images. Not yet built:
+
+- **video and PDF thumbnails** (extracting a poster frame / first page),
+- **responsive `srcset`** generation across a set of widths,
+- an **antivirus / scanning hook** in the attach pipeline.
+
+The `ImageProcessor` interface is the seam for the first two; a scanning hook would slot into `attach` before the write.
+
+### Collection reordering
+
+Ordering is append-only in 0.1.0 — `attach` always takes the next `order` slot, and `list` returns by `order` ascending. There's no first-party reorder API yet; resequencing means updating the `order` field through your own store access.
+
+---
+
+## What is in 0.1.0
+
+For contrast, the current release does ship:
+
+- **Owner collections** — MIME whitelist, single-file replacement, ordering, per-collection disk. See [Collections & Conversions](/docs/media/collections-and-conversions).
+- **Column attachments** — the adonis-attachment style, with eager image variants. See [Attachments](/docs/media/attachments).
+- **Image conversions** — eager or lazy, cached on the record, via sharp. See [Collections & Conversions](/docs/media/collections-and-conversions#conversions).
+- **Pluggable persistence** — in-memory + Lucid stores with a published migration. See [Stores & Processors](/docs/media/stores-and-processors).
+- **Drive-backed storage** — reuse your `local` / `s3` / `gcs` disks; signed read URLs included.
+- **A testing kit** — in-memory doubles for every seam. See [Testing](/docs/media/testing).
+- **Structural diagnostics** — `agora:media:*` events, captured by [Telescope](/docs/telescope) when present.
+
+---
+
+## Next steps
+
+- [Getting Started](/docs/media/getting-started) — what you can build today
+- [Stores & Processors](/docs/media/stores-and-processors#writing-your-own-store) — extend the deferred seams yourself

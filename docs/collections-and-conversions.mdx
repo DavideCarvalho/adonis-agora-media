@@ -1,0 +1,225 @@
+---
+title: Collections & Conversions
+description: Collections are the policy layer — MIME whitelist, single-file replacement, ordering, and a per-collection disk. Conversions are the image pipeline — width/height/fit/format/quality, generated eagerly or lazily and cached.
+icon: Images
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **collection** is a named bucket you attach files to, with a policy attached: which MIME types are allowed, whether it holds one file or many, which disk it lives on, and which image conversions it offers. A **conversion** is a derived image (a thumbnail, an OG image, a WebP variant) produced from the original. This page covers both.
+
+---
+
+## Collections
+
+You declare collections in `config/media.ts`. The shape is `MediaCollectionConfig`:
+
+```ts
+interface MediaCollectionConfig {
+  name: string
+  single?: boolean          // attaching replaces any existing media in this collection
+  disk?: string             // target disk (defaults to the storage default disk)
+  acceptsMimeTypes?: string[] // allowed MIME types; others are rejected on attach
+  conversions?: ConversionPreset[] // image presets available for this collection
+}
+```
+
+```ts title="config/media.ts"
+defineConfig({
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+    { name: 'gallery', conversions: [{ name: 'thumb', width: 200, height: 200 }] },
+    { name: 'invoices', disk: 'private-s3', acceptsMimeTypes: ['application/pdf'] },
+  ],
+})
+```
+
+<Callout type="info" title="Collections are opt-in constraints">
+  Declaring a collection is how you *constrain* it. Attaching to a collection you never declared is allowed — it uses a permissive default (`{ name }`): no MIME whitelist, not single, no conversions, default disk. Declare a collection only when you want a whitelist, single-file behaviour, conversions, or a non-default disk.
+</Callout>
+
+### MIME whitelist
+
+When `acceptsMimeTypes` is set, `attach` checks the incoming `mimeType` against it **before writing anything**. A mismatch throws `MimeNotAllowedError` (code `E_MEDIA_MIME_NOT_ALLOWED`) — so no orphan file is ever written for a rejected upload.
+
+```ts
+// collection 'avatar' accepts only png/jpeg
+await media.library.attach({
+  ownerType: 'User', ownerId: '1', collection: 'avatar',
+  fileName: 'doc.pdf', mimeType: 'application/pdf', contents,
+})
+// → throws MimeNotAllowedError
+```
+
+The check is an exact string match against the `mimeType` you pass — there's no wildcard expansion, so list each type you accept (`'image/png'`, `'image/jpeg'`, `'image/webp'`, …).
+
+### Single-file collections
+
+A `single: true` collection holds exactly one file per owner. On `attach`, the library first lists the owner's existing media in that collection and **deletes** it (original + every conversion), then writes the new file. This is the natural shape for an avatar, a cover image, or a logo:
+
+```ts
+const avatar = await media.library.attach({
+  ownerType: 'User', ownerId: '1', collection: 'avatar',
+  fileName: 'me.png', mimeType: 'image/png', contents: v1,
+})
+
+const replaced = await media.library.attach({
+  ownerType: 'User', ownerId: '1', collection: 'avatar',
+  fileName: 'me2.png', mimeType: 'image/png', contents: v2,
+})
+// the first file (and its conversions) are gone; only `replaced` remains
+```
+
+### Ordering
+
+Every record carries an `order` (0-based). On `attach`, the library asks the store for the `nextOrder` in that owner+collection and assigns it, so files come back in attach order. `list()` returns records sorted by `order` ascending:
+
+```ts
+await media.library.list('Post', '1', 'gallery')
+// [{ order: 0, ... }, { order: 1, ... }, { order: 2, ... }]
+```
+
+<Callout type="info">
+  Ordering is append-only in 0.1.0 — `attach` always takes the next slot. There's no built-in reorder API yet; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
+</Callout>
+
+### Per-collection disk
+
+A collection can pin itself to a specific disk, overriding the top-level `disk`. A per-`attach` `disk` still wins over the collection's. Useful when, say, public images live on a CDN-backed disk and private documents live on a locked-down one:
+
+```ts
+defineConfig({
+  disk: 'public-s3',
+  collections: [
+    { name: 'documents', disk: 'private-s3', acceptsMimeTypes: ['application/pdf'] },
+  ],
+})
+```
+
+---
+
+## Conversions
+
+A conversion is a derived image generated from the original by the configured [image processor](/docs/media/stores-and-processors#the-sharp-processor). You declare presets per collection; each is a `ConversionPreset`:
+
+```ts
+interface ConversionPreset {
+  name: string
+  width?: number
+  height?: number
+  fit?: 'cover' | 'contain' | 'fill' | 'inside' | 'outside'
+  format?: 'jpeg' | 'png' | 'webp' | 'avif'
+  quality?: number
+  eager?: boolean // generate on attach instead of lazily on first access
+}
+```
+
+```ts title="config/media.ts"
+defineConfig({
+  imageProcessor: processors.sharp(),
+  collections: [
+    {
+      name: 'gallery',
+      conversions: [
+        { name: 'thumb', width: 200, height: 200, fit: 'cover' },
+        { name: 'card', width: 600, format: 'webp', quality: 80 },
+        { name: 'og', width: 1200, height: 630, eager: true },
+      ],
+    },
+  ],
+})
+```
+
+### What the fields do
+
+These map straight onto sharp:
+
+- **`width` / `height`** — target dimensions. With both set, the result is resized to fit `fit`. With one set, the other is derived to preserve aspect ratio (per sharp's resize rules). With neither, no resize happens — only a format/quality change.
+- **`fit`** — how the image fills the box: `cover` (default), `contain`, `fill`, `inside`, `outside`. Only applies when at least one dimension is set.
+- **`format`** — the output encoding: `jpeg`, `png`, `webp`, `avif`. **Defaults to `webp`** when omitted. The actual extension and content-type follow the chosen format.
+- **`quality`** — the encoder quality (passed to sharp's `toFormat`). Omit for sharp's default.
+- **`eager`** — see below.
+
+### Eager vs lazy
+
+This is the central conversion behaviour:
+
+- **Eager** (`eager: true`) presets are generated **synchronously on `attach`**. By the time `attach` resolves, the eager conversions already exist on disk and are recorded. Use eager for conversions you know you'll always need (an OG image, a primary thumbnail).
+- **Lazy** (the default) presets are generated **on the first `url(id, name)`** that asks for them, then **cached** on the record so every subsequent call is a pure lookup. Use lazy for the long tail of sizes you might not always render.
+
+```ts
+// 'og' is eager → already generated when this resolves
+const m = await media.library.attach({ ...input, collection: 'gallery' })
+
+await media.library.url(m.id, 'og')    // pure lookup — already on disk
+await media.library.url(m.id, 'thumb') // 'thumb' is lazy → generated NOW, then cached
+await media.library.url(m.id, 'thumb') // pure lookup the second time
+```
+
+Under the hood both paths go through `ensureConversion(id, name)`, which is also a public method you can call to force a lazy conversion to exist ahead of time:
+
+```ts
+await media.library.ensureConversion(m.id, 'thumb') // generate-if-absent, returns the updated record
+```
+
+`ensureConversion` is idempotent — if the conversion already exists it returns the record untouched without re-running sharp.
+
+### Where conversion files live
+
+A conversion is written next to its original, under a `conversions/` sub-directory, named by the preset and the output format:
+
+```
+Post/1/gallery/<media-id>/photo.jpg              ← original
+Post/1/gallery/<media-id>/conversions/thumb.webp ← the 'thumb' conversion
+Post/1/gallery/<media-id>/conversions/og.webp    ← the 'og' conversion
+```
+
+The conversion shares the original's disk, and its path is recorded on the `MediaRecord.conversions` map (keyed by preset name). Deleting the media removes every conversion file too.
+
+### Errors
+
+| Situation | Error | Code |
+|-----------|-------|------|
+| Asking for a conversion not declared on the collection | `ConversionNotDefinedError` | `E_MEDIA_CONVERSION_NOT_DEFINED` |
+| Asking for any conversion with no `imageProcessor` configured | `ImageProcessorMissingError` | `E_MEDIA_IMAGE_PROCESSOR_MISSING` |
+| Asking for a media id that doesn't exist | `MediaNotFoundError` | `E_MEDIA_RECORD_NOT_FOUND` |
+
+<Callout type="warn">
+  Conversions are image-only in 0.1.0 — the sharp processor decodes the original as an image. Attaching non-images to a collection is fine (with no conversions), but declaring conversions on a non-image collection and then requesting one will fail inside sharp. Video/PDF thumbnails and responsive `srcset` are on the [Roadmap](/docs/media/roadmap).
+</Callout>
+
+---
+
+## The `MediaRecord`
+
+Every attached file is a `MediaRecord`. It's what `attach`, `find`, and `list` return:
+
+```ts
+interface MediaRecord {
+  id: string
+  ownerType: string
+  ownerId: string
+  collection: string
+  name: string        // display name; defaults to the file name without extension
+  fileName: string
+  mimeType: string
+  size: number        // bytes
+  disk: string        // which disk it lives on
+  path: string
+  order: number
+  customProperties: Record<string, unknown> // your own metadata bag, passed on attach
+  conversions: Record<string, { path: string; disk: string }> // keyed by preset name
+  createdAt: Date
+  updatedAt: Date
+}
+```
+
+You can stash arbitrary metadata on `customProperties` at attach time (`attach({ ..., customProperties: { alt: 'A cat' } })`) and read it back off the record.
+
+---
+
+## Next steps
+
+- [Attachments](/docs/media/attachments) — the column-attachment alternative, with the same conversion engine
+- [Stores & Processors](/docs/media/stores-and-processors) — the sharp processor and the Lucid store behind records
+- [Testing](/docs/media/testing) — assert eager vs lazy behaviour with the fake processor

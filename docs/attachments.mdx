@@ -1,0 +1,159 @@
+---
+title: Attachments
+description: Column attachments — the adonis-attachment style, where a file (and its image variants) lives directly on a model column as a JSON value, over the same Drive disks and image processor as the media library.
+icon: Paperclip
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The `MediaLibrary` is the [spatie media-library](https://spatie.be/docs/laravel-medialibrary) shape: files belong to an *owner* and live in a separate metadata table. The **`AttachmentManager`** is the other common shape — the [adonis-attachment](https://github.com/jrmc/adonis-attachment) style, where a single file lives **directly on a model column** as a JSON value, with no owner and no extra table. Both run over the *same* Drive disks and the *same* image processor; you pick whichever fits each field.
+
+Reach for an attachment when a model simply *has a file*: a user's avatar, a product's hero image, a document's PDF. Reach for the [media library](/docs/media/collections-and-conversions) when an entity has a *collection* of files with policy and ordering.
+
+---
+
+## The `Attachment` value object
+
+An `Attachment` is a pure, JSON-serializable value object. It carries the disk, path, size, MIME type, any image variants, and a free-form `meta` bag — and nothing else. It has no methods that touch storage; URL resolution and deletion go through the `AttachmentManager` (which holds the disks).
+
+```ts
+interface AttachmentData {
+  name: string
+  disk: string
+  path: string
+  size: number
+  mimeType: string
+  variants: Record<string, { disk: string; path: string; size: number; mimeType: string }>
+  meta: Record<string, unknown>
+}
+```
+
+Because it serializes cleanly, you store it on a JSON column and rebuild it on read:
+
+```ts
+attachment.toJSON()                 // → AttachmentData (what you persist)
+Attachment.fromJSON(post.avatar)    // → Attachment | null (null for null/undefined)
+```
+
+---
+
+## Creating an attachment
+
+`createFromFile(input, options?)` uploads the bytes (and any variants), then returns the `Attachment` you assign to a column.
+
+```ts
+import { MediaManager } from '@adonis-agora/media'
+
+const media = await app.container.make(MediaManager)
+
+const att = await media.attachments.createFromFile(
+  { fileName: 'avatar.png', mimeType: 'image/png', contents: buffer }, // Buffer | Readable
+  { variants: [{ name: 'thumb', width: 100 }] },
+)
+
+post.avatar = att.toJSON() // store on a JSON column
+await post.save()
+```
+
+The `input` is `{ fileName, mimeType, contents, size? }`. The `options` are all optional:
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `disk` | storage default disk | Which Drive disk to write to. |
+| `keyPrefix` | `attachments` (or your `attachmentKeyPrefix`) | Storage key prefix. |
+| `variants` | `[]` | Image variants to generate **eagerly** (needs an `ImageProcessor`). |
+| `name` | the file name | Display name stored on the attachment. |
+| `meta` | `{}` | Free-form metadata bag stored on the attachment. |
+
+The file lands at `${keyPrefix}/${id}/${fileName}` (with a generated id), and variants at `${keyPrefix}/${id}/variants/${name}.${format}`.
+
+<Callout type="info" title="Variants are eager">
+  Unlike the media library's lazy conversions, attachment **variants are always generated eagerly** inside `createFromFile`. There's no per-attachment record to cache a lazily-generated variant onto, so you declare exactly the variants you want up front. They use the same `ConversionPreset` shape (`width` / `height` / `fit` / `format` / `quality`) and the same image processor.
+</Callout>
+
+If you request variants but no `imageProcessor` is configured, `createFromFile` throws — configure `processors.sharp()` (or your own) in `config/media.ts` first.
+
+---
+
+## Resolving URLs
+
+```ts
+const att = Attachment.fromJSON(post.avatar)!
+
+await media.attachments.url(att)            // the original
+await media.attachments.url(att, 'thumb')   // a named variant
+
+await media.attachments.signedUrl(att, '30m')          // signed, expiring (s3/gcs)
+await media.attachments.signedUrl(att, '1h', 'thumb')  // signed variant URL
+```
+
+Asking for a variant that wasn't generated throws (`Attachment has no variant "<name>"`), so resolve only the variants you created.
+
+---
+
+## Deleting
+
+`delete` removes the original **and every variant** from storage. It does not touch your model column — clear that yourself after:
+
+```ts
+await media.attachments.delete(att)
+post.avatar = null
+await post.save()
+```
+
+---
+
+## A model-column pattern
+
+A clean way to use attachments on a Lucid model is to (de)serialize in a `@column` consumer or a small accessor. The attachment is just JSON, so any JSON column works:
+
+```ts title="app/models/post.ts"
+import { BaseModel, column } from '@adonisjs/lucid/orm'
+import { Attachment, type AttachmentData } from '@adonis-agora/media'
+
+export default class Post extends BaseModel {
+  @column()
+  declare avatarData: AttachmentData | null
+
+  get avatar(): Attachment | null {
+    return Attachment.fromJSON(this.avatarData)
+  }
+}
+```
+
+Then in a controller:
+
+```ts
+const att = await media.attachments.createFromFile(
+  { fileName, mimeType, contents },
+  { variants: [{ name: 'thumb', width: 100 }, { name: 'card', width: 600, format: 'webp' }] },
+)
+post.avatarData = att.toJSON()
+await post.save()
+
+// later
+const url = post.avatar ? await media.attachments.url(post.avatar, 'thumb') : null
+```
+
+---
+
+## Library vs attachment — which to use
+
+| | `MediaLibrary` (collections) | `AttachmentManager` (column) |
+|---|---|---|
+| Where metadata lives | a `MediaStore` (in-memory / Lucid table) | inline on a model column (JSON) |
+| Cardinality | many per owner, per collection (or `single`) | one file per column |
+| Owner | explicit `ownerType` + `ownerId` | none — the model *is* the owner |
+| Conversions/variants | eager **or** lazy, cached on the record | eager only, declared up front |
+| MIME whitelist / ordering | yes (collection policy) | no |
+| Best for | galleries, document sets, anything with policy | a single avatar / hero / file field |
+
+Both share the same disks, the same image processor, and the same diagnostics — so mixing them in one app is normal and cheap.
+
+---
+
+## Next steps
+
+- [Collections & Conversions](/docs/media/collections-and-conversions) — the owner-collection alternative
+- [Configuration](/docs/media/configuration#attachmentkeyprefix-and-emitdiagnostics) — the `attachmentKeyPrefix` key
+- [Testing](/docs/media/testing) — exercise attachments with in-memory disks and the fake processor

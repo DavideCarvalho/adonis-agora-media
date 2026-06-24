@@ -1,0 +1,187 @@
+---
+title: Testing
+description: Drive the media library in tests with the in-memory doubles from @adonis-agora/media/testing — InMemoryMediaStore, InMemoryDisk + inMemoryDiskResolver, and FakeImageProcessor — no disk, no database, no sharp.
+icon: FlaskConical
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Every seam the library depends on — the disk, the store, the image processor — is an interface, so testing is just a matter of supplying fast, deterministic doubles. The `@adonis-agora/media/testing` subpath ships one for each, so you can exercise the full library with **no filesystem, no database, and no sharp**.
+
+---
+
+## Install
+
+The helpers ship inside the core package as the `@adonis-agora/media/testing` subpath — nothing extra to install:
+
+```sh
+npm i @adonis-agora/media
+```
+
+```ts
+import {
+  InMemoryMediaStore,
+  InMemoryDisk,
+  inMemoryDiskResolver,
+  FakeImageProcessor,
+} from '@adonis-agora/media/testing'
+```
+
+---
+
+## The doubles
+
+| Double | Implements | What it does |
+|--------|-----------|--------------|
+| `InMemoryMediaStore` | `MediaStore` | `Map`-backed metadata store. |
+| `InMemoryDisk` | `Disk` | `Map`-backed disk; exposes `.files` for assertions. |
+| `inMemoryDiskResolver(names)` | `DiskResolver` factory | Builds a resolver over named in-memory disks; returns `{ resolve, disks }`. |
+| `FakeImageProcessor` | `ImageProcessor` | Deterministic, sharp-free; records every `convert` call on `.calls`. |
+
+---
+
+## Wiring a `MediaLibrary` by hand
+
+The most direct setup constructs a `MediaLibrary` from the doubles — no container, no provider:
+
+```ts
+import { MediaLibrary, StorageManager } from '@adonis-agora/media'
+import {
+  InMemoryMediaStore,
+  inMemoryDiskResolver,
+  FakeImageProcessor,
+} from '@adonis-agora/media/testing'
+
+const { resolve, disks } = inMemoryDiskResolver(['fs'])
+
+const library = new MediaLibrary({
+  storage: new StorageManager({ default: 'fs', resolve }),
+  store: new InMemoryMediaStore(),
+  imageProcessor: new FakeImageProcessor(),
+  collections: [
+    { name: 'gallery', conversions: [{ name: 'thumb', width: 200, eager: false }] },
+  ],
+})
+```
+
+`inMemoryDiskResolver(['fs'])` makes one disk named `fs` (the first name is the default; a single unnamed disk is named `default`) and hands you both the resolver and the `disks` map so you can assert on what was written.
+
+<Callout type="info" title="Deterministic ids and clock">
+  `MediaLibrary` accepts an `idGenerator` and a `clock` for fully deterministic tests:
+  `new MediaLibrary({ ..., idGenerator: () => 'fixed-id', clock: () => new Date(0) })`. The same options exist on `AttachmentManager` (`idGenerator`).
+</Callout>
+
+---
+
+## Asserting on storage
+
+`InMemoryDisk` keeps written files on its `.files` map (keyed by storage path), so you can assert that bytes landed where you expect:
+
+```ts
+import { test } from '@japa/runner'
+
+test('attach writes the original to the disk', async () => {
+  const m = await library.attach({
+    ownerType: 'Post', ownerId: '1', collection: 'gallery',
+    fileName: 'photo.jpg', mimeType: 'image/jpeg', contents: Buffer.from('bytes'),
+  })
+
+  assert.isTrue(disks.fs.files.has(m.path))
+  assert.equal(m.path, `Post/1/gallery/${m.id}/photo.jpg`)
+})
+```
+
+---
+
+## Asserting eager vs lazy conversions
+
+`FakeImageProcessor` never decodes an image — it returns a tiny synthetic buffer tagged with the preset and pushes a `{ inputSize, preset }` entry onto `.calls`. That makes the eager/lazy behaviour easy to assert:
+
+```ts
+test('lazy conversions run on first url(), then cache', async () => {
+  const processor = new FakeImageProcessor()
+  const library = new MediaLibrary({
+    storage: new StorageManager({ default: 'fs', resolve }),
+    store: new InMemoryMediaStore(),
+    imageProcessor: processor,
+    collections: [{ name: 'gallery', conversions: [{ name: 'thumb', width: 100 }] }],
+  })
+
+  const m = await library.attach({
+    ownerType: 'Post', ownerId: '1', collection: 'gallery',
+    fileName: 'p.jpg', mimeType: 'image/jpeg', contents: Buffer.from('x'),
+  })
+
+  assert.lengthOf(processor.calls, 0) // lazy: nothing converted on attach
+
+  await library.url(m.id, 'thumb')
+  assert.lengthOf(processor.calls, 1) // generated on first url()
+  assert.equal(processor.calls[0].preset.name, 'thumb')
+
+  await library.url(m.id, 'thumb')
+  assert.lengthOf(processor.calls, 1) // cached: not converted again
+})
+```
+
+Flip the preset to `eager: true` and assert `processor.calls` has length `1` immediately after `attach`.
+
+---
+
+## Testing column attachments
+
+The same doubles drive the `AttachmentManager`:
+
+```ts
+import { AttachmentManager, StorageManager } from '@adonis-agora/media'
+import { inMemoryDiskResolver, FakeImageProcessor } from '@adonis-agora/media/testing'
+
+const { resolve, disks } = inMemoryDiskResolver(['fs'])
+const attachments = new AttachmentManager({
+  storage: new StorageManager({ default: 'fs', resolve }),
+  imageProcessor: new FakeImageProcessor(),
+})
+
+const att = await attachments.createFromFile(
+  { fileName: 'a.png', mimeType: 'image/png', contents: Buffer.from('x') },
+  { variants: [{ name: 'thumb', width: 50 }] },
+)
+
+assert.deepEqual(Object.keys(att.variants), ['thumb'])
+assert.isTrue(disks.fs.files.has(att.path))
+```
+
+---
+
+## Inside a real app: `drive.fake()`
+
+If you're testing through the actual container and provider (an HTTP test, say), you usually don't need the doubles at all — let the real wiring stand and swap only the disk. `@adonisjs/drive` ships `drive.fake()`, which backs your disks with an in-memory fake while keeping the rest of the media stack intact:
+
+```ts
+import drive from '@adonisjs/drive/services/main'
+
+test.group('uploads', (group) => {
+  group.each.setup(() => {
+    const fake = drive.fake()
+    return () => drive.restore(fake)
+  })
+
+  test('stores an avatar', async ({ client }) => {
+    await client.post('/avatar').file('image', pngBuffer)
+    // assert via the MediaManager resolved from the container
+  })
+})
+```
+
+This keeps your config-driven store (in-memory or Lucid) and the real sharp processor in play, faking only storage — the closest test to production.
+
+<Callout type="info">
+  For pure unit tests prefer the hand-wired doubles (faster, no app boot); for integration tests prefer `drive.fake()` over the real container. Pick the layer that matches what you're verifying.
+</Callout>
+
+---
+
+## Next steps
+
+- [Stores & Processors](/docs/media/stores-and-processors) — the interfaces the doubles implement
+- [Collections & Conversions](/docs/media/collections-and-conversions) — the eager/lazy behaviour you're asserting
+- [Getting Started](/docs/media/getting-started) — the production wiring the doubles stand in for

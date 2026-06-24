@@ -1,0 +1,190 @@
+---
+title: Configuration
+description: Every key on defineConfig — disk, store and the stores map, imageProcessor, collections, the attachment key prefix, and the diagnostics toggle — and how the provider builds the MediaManager at boot.
+icon: SlidersHorizontal
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+All configuration lives in `config/media.ts`, validated by the exported `defineConfig` helper. The shape follows the Agora config idiom: **drivers live in the core package**, you select them by name from a factory map, and each heavy peer (`@adonisjs/lucid`, `sharp`) is imported lazily — only when actually chosen.
+
+```ts title="config/media.ts"
+import { defineConfig, stores, processors } from '@adonis-agora/media'
+
+export default defineConfig({
+  disk: 's3',
+  store: 'lucid',
+  stores: {
+    memory: stores.memory(),
+    lucid: stores.lucid({ connection: 'pg' }),
+  },
+  imageProcessor: processors.sharp(),
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+    {
+      name: 'gallery',
+      conversions: [
+        { name: 'thumb', width: 200, height: 200 },
+        { name: 'og', width: 1200, eager: true },
+      ],
+    },
+  ],
+})
+```
+
+---
+
+## The keys at a glance
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `disk` | `string` | Drive's default disk | Name of the `@adonisjs/drive` disk media is written to. |
+| `store` | `string` | `memory` | Which entry of `stores` to use for metadata persistence. |
+| `stores` | `Record<string, StoreFactory>` | — | The named store factories (`stores.memory()`, `stores.lucid()`). |
+| `imageProcessor` | `ImageProcessor \| ImageProcessorFactory` | — | The conversion engine. Required only if any collection has conversions. |
+| `collections` | `MediaCollectionConfig[]` | `[]` | Collection definitions — see [Collections & Conversions](/docs/media/collections-and-conversions). |
+| `attachmentKeyPrefix` | `string` | `attachments` | Key prefix for column attachments created via the `AttachmentManager`. |
+| `emitDiagnostics` | `boolean` | `true` | Whether to emit `agora:media:*` diagnostics events. |
+
+Every key is optional. An empty `defineConfig({})` gives you the in-memory store on Drive's default disk, no conversions, and diagnostics on.
+
+---
+
+## `disk` — where files live
+
+`disk` is the **name** of a disk in your `config/drive.ts`. Omit it and the provider falls back to Drive's configured default disk (the `default` key of `config/drive.ts`). Media never reimplements storage — it resolves the disk from Drive and writes through it.
+
+The disk is chosen with a clear precedence each time a file is written:
+
+1. a per-call `disk` passed to `attach()` (or `createFromFile()`),
+2. else the collection's `disk`,
+3. else this top-level `disk`,
+4. else Drive's default disk.
+
+```ts
+defineConfig({
+  disk: 's3', // everything goes to s3 unless a collection or call overrides it
+  collections: [
+    { name: 'invoices', disk: 'private-s3' }, // this collection lives on a different disk
+  ],
+})
+```
+
+<Callout type="info">
+  Because storage is just Drive, a media record stores **which disk** it lives on alongside its path. URL resolution, conversions and deletion all use the record's stored disk — so moving a collection to a new disk doesn't strand existing files.
+</Callout>
+
+---
+
+## `store` and `stores` — metadata persistence
+
+The bytes go to Drive; the *metadata* (owner, collection, path, conversions, ordering) goes to a `MediaStore`. You build a named map with the `stores` factory and pick one with `store`.
+
+```ts
+import { defineConfig, stores } from '@adonis-agora/media'
+
+export default defineConfig({
+  store: 'lucid',
+  stores: {
+    memory: stores.memory(),
+    lucid: stores.lucid({ connection: 'pg', table: 'media' }),
+  },
+})
+```
+
+- **`stores.memory()`** — an in-memory store. Single-process and non-durable; ideal for tests and scratch apps. This is the default when no `store` is selected.
+- **`stores.lucid({ connection?, table? })`** — persists rows in SQL via `@adonisjs/lucid`. `connection` defaults to Lucid's default connection; `table` defaults to `media`. Needs the published migration (`node ace migration:run`).
+
+Each factory is a **lazy thunk**: calling `stores.lucid(...)` in the config file costs nothing — the `@adonisjs/lucid` peer is only imported when the provider builds the selected store at boot. So you can list `lucid` in the map even in an environment where Lucid isn't installed, as long as you don't *select* it.
+
+See [Stores & Processors](/docs/media/stores-and-processors) for the Lucid schema and how to write your own store.
+
+---
+
+## `imageProcessor` — the conversion engine
+
+Conversions need an engine. `imageProcessor` accepts either:
+
+- an **`ImageProcessorFactory`** built with the `processors` factory — e.g. `processors.sharp()`, which imports the optional `sharp` peer lazily; or
+- a ready **`ImageProcessor`** instance, if you've built your own.
+
+```ts
+import { defineConfig, processors } from '@adonis-agora/media'
+
+export default defineConfig({
+  imageProcessor: processors.sharp(),
+})
+```
+
+It is only required if some collection (or attachment call) actually defines conversions. If you never convert images, omit it — and asking for a conversion later will throw `ImageProcessorMissingError` rather than silently failing.
+
+---
+
+## `collections` — the policy layer
+
+Each entry defines a named collection's behaviour — MIME whitelist, single-file replacement, per-collection disk, and conversion presets:
+
+```ts
+defineConfig({
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+    {
+      name: 'gallery',
+      conversions: [
+        { name: 'thumb', width: 200, height: 200 },
+        { name: 'og', width: 1200, eager: true },
+      ],
+    },
+  ],
+})
+```
+
+This whole surface is documented on [Collections & Conversions](/docs/media/collections-and-conversions).
+
+<Callout type="info">
+  Collections are optional. Attaching to a collection that isn't declared is allowed — it falls back to a permissive default (no MIME whitelist, not single, no conversions, default disk). Declare a collection only when you want to *constrain* it.
+</Callout>
+
+---
+
+## `attachmentKeyPrefix` and `emitDiagnostics`
+
+- **`attachmentKeyPrefix`** (default `attachments`) is the storage key prefix used by the [column-attachment](/docs/media/attachments) layer. Files created via `media.attachments.createFromFile(...)` land under `${prefix}/${id}/...`. A per-call `keyPrefix` overrides it.
+- **`emitDiagnostics`** (default `true`) toggles the `agora:media:*` lifecycle events. See [Diagnostics](#diagnostics) below.
+
+---
+
+## How the provider builds it
+
+At boot, `MediaProvider` binds a singleton `MediaManager` assembled from this config:
+
+1. It resolves disks from the booted Drive manager via a lazy `import('@adonisjs/drive/services/main')` — no hard import of Drive.
+2. It builds the selected store from the `stores` map (defaulting to the in-memory store if none is selected).
+3. It resolves the `imageProcessor` — calling the factory thunk if you passed one, or using the instance directly.
+4. It computes the default disk: your `disk`, else Drive's `default`.
+
+The result is one `MediaManager` shared across your app, composing the `MediaLibrary` and `AttachmentManager` over the same `StorageManager`.
+
+---
+
+## Diagnostics
+
+The library emits lifecycle events on the `agora:media:*` channel through the `@agora/diagnostics:emit` global slot — read **structurally**, with **no hard dependency** on `@adonis-agora/diagnostics`. The events are:
+
+| Event | Channel | Payload highlights |
+|-------|---------|--------------------|
+| `attach` | `agora:media:attach` | `id`, `ownerType`, `ownerId`, `collection`, `disk`, `path`, `size`, `mimeType` |
+| `delete` | `agora:media:delete` | `id`, `ownerType`, `ownerId` |
+| `conversion` | `agora:media:conversion` | `id`, `conversion`, `path` |
+| `attachment.create` | `agora:media:attachment.create` | `disk`, `path`, `size`, `mimeType`, `name`, `variants` |
+| `attachment.delete` | `agora:media:attachment.delete` | `disk`, `path`, `variants` |
+
+When `@adonis-agora/diagnostics` isn't installed, the slot is empty and emitting is an inert no-op. When it *is* installed, the [Telescope](/docs/telescope) generic watcher captures every media event automatically. Emitting never throws back into a media operation, and you can turn it off entirely with `emitDiagnostics: false`.
+
+---
+
+## Next steps
+
+- [Collections & Conversions](/docs/media/collections-and-conversions) — the `collections` surface in depth
+- [Stores & Processors](/docs/media/stores-and-processors) — the Lucid store, the sharp processor, and custom drivers
+- [Attachments](/docs/media/attachments) — `attachmentKeyPrefix` in context

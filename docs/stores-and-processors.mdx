@@ -1,0 +1,213 @@
+---
+title: Stores & Processors
+description: The three pluggable seams behind the library — the MediaStore (in-memory + Lucid, with a published migration), the ImageProcessor (sharp), and the Disk contract that reuses @adonisjs/drive. Plus how to write your own.
+icon: Database
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The media library is small on purpose: the heavy lifting is delegated to three pluggable seams, each a tiny interface (an SPI). This page covers all three — the persistence `MediaStore`, the `ImageProcessor`, and the `Disk` contract that lets the library reuse `@adonisjs/drive` — and how to swap any of them.
+
+---
+
+## The `Disk` contract — reusing Drive
+
+The library **never imports `@adonisjs/drive`.** Instead it defines a minimal structural `Disk` interface — a subset of a flydrive/Drive disk — and resolves disks through a `DiskResolver`. A real Drive disk satisfies the contract directly, so in production the resolver is simply `(name) => drive.use(name)`; in tests it's a resolver over in-memory fakes.
+
+```ts
+interface Disk {
+  put(key: string, contents: Uint8Array, options?: DiskWriteOptions): Promise<void>
+  getBytes(key: string): Promise<Uint8Array>
+  getStream(key: string): Promise<Readable>
+  exists(key: string): Promise<boolean>
+  delete(key: string): Promise<void>
+  getUrl(key: string): Promise<string>
+  getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string>
+  getMetaData(key: string): Promise<DiskMetaData>
+}
+
+type DiskResolver = (name?: string) => Disk
+```
+
+A couple of deliberate choices:
+
+- Binary reads use **`getBytes`** (a `Uint8Array`) rather than Drive's `get` (which returns a UTF-8 string) — images aren't text.
+- Writes accept a `Uint8Array`, so the library buffers any incoming `Readable` first (via `toBytes`).
+- `getMetaData().contentLength` is read back after a write when you don't pass an explicit `size`, so records always carry a byte size.
+
+The `StorageManager` is the thin façade the library talks to — it wraps a `DiskResolver` plus a default disk name, and the media and attachment layers only ever go through it. This is why Drive stays a peer dependency and why the in-memory test disk is a true drop-in. You can reach the raw disk through `media.disk(name?)` as an escape hatch.
+
+<Callout type="info">
+  Because the contract is structural, you aren't limited to Drive. Anything that implements these eight methods works — though Drive is the intended (and zero-effort) backend, since every AdonisJS app already has it.
+</Callout>
+
+---
+
+## The `MediaStore` — persistence
+
+The `MediaStore` persists the metadata rows the `MediaLibrary` produces. It's one small interface:
+
+```ts
+interface MediaStore {
+  save(record: MediaRecord): Promise<MediaRecord>
+  find(id: string): Promise<MediaRecord | null>
+  listByOwner(ownerType: string, ownerId: string, collection?: string): Promise<MediaRecord[]>
+  delete(id: string): Promise<void>
+  nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number>
+}
+```
+
+(`listByOwner` returns records ordered by `order` ascending; `nextOrder` returns the next 0-based slot for appending.)
+
+### In-memory store
+
+`stores.memory()` builds an `InMemoryMediaStore` — a `Map`-backed store, single-process and non-durable. It's the default when no `store` is selected, and it's what the testing kit exposes. Great for tests and scratch apps; not for production (it forgets everything on restart and doesn't share across processes).
+
+### Lucid store
+
+`stores.lucid({ connection?, table? })` builds a `LucidMediaStore` that persists rows in SQL via `@adonisjs/lucid`'s query builder (Knex), so it works across **SQLite / Postgres / MySQL**. `@adonisjs/lucid` is an optional peer imported lazily — only when you select `lucid`.
+
+The schema is deliberately portable: JSON payloads (`custom_properties`, `conversions`) are stored as **TEXT** (the store (de)serializes them), and timestamps as **epoch-ms integers**. `configure` publishes the migration:
+
+```ts title="database/migrations/..._create_media_table.ts"
+export default class extends BaseSchema {
+  protected tableName = 'media'
+
+  async up() {
+    this.schema.createTable(this.tableName, (table) => {
+      table.string('id').primary()
+      table.string('owner_type').notNullable()
+      table.string('owner_id').notNullable()
+      table.string('collection').notNullable()
+      table.string('name').notNullable()
+      table.string('file_name').notNullable()
+      table.string('mime_type').notNullable()
+      table.bigInteger('size').notNullable()
+      table.string('disk').notNullable()
+      table.text('path').notNullable()
+      table.integer('order').notNullable().defaultTo(0)
+      table.text('custom_properties')
+      table.text('conversions')
+      table.bigInteger('created_at').notNullable()
+      table.bigInteger('updated_at').notNullable()
+      table.index(['owner_type', 'owner_id'], 'media_owner_idx')
+      table.index(['owner_type', 'owner_id', 'collection'], 'media_owner_collection_idx')
+    })
+  }
+
+  async down() {
+    this.schema.dropTable(this.tableName)
+  }
+}
+```
+
+To use it:
+
+```ts title="config/media.ts"
+defineConfig({
+  store: 'lucid',
+  stores: { lucid: stores.lucid({ connection: 'pg' }) },
+})
+```
+
+```sh
+node ace migration:run
+```
+
+The two indexes back the library's hot paths — `listByOwner` (owner, optionally + collection) and the single-file replacement check. `connection` defaults to Lucid's default; `table` defaults to `media`.
+
+<Callout type="info">
+  Import it directly from the subpath (`@adonis-agora/media/stores/lucid`) if you need the `LucidMediaStore` class — e.g. to construct one by hand in a test that uses a real database.
+</Callout>
+
+### Writing your own store
+
+A store is a POJO that implements the five methods. Receive whatever connection it needs in the constructor, and wire it via a `StoreFactory` thunk in config (so any peer it needs is imported lazily):
+
+```ts
+import type { MediaStore, StoreFactory } from '@adonis-agora/media'
+
+class RedisMediaStore implements MediaStore {
+  // save / find / listByOwner / delete / nextOrder ...
+}
+
+// config/media.ts
+defineConfig({
+  store: 'redis',
+  stores: {
+    redis: (() => async () => new RedisMediaStore(/* ... */)) as unknown as StoreFactory,
+  },
+})
+```
+
+A `StoreFactory` receives a `StoreContext` (`{ app }`), the booted application — so a driver can resolve a peer's service (e.g. the Lucid `db`) when it builds.
+
+---
+
+## The `ImageProcessor` — conversions
+
+The conversion engine is a one-method interface:
+
+```ts
+interface ImageProcessor {
+  convert(input: Buffer, preset: ConversionPreset): Promise<ConversionResult>
+}
+
+interface ConversionResult {
+  data: Buffer
+  format: string      // actual output format/extension, e.g. 'webp'
+  contentType: string
+}
+```
+
+### The sharp processor
+
+`processors.sharp()` builds a `SharpImageProcessor` backed by [sharp](https://sharp.pixelplumbing.com). `sharp` is an optional peer, imported lazily only when the processor is built. It maps the preset straight onto sharp:
+
+- `width` / `height` → `resize({ width, height, fit })` (only when a dimension is set);
+- `fit` → sharp's `fit` (default `cover`);
+- `format` → `toFormat(format)` — **default `webp`**;
+- `quality` → the format's `quality` option.
+
+Import it directly from `@adonis-agora/media/processors/sharp` if you want the class, or select it lazily with `processors.sharp()` in config.
+
+### Writing your own processor
+
+Implement `convert` and either pass an instance or a factory to `imageProcessor`. A processor that just passed bytes through, for example:
+
+```ts
+import type { ImageProcessor } from '@adonis-agora/media'
+
+class PassthroughProcessor implements ImageProcessor {
+  async convert(input: Buffer, preset) {
+    return { data: input, format: preset.format ?? 'webp', contentType: 'image/webp' }
+  }
+}
+
+// config/media.ts — pass a ready instance directly
+defineConfig({ imageProcessor: new PassthroughProcessor() })
+```
+
+For tests, the kit's [`FakeImageProcessor`](/docs/media/testing) is a deterministic, sharp-free implementation that records every call.
+
+---
+
+## How it all composes
+
+```
+MediaManager
+├─ StorageManager ──> DiskResolver ──> @adonisjs/drive disk   (the Disk contract)
+├─ MediaLibrary ────> MediaStore     (in-memory | Lucid | yours)
+│                 └─> ImageProcessor  (sharp | yours)
+└─ AttachmentManager ─> same StorageManager + same ImageProcessor
+```
+
+One disk layer, one store, one processor — shared by both the library and the attachment manager. Swap any seam without touching the others.
+
+---
+
+## Next steps
+
+- [Configuration](/docs/media/configuration#store-and-stores-metadata-persistence) — selecting stores and processors by name
+- [Testing](/docs/media/testing) — the in-memory doubles for all three seams
+- [Collections & Conversions](/docs/media/collections-and-conversions) — what the processor is asked to produce

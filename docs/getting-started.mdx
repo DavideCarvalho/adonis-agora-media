@@ -1,0 +1,207 @@
+---
+title: Getting Started
+description: Install @adonisjs/drive and @adonis-agora/media, configure the library, attach your first file to an entity, generate a conversion, and resolve URLs.
+icon: Rocket
+---
+
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Getting `@adonis-agora/media` running is three steps: make sure Drive is installed (it owns storage), configure the media library once, then start attaching files. This guide goes from zero to a stored image with a thumbnail.
+
+---
+
+## Prerequisites
+
+- **Node.js 20.6+**
+- **AdonisJS 6** (`@adonisjs/core` `^7.3.0`)
+- **`@adonisjs/drive` `^3.0.0`**, installed and configured — media delegates *all* storage to it. If you don't have it yet: `node ace add @adonisjs/drive`.
+- *(optional)* **`@adonisjs/lucid`** if you want the persistent `lucid` store, and **`sharp`** if you want image conversions. Both are optional peers, loaded lazily only when selected.
+
+---
+
+## Step 1 — Install and configure
+
+The package ships an ace `configure` hook, so the recommended flow is:
+
+<Tabs items={['node ace add', 'manual']}>
+<Tab value="node ace add">
+
+```sh
+node ace add @adonisjs/drive   # if you don't already have it
+npm i @adonis-agora/media
+node ace configure @adonis-agora/media
+```
+
+</Tab>
+<Tab value="manual">
+
+```sh
+npm i @adonis-agora/media
+node ace configure @adonis-agora/media
+```
+
+Make sure `@adonisjs/drive` is installed and a `config/drive.ts` exists first.
+
+</Tab>
+</Tabs>
+
+`configure` runs three codemods so there is **zero manual wiring**:
+
+1. registers the service provider (`@adonis-agora/media/media_provider`) in `adonisrc.ts`;
+2. publishes `config/media.ts` from a stub;
+3. publishes the Lucid migration for the optional `lucid` store.
+
+<Callout type="info">
+  The migration is for the `lucid` store only. If you stick with the in-memory store (the default in the stub), simply delete the published migration. If you select `lucid`, run `node ace migration:run`.
+</Callout>
+
+The published `config/media.ts` works out of the box with the in-memory store and a sharp processor:
+
+```ts title="config/media.ts"
+import { defineConfig, stores, processors } from '@adonis-agora/media'
+
+export default defineConfig({
+  // disk: 's3', // omit to use Drive's default disk
+
+  store: 'memory',
+  stores: {
+    memory: stores.memory(),
+    lucid: stores.lucid(),
+  },
+
+  imageProcessor: processors.sharp(),
+
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+    {
+      name: 'gallery',
+      conversions: [
+        { name: 'thumb', width: 200, height: 200 },
+        { name: 'og', width: 1200, eager: true },
+      ],
+    },
+  ],
+})
+```
+
+Every key is covered in [Configuration](/docs/media/configuration).
+
+---
+
+## Step 2 — Resolve the manager
+
+The provider binds a singleton `MediaManager` into the container. Resolve it wherever you need it — a controller, a service, a command:
+
+```ts
+import { MediaManager } from '@adonis-agora/media'
+
+const media = await app.container.make(MediaManager)
+```
+
+`MediaManager` composes the two layers over a shared storage façade:
+
+| Accessor | What it is |
+|---|---|
+| `media.library` | the [`MediaLibrary`](#step-3-attach-a-file-to-a-collection) — owner collections + conversions |
+| `media.attachments` | the [`AttachmentManager`](/docs/media/attachments) — column attachments + variants |
+| `media.disk(name?)` | escape hatch to the raw underlying Drive disk |
+
+---
+
+## Step 3 — Attach a file to a collection
+
+`attach` writes the bytes to a disk and saves a metadata record. You provide the owning entity (`ownerType` + `ownerId`), the `collection`, and the file. `contents` is a `Buffer` or a `Readable` — the library buffers streams for you.
+
+```ts title="app/controllers/posts_controller.ts"
+import { MediaManager } from '@adonis-agora/media'
+import type { HttpContext } from '@adonisjs/core/http'
+
+export default class PostsController {
+  async addImage({ request, params }: HttpContext) {
+    const file = request.file('image')!
+    const media = await app.container.make(MediaManager)
+
+    const m = await media.library.attach({
+      ownerType: 'Post',
+      ownerId: params.id,
+      collection: 'gallery',
+      fileName: file.clientName,
+      mimeType: file.type!,
+      contents: await readFileAsBuffer(file), // a Buffer or Readable
+    })
+
+    return { id: m.id, url: await media.library.url(m.id) }
+  }
+}
+```
+
+A few things happen on `attach`, driven by the collection's config:
+
+- If the collection has an `acceptsMimeTypes` whitelist and the file's type isn't on it, a `MimeNotAllowedError` (`E_MEDIA_MIME_NOT_ALLOWED`) is thrown **before** anything is written.
+- If the collection is `single`, any existing media in it (for this owner) is deleted first — the new file *replaces* it.
+- The file is written to `${ownerType}/${ownerId}/${collection}/${id}/${fileName}` on the resolved disk (per-call `disk` → collection `disk` → storage default).
+- Any **eager** conversions are generated synchronously; lazy ones wait for the first `url()`.
+
+<Callout type="info" title="The owner is yours to define">
+  `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. `ownerId` is coerced to a string, so passing a numeric id is fine.
+</Callout>
+
+### Bind an owner once with `for()`
+
+When you do several operations for the same entity, bind it so you don't repeat `ownerType` / `ownerId`:
+
+```ts
+const gallery = media.library.for('Post', post.id) // id may be a string or number
+
+await gallery.attach({ collection: 'gallery', fileName, mimeType, contents })
+const all = await gallery.list('gallery')
+```
+
+`for()` returns a small binding with `attach` and `list`. For `find` / `delete` / `url` (which work by media id, not owner), use `media.library` directly.
+
+---
+
+## Step 4 — Resolve URLs and conversions
+
+```ts
+// original
+await media.library.url(m.id)
+
+// a named conversion — generated lazily on first call, then cached on the record
+await media.library.url(m.id, 'thumb')
+
+// a signed, expiring URL (presign-capable disks like s3/gcs)
+await media.library.signedUrl(m.id, '30m')
+await media.library.signedUrl(m.id, '1h', 'thumb')
+```
+
+The first time you ask for `url(id, 'thumb')`, the library reads the original off the disk, runs it through the image processor, writes the result next to the original, and records the conversion path so the *next* call is a pure lookup. You can also force a conversion to exist ahead of time with `media.library.ensureConversion(m.id, 'thumb')`.
+
+<Callout type="warn">
+  Asking for a conversion that isn't declared on the collection throws `ConversionNotDefinedError`. Asking for any conversion when no `imageProcessor` is configured throws `ImageProcessorMissingError`. See [Collections & Conversions](/docs/media/collections-and-conversions).
+</Callout>
+
+---
+
+## Step 5 — List, find and delete
+
+```ts
+await media.library.list('Post', String(post.id))            // every collection, ordered
+await media.library.list('Post', String(post.id), 'gallery') // one collection, ordered by `order` asc
+await media.library.find(m.id)                               // MediaRecord | null
+
+await media.library.delete(m.id) // removes the original AND every generated conversion from disk
+```
+
+`delete` is thorough: it removes the original file *and* every conversion file from their disks, then deletes the metadata row. Deleting an id that doesn't exist is a silent no-op.
+
+---
+
+## Next steps
+
+- [Configuration](/docs/media/configuration) — every `defineConfig` key in depth
+- [Collections & Conversions](/docs/media/collections-and-conversions) — the policy layer and the image pipeline
+- [Attachments](/docs/media/attachments) — the column-attachment alternative to owner collections
+- [Testing](/docs/media/testing) — drive everything with in-memory doubles

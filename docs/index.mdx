@@ -1,0 +1,109 @@
+---
+title: Media
+description: A media library for AdonisJS — attach files to your entities, organize them into collections, and generate image conversions, all on top of @adonisjs/drive. The spatie/laravel-media-library feel, for Adonis.
+icon: Image
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Cards, Card } from 'fumadocs-ui/components/card';
+
+**`@adonis-agora/media`** gives AdonisJS the [spatie/laravel-media-library](https://spatie.be/docs/laravel-medialibrary) feel: attach files to your entities, organize them into named **collections** (with a MIME whitelist, single-file replacement, and ordering), and generate image **conversions** — eagerly on upload or lazily on first access. Storage itself is delegated entirely to [`@adonisjs/drive`](https://github.com/adonisjs/drive), so you reuse your existing `local` / `s3` / `gcs` disks. This package never reimplements disk drivers.
+
+<Callout type="info" title="Alpha">
+  This package is published as `0.1.0`. The API documented here reflects the current alpha. Pin a version and expect refinements before `1.0`.
+</Callout>
+
+## The problem it solves
+
+Handling uploads in a real app means more than calling `file.move()`. You end up rebuilding the same machinery in every project: where does this file live, which MIME types are allowed here, is this the kind of field that holds *one* file (an avatar) or *many* (a gallery), how do I produce a thumbnail, and how do I clean everything up when the row is deleted. `@adonis-agora/media` collapses that into two small layers:
+
+- **A media library** — `attach` a file to an entity in a named collection, `list` / `find` / `delete` it, and ask for a `url`. Collections carry the policy (allowed MIME types, single-vs-many, conversions); the library enforces it.
+- **Column attachments** — the [adonis-attachment](https://github.com/jrmc/adonis-attachment) style, where a file lives directly on a model column as a JSON value (plus any image variants). No extra table, no owner — just a field.
+
+Both sit over the **same** Drive disks and the **same** image processor, so you pick whichever shape fits each field and the storage story is identical.
+
+## Built on Drive, with pluggable backends
+
+The library talks to storage through a tiny structural `Disk` contract that a real `@adonisjs/drive` disk satisfies directly — so it **never imports Drive** and Drive stays a peer dependency you already have. Two more seams are pluggable and lazy:
+
+- **The `MediaStore`** persists the metadata rows. Ships with an **in-memory** store (single-process, for tests and scratch apps) and a **Lucid** store (SQLite / Postgres / MySQL, with a published migration). The Lucid driver only imports `@adonisjs/lucid` when you actually select it.
+- **The `ImageProcessor`** does the resizing / cropping / format conversion. Ships with a **sharp** processor; `sharp` is an optional peer imported only when conversions are configured.
+
+This is the Agora config idiom: drivers live in the core package, you select them **by name** with a `defineConfig` + factory map, and each heavy peer loads lazily only when chosen.
+
+## Quickstart
+
+The minimal loop — install Drive, install and configure media, attach a file, get a URL.
+
+<Steps>
+<Step>
+
+Install the storage backend and the library, then run the configure codemod:
+
+```sh
+node ace add @adonisjs/drive   # storage backend (required)
+npm i @adonis-agora/media
+node ace configure @adonis-agora/media
+```
+
+`configure` registers the provider, publishes `config/media.ts`, and publishes the `media` table migration.
+
+</Step>
+<Step>
+
+Resolve the `MediaManager` from the container and attach a file to an entity's collection:
+
+```ts
+import { MediaManager } from '@adonis-agora/media'
+
+const media = await app.container.make(MediaManager)
+
+const m = await media.library.attach({
+  ownerType: 'Post',
+  ownerId: String(post.id),
+  collection: 'gallery',
+  fileName: file.clientName,
+  mimeType: file.type!,
+  contents: buffer, // Buffer | Readable
+})
+```
+
+</Step>
+<Step>
+
+Read it back — the original or a (lazily generated, then cached) conversion:
+
+```ts
+await media.library.url(m.id)            // public url of the original
+await media.library.url(m.id, 'thumb')   // generated on first call, then cached
+await media.library.list('Post', String(post.id), 'gallery')
+await media.library.delete(m.id)         // removes the original AND every conversion
+```
+
+</Step>
+</Steps>
+
+For the full walkthrough — including the optional `for(owner)` binding and column attachments — see [Getting Started](/docs/media/getting-started).
+
+## What you get
+
+- **Collections with policy.** A collection is a named bucket with an optional MIME whitelist, an optional `single: true` (attaching replaces the existing file), per-collection conversions, and a per-collection disk override.
+- **Image conversions, eager or lazy.** Declare presets (`width` / `height` / `fit` / `format` / `quality`); eager ones are generated on `attach`, the rest on the first `url(id, name)` and cached on the record so they're produced once.
+- **Two attachment shapes over one storage layer.** The owner-collection `MediaLibrary` *and* the column `AttachmentManager`, sharing the same disks and image processor.
+- **Reuse your Drive disks.** `local`, `s3`, `gcs` — whatever you configured in `config/drive.ts`. The default disk, a per-collection disk, and a per-`attach` disk override all compose.
+- **Pluggable persistence.** An in-memory store for tests and a portable Lucid store with a published migration; bring your own `MediaStore` by implementing one interface.
+- **A testing kit.** In-memory doubles for all three SPIs (`InMemoryMediaStore`, `InMemoryDisk`, `FakeImageProcessor`) so you can exercise the library with no disk, database, or sharp.
+- **Structural diagnostics.** Lifecycle events on `agora:media:*` via a global slot, captured automatically by [Telescope](/docs/telescope) when present — and an inert no-op when it isn't.
+
+## Where to go next
+
+<Cards>
+  <Card title="Getting Started" href="/docs/media/getting-started" description="Install Drive, configure the library, attach your first file, and resolve URLs — step by step." />
+  <Card title="Configuration" href="/docs/media/configuration" description="Every key on defineConfig — disk, store/stores, imageProcessor, collections, the diagnostics toggle." />
+  <Card title="Collections & Conversions" href="/docs/media/collections-and-conversions" description="MIME whitelist, single-file replace, ordering, and image presets — eager vs lazy generation." />
+  <Card title="Attachments" href="/docs/media/attachments" description="Column attachments (adonis-attachment style): a file (and variants) stored directly on a model column." />
+  <Card title="Stores & Processors" href="/docs/media/stores-and-processors" description="The Lucid store and its migration, the sharp processor, the Disk contract, and writing your own driver." />
+  <Card title="Testing" href="/docs/media/testing" description="Drive the library with in-memory doubles — no disk, no database, no sharp." />
+  <Card title="Roadmap" href="/docs/media/roadmap" description="What is intentionally deferred in 0.1.0 — resumable uploads, direct presign, a browser/React client." />
+</Cards>
