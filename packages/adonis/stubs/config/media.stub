@@ -1,0 +1,36 @@
+{{{
+  exports({ to: app.configPath('media.ts') })
+}}}
+import { defineConfig, stores, processors } from '@adonis-agora/media'
+
+/**
+ * Configuration for @adonis-agora/media. Storage is delegated to @adonisjs/drive — `disk` names a disk
+ * from your config/drive.ts (omit to use Drive's default). Pick a `store` by name from the map below;
+ * each driver's peer dependency is imported lazily, only when selected. The default store is the
+ * in-process `memory` store (single-process, non-durable). For production select `lucid` and run
+ * `node ace migration:run`.
+ *
+ * Conversions need an image processor — `processors.sharp()` loads the optional `sharp` peer lazily.
+ */
+export default defineConfig({
+  // disk: 's3', // omit to use Drive's default disk
+
+  store: 'memory',
+  stores: {
+    memory: stores.memory(),
+    lucid: stores.lucid(),
+  },
+
+  imageProcessor: processors.sharp(),
+
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+    {
+      name: 'gallery',
+      conversions: [
+        { name: 'thumb', width: 200, height: 200 },
+        { name: 'og', width: 1200, eager: true },
+      ],
+    },
+  ],
+})
