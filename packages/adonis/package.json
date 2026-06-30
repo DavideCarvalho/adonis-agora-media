@@ -77,7 +77,10 @@
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0",
     "@adonisjs/lucid": "^22.4.0",
+    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.0.0",
+    "better-sqlite3": "^11.0.0",
+    "luxon": "^3.4.0",
     "sharp": "^0.33.0",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0"
