@@ -39,18 +39,39 @@ Attachment.fromJSON(post.avatar)    // → Attachment | null (null for null/unde
 
 ## Creating an attachment
 
-`createFromFile(input, options?)` uploads the bytes (and any variants), then returns the `Attachment` you assign to a column.
+`createFromFile(input, options?)` uploads the bytes (and any variants), then returns the `Attachment` you assign to a column. In a controller you take the uploaded file, stream its tmp bytes as `contents`, and persist the resulting value object on the model:
 
-```ts
+```ts title="app/controllers/avatars_controller.ts"
+import { createReadStream } from 'node:fs'
+import User from '#models/user'
 import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
 
-const att = await media.attachments.createFromFile(
-  { fileName: 'avatar.png', mimeType: 'image/png', contents: buffer }, // Buffer | Readable
-  { variants: [{ name: 'thumb', width: 100 }] },
-)
+export default class AvatarsController {
+  async update({ request, response, auth }: HttpContext) {
+    const user = auth.getUserOrFail()
 
-post.avatar = att.toJSON() // store on a JSON column
-await post.save()
+    const avatar = request.file('avatar', {
+      size: '2mb',
+      extnames: ['jpg', 'jpeg', 'png', 'webp'],
+    })
+    if (!avatar) return response.badRequest({ error: 'An "avatar" file is required' })
+
+    const att = await media.attachments.createFromFile(
+      {
+        fileName: avatar.clientName,
+        mimeType: avatar.type!,
+        contents: createReadStream(avatar.tmpPath!), // Buffer | Readable
+      },
+      { variants: [{ name: 'thumb', width: 100 }] },
+    )
+
+    user.avatarData = att.toJSON() // store on a JSON column
+    await user.save()
+
+    return response.ok(user)
+  }
+}
 ```
 
 The `input` is `{ fileName, mimeType, contents, size? }`. The `options` are all optional:
@@ -76,7 +97,7 @@ If you request variants but no `imageProcessor` is configured, `createFromFile` 
 ## Resolving URLs
 
 ```ts
-const att = Attachment.fromJSON(post.avatar)!
+const att = Attachment.fromJSON(user.avatarData)!
 
 await media.attachments.url(att)            // the original
 await media.attachments.url(att, 'thumb')   // a named variant
@@ -95,8 +116,8 @@ Asking for a variant that wasn't generated throws (`Attachment has no variant "<
 
 ```ts
 await media.attachments.delete(att)
-post.avatar = null
-await post.save()
+user.avatarData = null
+await user.save()
 ```
 
 ---
@@ -105,11 +126,11 @@ await post.save()
 
 A clean way to use attachments on a Lucid model is to (de)serialize in a `@column` consumer or a small accessor. The attachment is just JSON, so any JSON column works:
 
-```ts title="app/models/post.ts"
+```ts title="app/models/user.ts"
 import { BaseModel, column } from '@adonisjs/lucid/orm'
 import { Attachment, type AttachmentData } from '@adonis-agora/media'
 
-export default class Post extends BaseModel {
+export default class User extends BaseModel {
   @column()
   declare avatarData: AttachmentData | null
 
@@ -119,18 +140,27 @@ export default class Post extends BaseModel {
 }
 ```
 
-Then in a controller:
+Then a controller reads it back through the `avatar` accessor — resolve a variant URL for the response, or clear the column on delete:
 
-```ts
-const att = await media.attachments.createFromFile(
-  { fileName, mimeType, contents },
-  { variants: [{ name: 'thumb', width: 100 }, { name: 'card', width: 600, format: 'webp' }] },
-)
-post.avatarData = att.toJSON()
-await post.save()
+```ts title="app/controllers/avatars_controller.ts"
+async show({ response, auth }: HttpContext) {
+  const user = auth.getUserOrFail()
+  const url = user.avatar ? await media.attachments.url(user.avatar, 'thumb') : null
 
-// later
-const url = post.avatar ? await media.attachments.url(post.avatar, 'thumb') : null
+  return response.ok({ avatarUrl: url })
+}
+
+async destroy({ response, auth }: HttpContext) {
+  const user = auth.getUserOrFail()
+
+  if (user.avatar) {
+    await media.attachments.delete(user.avatar)
+    user.avatarData = null
+    await user.save()
+  }
+
+  return response.noContent()
+}
 ```
 
 ---

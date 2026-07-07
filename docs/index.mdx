@@ -52,19 +52,30 @@ node ace configure @adonis-agora/media
 </Step>
 <Step>
 
-Import the `MediaManager` service and attach a file to an entity's collection:
+Import the `media` service and attach an uploaded file to an entity's collection from a controller:
 
-```ts
+```ts title="app/controllers/post_images_controller.ts"
+import { createReadStream } from 'node:fs'
 import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
 
-const m = await media.library.attach({
-  ownerType: 'Post',
-  ownerId: String(post.id),
-  collection: 'gallery',
-  fileName: file.clientName,
-  mimeType: file.type!,
-  contents: buffer, // Buffer | Readable
-})
+export default class PostImagesController {
+  async store({ request, response, params }: HttpContext) {
+    const image = request.file('image', { size: '5mb', extnames: ['jpg', 'png', 'webp'] })
+    if (!image) return response.badRequest({ error: 'An "image" file is required' })
+
+    const record = await media.library.attach({
+      ownerType: 'Post',
+      ownerId: params.id,
+      collection: 'gallery',
+      fileName: image.clientName,
+      mimeType: image.type!,
+      contents: createReadStream(image.tmpPath!), // Buffer | Readable
+    })
+
+    return response.created({ id: record.id })
+  }
+}
 ```
 
 </Step>
@@ -73,10 +84,10 @@ const m = await media.library.attach({
 Read it back — the original or a (lazily generated, then cached) conversion:
 
 ```ts
-await media.library.url(m.id)            // public url of the original
-await media.library.url(m.id, 'thumb')   // generated on first call, then cached
-await media.library.list('Post', String(post.id), 'gallery')
-await media.library.delete(m.id)         // removes the original AND every conversion
+await media.library.url(record.id)            // public url of the original
+await media.library.url(record.id, 'thumb')   // generated on first call, then cached
+await media.library.list('Post', params.id, 'gallery')
+await media.library.delete(record.id)         // removes the original AND every conversion
 ```
 
 </Step>

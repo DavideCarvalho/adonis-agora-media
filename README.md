@@ -68,36 +68,56 @@ export default defineConfig({
 
 ## Use
 
+The provider binds a singleton `MediaManager`; reach it with the service import (or `@inject()` it).
+A real upload controller loads the owner, validates the file, and streams its tmp bytes into a
+collection:
+
 ```ts
-import { MediaManager } from '@adonis-agora/media'
+// app/controllers/post_images_controller.ts
+import { createReadStream } from 'node:fs'
+import Post from '#models/post'
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
 
-const media = await app.container.make(MediaManager)
+export default class PostImagesController {
+  async store({ request, response, params }: HttpContext) {
+    const post = await Post.findOrFail(params.id)
 
-// Attach to an entity collection
-const m = await media.library.attach({
-  ownerType: 'Post',
-  ownerId: post.id,
-  collection: 'gallery',
-  fileName: file.clientName,
-  mimeType: file.type,
-  contents: buffer, // Buffer | Readable
-})
+    const image = request.file('image', { size: '5mb', extnames: ['jpg', 'png', 'webp'] })
+    if (!image) return response.badRequest({ error: 'An "image" file is required' })
 
-await media.library.url(m.id)            // public url of the original
-await media.library.url(m.id, 'thumb')   // generated lazily on first call, then cached
+    const record = await media.library.attach({
+      ownerType: 'Post',
+      ownerId: post.id,
+      collection: 'gallery',
+      fileName: image.clientName,
+      mimeType: image.type!,
+      contents: createReadStream(image.tmpPath!), // Buffer | Readable
+    })
+
+    return response.created({ id: record.id, url: await media.library.url(record.id) })
+  }
+}
+```
+
+Reading, listing and deleting go through the same `media` singleton:
+
+```ts
+await media.library.url(record.id)            // public url of the original
+await media.library.url(record.id, 'thumb')   // generated lazily on first call, then cached
 await media.library.list('Post', post.id, 'gallery')
-await media.library.delete(m.id)
+await media.library.delete(record.id)
 
-// Or bind an owner once
+// Or bind an owner once for a bulk upload
 const gallery = media.library.for('Post', post.id)
-await gallery.attach({ collection: 'gallery', fileName, mimeType, contents })
+await gallery.attach({ collection: 'gallery', fileName: image.clientName, mimeType: image.type!, contents })
 
-// Column attachments (adonis-attachment style)
+// Column attachments (adonis-attachment style) — store the value object on a JSON column
 const att = await media.attachments.createFromFile(
-  { fileName: 'avatar.png', mimeType: 'image/png', contents: buffer },
+  { fileName: image.clientName, mimeType: image.type!, contents },
   { variants: [{ name: 'thumb', width: 100 }] },
 )
-post.avatar = att.toJSON() // store on a JSON column
+user.avatarData = att.toJSON()
 await media.attachments.url(att, 'thumb')
 ```
 
