@@ -42,9 +42,7 @@ Attachment.fromJSON(post.avatar)    // → Attachment | null (null for null/unde
 `createFromFile(input, options?)` uploads the bytes (and any variants), then returns the `Attachment` you assign to a column.
 
 ```ts
-import { MediaManager } from '@adonis-agora/media'
-
-const media = await app.container.make(MediaManager)
+import media from '@adonis-agora/media/services/main'
 
 const att = await media.attachments.createFromFile(
   { fileName: 'avatar.png', mimeType: 'image/png', contents: buffer }, // Buffer | Readable

@@ -90,15 +90,15 @@ Every key is covered in [Configuration](/docs/media/configuration).
 
 ---
 
-## Step 2 — Resolve the manager
+## Step 2 — Import the manager
 
-The provider binds a singleton `MediaManager` into the container. Resolve it wherever you need it — a controller, a service, a command:
+The provider binds a singleton `MediaManager` into the container. The idiomatic way to reach it is the service-singleton import — resolved once at boot and ready to use wherever you need it — a controller, a service, a command:
 
 ```ts
-import { MediaManager } from '@adonis-agora/media'
-
-const media = await app.container.make(MediaManager)
+import media from '@adonis-agora/media/services/main'
 ```
+
+If you prefer dependency injection, the same singleton is available through the container — `@inject()` a constructor param typed `private media: MediaManager`, or resolve it manually with `await app.container.make(MediaManager)`.
 
 `MediaManager` composes the two layers over a shared storage façade:
 
@@ -115,13 +115,12 @@ const media = await app.container.make(MediaManager)
 `attach` writes the bytes to a disk and saves a metadata record. You provide the owning entity (`ownerType` + `ownerId`), the `collection`, and the file. `contents` is a `Buffer` or a `Readable` — the library buffers streams for you.
 
 ```ts title="app/controllers/posts_controller.ts"
-import { MediaManager } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
 import type { HttpContext } from '@adonisjs/core/http'
 
 export default class PostsController {
   async addImage({ request, params }: HttpContext) {
     const file = request.file('image')!
-    const media = await app.container.make(MediaManager)
 
     const m = await media.library.attach({
       ownerType: 'Post',

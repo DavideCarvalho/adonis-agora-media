@@ -52,12 +52,10 @@ node ace configure @adonis-agora/media
 </Step>
 <Step>
 
-Resolve the `MediaManager` from the container and attach a file to an entity's collection:
+Import the `MediaManager` service and attach a file to an entity's collection:
 
 ```ts
-import { MediaManager } from '@adonis-agora/media'
-
-const media = await app.container.make(MediaManager)
+import media from '@adonis-agora/media/services/main'
 
 const m = await media.library.attach({
   ownerType: 'Post',
