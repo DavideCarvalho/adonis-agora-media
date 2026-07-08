@@ -131,7 +131,10 @@ import { BaseModel, column } from '@adonisjs/lucid/orm'
 import { Attachment, type AttachmentData } from '@adonis-agora/media'
 
 export default class User extends BaseModel {
-  @column()
+  @column({
+    prepare: (v) => (v ? JSON.stringify(v) : v),
+    consume: (v) => (typeof v === 'string' ? JSON.parse(v) : v),
+  })
   declare avatarData: AttachmentData | null
 
   get avatar(): Attachment | null {

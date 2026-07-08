@@ -15,7 +15,7 @@ Getting `@adonis-agora/media` running is three steps: make sure Drive is install
 ## Prerequisites
 
 - **Node.js 20.6+**
-- **AdonisJS 6** (`@adonisjs/core` `^7.3.0`)
+- **AdonisJS 7** (`@adonisjs/core` `^7.3.0`)
 - **`@adonisjs/drive` `^3.0.0`**, installed and configured — media delegates *all* storage to it. If you don't have it yet: `node ace add @adonisjs/drive`.
 - *(optional)* **`@adonisjs/lucid`** if you want the persistent `lucid` store, and **`sharp`** if you want image conversions. Both are optional peers, loaded lazily only when selected.
 
@@ -144,7 +144,7 @@ export default class PostImagesController {
 
     const record = await media.library.attach({
       ownerType: 'Post',
-      ownerId: post.id,
+      ownerId: String(post.id),
       collection: 'gallery',
       fileName: image.clientName,
       mimeType: image.type!,
@@ -167,7 +167,7 @@ A few things happen on `attach`, driven by the collection's config:
 - Any **eager** conversions are generated synchronously; lazy ones wait for the first `url()`.
 
 <Callout type="info" title="The owner is yours to define">
-  `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. `ownerId` is coerced to a string, so passing a numeric id is fine.
+  `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. Only `media.library.for(ownerType, ownerId)` coerces for you (it accepts `string | number`); `attach` and `list` take a **string** `ownerId`, so wrap a numeric id with `String(id)`.
 </Callout>
 
 ### Bind an owner once with `for()`

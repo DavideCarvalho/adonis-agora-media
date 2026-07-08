@@ -80,7 +80,7 @@ await media.library.list('Post', '1', 'gallery')
 ```
 
 <Callout type="info">
-  Ordering is append-only in 0.1.0 — `attach` always takes the next slot. There's no built-in reorder API yet; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
+  Ordering is append-only in the current alpha — `attach` always takes the next slot. There's no built-in reorder API yet; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
 </Callout>
 
 ### Per-collection disk
@@ -185,7 +185,7 @@ The conversion shares the original's disk, and its path is recorded on the `Medi
 | Asking for a media id that doesn't exist | `MediaNotFoundError` | `E_MEDIA_RECORD_NOT_FOUND` |
 
 <Callout type="warn">
-  Conversions are image-only in 0.1.0 — the sharp processor decodes the original as an image. Attaching non-images to a collection is fine (with no conversions), but declaring conversions on a non-image collection and then requesting one will fail inside sharp. Video/PDF thumbnails and responsive `srcset` are on the [Roadmap](/docs/media/roadmap).
+  Conversions are image-only in the current alpha — the sharp processor decodes the original as an image. Attaching non-images to a collection is fine (with no conversions), but declaring conversions on a non-image collection and then requesting one will fail inside sharp. Video/PDF thumbnails and responsive `srcset` are on the [Roadmap](/docs/media/roadmap).
 </Callout>
 
 ---

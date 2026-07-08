@@ -88,7 +88,7 @@ export default class PostImagesController {
 
     const record = await media.library.attach({
       ownerType: 'Post',
-      ownerId: post.id,
+      ownerId: String(post.id),
       collection: 'gallery',
       fileName: image.clientName,
       mimeType: image.type!,
@@ -105,7 +105,7 @@ Reading, listing and deleting go through the same `media` singleton:
 ```ts
 await media.library.url(record.id)            // public url of the original
 await media.library.url(record.id, 'thumb')   // generated lazily on first call, then cached
-await media.library.list('Post', post.id, 'gallery')
+await media.library.list('Post', String(post.id), 'gallery')
 await media.library.delete(record.id)
 
 // Or bind an owner once for a bulk upload
@@ -157,7 +157,7 @@ fake while keeping the rest of the wiring intact.
 
 ## Roadmap (deferred)
 
-These seams exist in the SPIs but are intentionally **not built** in 0.1.0:
+These seams exist in the SPIs but are intentionally **not built** in the current alpha:
 
 - Resumable / tus uploads and direct S3 multipart presign (proxy + direct upload modes).
 - A browser client + React (`useMediaUpload` / `MediaUploader`) package.
