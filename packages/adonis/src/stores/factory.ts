@@ -1,4 +1,5 @@
 import type { ApplicationService } from '@adonisjs/core/types';
+import { StoreNotConfiguredError } from '../errors.js';
 import type { MediaStore } from '../media_store.js';
 
 /**
@@ -25,11 +26,6 @@ export interface LucidStoreConfig {
   table?: string;
 }
 
-/** Options for the in-memory media store (single-process, non-durable). */
-export interface MemoryStoreConfig {
-  // no options
-}
-
 /**
  * The store factory namespace used in `config/media.ts`:
  *
@@ -50,7 +46,7 @@ export interface MemoryStoreConfig {
  */
 export const stores = {
   /** In-memory store — single-process, non-durable. Handy for tests and scratch apps. */
-  memory(_config: MemoryStoreConfig = {}): StoreFactory {
+  memory(): StoreFactory {
     return async () => {
       const { InMemoryMediaStore } = await import('../testing/in_memory_media_store.js');
       return new InMemoryMediaStore();
@@ -69,3 +65,24 @@ export const stores = {
     };
   },
 };
+
+/**
+ * Build the media store selected by `config.store` from the `config.stores` map. When a store IS
+ * named but has no matching factory (a typo or a missing `stores` entry), this THROWS a
+ * {@link StoreNotConfiguredError} rather than silently falling back to the in-memory store — a
+ * non-durable fallback would lose data on restart. Only the zero-config path (no `store` named at
+ * all) resolves to the in-memory store.
+ */
+export async function resolveStore(
+  config: { store?: string; stores?: Record<string, StoreFactory> },
+  ctx: StoreContext,
+): Promise<MediaStore> {
+  const name = config.store;
+  if (name) {
+    const factory = config.stores?.[name];
+    if (!factory) throw new StoreNotConfiguredError(name);
+    return factory(ctx);
+  }
+  const { InMemoryMediaStore } = await import('../testing/in_memory_media_store.js');
+  return new InMemoryMediaStore();
+}

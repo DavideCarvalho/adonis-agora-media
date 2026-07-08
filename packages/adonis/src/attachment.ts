@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { asBuffer, toBytes } from './contents.js';
 import { publishMedia } from './diagnostics.js';
+import { ImageProcessorMissingError, VariantNotFoundError } from './errors.js';
 import type { ConversionPreset, ImageProcessor } from './image_processor.js';
 import type { StorageManager } from './storage_manager.js';
 
@@ -121,33 +122,50 @@ export class AttachmentManager {
     const id = this.newId();
     const dir = `${prefix}/${id}`;
     const path = `${dir}/${input.fileName}`;
+    const target = this.storage.disk(disk);
+    const presets = options.variants ?? [];
 
-    const bytes = await toBytes(input.contents);
-    await this.storage.disk(disk).put(path, bytes, { contentType: input.mimeType });
-    const size = input.size ?? (await this.storage.disk(disk).getMetaData(path)).contentLength;
+    // Stream large uploads straight through (no in-memory buffer) when we can: a Readable with a
+    // known size, no variants to generate off the buffered bytes, and a disk that supports it.
+    const canStream =
+      !Buffer.isBuffer(input.contents) &&
+      input.size !== undefined &&
+      presets.length === 0 &&
+      typeof target.putStream === 'function';
+    if (canStream) {
+      await target.putStream?.(path, input.contents as Readable, { contentType: input.mimeType });
+    } else {
+      const bytes = await toBytes(input.contents);
+      await target.put(path, bytes, { contentType: input.mimeType });
+    }
 
     const variants: Record<string, AttachmentVariant> = {};
-    const presets = options.variants ?? [];
-    if (presets.length > 0) {
-      if (!this.imageProcessor) {
-        throw new Error(
-          'AttachmentManager: variants requested but no ImageProcessor was configured',
-        );
+    let size: number;
+    try {
+      size = input.size ?? (await target.getMetaData(path)).contentLength;
+      if (presets.length > 0) {
+        if (!this.imageProcessor) throw new ImageProcessorMissingError();
+        const original = asBuffer(await target.getBytes(path));
+        for (const preset of presets) {
+          const result = await this.imageProcessor.convert(original, preset);
+          const variantPath = `${dir}/variants/${preset.name}.${result.format}`;
+          await target.put(variantPath, result.data, { contentType: result.contentType });
+          variants[preset.name] = {
+            disk,
+            path: variantPath,
+            size: result.data.byteLength,
+            mimeType: result.contentType,
+          };
+        }
       }
-      const original = asBuffer(await this.storage.disk(disk).getBytes(path));
-      for (const preset of presets) {
-        const result = await this.imageProcessor.convert(original, preset);
-        const variantPath = `${dir}/variants/${preset.name}.${result.format}`;
-        await this.storage.disk(disk).put(variantPath, result.data, {
-          contentType: result.contentType,
-        });
-        variants[preset.name] = {
-          disk,
-          path: variantPath,
-          size: result.data.byteLength,
-          mimeType: result.contentType,
-        };
+    } catch (error) {
+      // Compensation: the original (and any variants already written) leaked when the metadata read
+      // or a conversion failed — best-effort remove them before rethrowing.
+      await this.#safeDelete(disk, path);
+      for (const variant of Object.values(variants)) {
+        await this.#safeDelete(variant.disk, variant.path);
       }
+      throw error;
     }
 
     const attachment = new Attachment({
@@ -207,7 +225,16 @@ export class AttachmentManager {
   private resolve(attachment: Attachment, variant?: string): { disk: string; path: string } {
     if (!variant) return { disk: attachment.disk, path: attachment.path };
     const v = attachment.variants[variant];
-    if (!v) throw new Error(`Attachment has no variant "${variant}"`);
+    if (!v) throw new VariantNotFoundError(variant);
     return { disk: v.disk, path: v.path };
+  }
+
+  /** Best-effort disk cleanup for the orphan-compensation path; never masks the original error. */
+  async #safeDelete(disk: string, path: string): Promise<void> {
+    try {
+      await this.storage.disk(disk).delete(path);
+    } catch {
+      // swallow: this is compensation for a failed create; the original error is what matters
+    }
   }
 }

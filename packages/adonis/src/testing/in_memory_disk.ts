@@ -34,6 +34,16 @@ export class InMemoryDisk implements Disk {
     });
   }
 
+  async putStream(key: string, contents: Readable, options?: DiskWriteOptions): Promise<void> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of contents) chunks.push(Buffer.from(chunk));
+    this.files.set(key, {
+      data: Buffer.concat(chunks),
+      contentType: options?.contentType,
+      lastModified: new Date(),
+    });
+  }
+
   async getBytes(key: string): Promise<Uint8Array> {
     const file = this.require(key);
     return Buffer.from(file.data);

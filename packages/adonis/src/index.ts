@@ -5,7 +5,6 @@ export type {
   StoreContext,
   StoreFactory,
   LucidStoreConfig,
-  MemoryStoreConfig,
   ImageProcessorFactory,
 } from './define_config.js';
 
@@ -42,8 +41,7 @@ export type {
   SignedUrlOptions,
 } from './types.js';
 
-// Diagnostics
-export { publishMedia } from './diagnostics.js';
+// Diagnostics (event types only — `publishMedia` is the internal emit helper and is not exported)
 export type {
   MediaDiagnosticEvent,
   MediaDiagnosticPayloads,
@@ -60,4 +58,6 @@ export {
   MediaNotFoundError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
+  VariantNotFoundError,
+  StoreNotConfiguredError,
 } from './errors.js';

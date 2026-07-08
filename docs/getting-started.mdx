@@ -144,7 +144,7 @@ export default class PostImagesController {
 
     const record = await media.library.attach({
       ownerType: 'Post',
-      ownerId: String(post.id),
+      ownerId: post.id, // string | number — coerced for you
       collection: 'gallery',
       fileName: image.clientName,
       mimeType: image.type!,
@@ -162,12 +162,12 @@ export default class PostImagesController {
 A few things happen on `attach`, driven by the collection's config:
 
 - If the collection has an `acceptsMimeTypes` whitelist and the file's type isn't on it, a `MimeNotAllowedError` (`E_MEDIA_MIME_NOT_ALLOWED`) is thrown **before** anything is written.
-- If the collection is `single`, any existing media in it (for this owner) is deleted first — the new file *replaces* it.
+- If the collection is `single`, the new file *replaces* any existing media in it (for this owner). The previous file is removed only **after** the new one is safely written and persisted, so a failed upload leaves the old media intact.
 - The file is written to `${ownerType}/${ownerId}/${collection}/${id}/${fileName}` on the resolved disk (per-call `disk` → collection `disk` → storage default).
 - Any **eager** conversions are generated synchronously; lazy ones wait for the first `url()`.
 
 <Callout type="info" title="The owner is yours to define">
-  `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. Only `media.library.for(ownerType, ownerId)` coerces for you (it accepts `string | number`); `attach` and `list` take a **string** `ownerId`, so wrap a numeric id with `String(id)`.
+  `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. `attach`, `list` and `media.library.for(ownerType, ownerId)` all accept `string | number` for `ownerId` and coerce it to a string for you, so a numeric Lucid id (`post.id`) can be passed as-is.
 </Callout>
 
 ### Bind an owner once with `for()`
@@ -223,8 +223,8 @@ The first time you ask for `url(id, 'thumb')`, the library reads the original of
 ## Step 5 — List, find and delete
 
 ```ts
-await media.library.list('Post', String(post.id))            // every collection, ordered
-await media.library.list('Post', String(post.id), 'gallery') // one collection, ordered by `order` asc
+await media.library.list('Post', post.id)            // every collection, ordered
+await media.library.list('Post', post.id, 'gallery') // one collection, ordered by `order` asc
 await media.library.find(m.id)                               // MediaRecord | null
 
 await media.library.delete(m.id) // removes the original AND every generated conversion from disk

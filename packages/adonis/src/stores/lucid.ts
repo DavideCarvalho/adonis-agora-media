@@ -57,12 +57,9 @@ export class LucidMediaStore implements MediaStore {
 
   async save(record: MediaRecord): Promise<MediaRecord> {
     const row = toRow(record);
-    const exists = await this.query().where('id', record.id).first();
-    if (exists) {
-      await this.query().where('id', record.id).update(row);
-    } else {
-      await this.client().table(this.table).insert(row);
-    }
+    // Single atomic upsert (portable Knex `INSERT ... ON CONFLICT (id) DO UPDATE`) instead of a
+    // racy read-then-branch: concurrent saves of the same id can't interleave into a lost write.
+    await this.client().table(this.table).insert(row).onConflict('id').merge();
     return { ...record };
   }
 

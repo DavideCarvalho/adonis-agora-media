@@ -88,7 +88,7 @@ export default class PostImagesController {
 
     const record = await media.library.attach({
       ownerType: 'Post',
-      ownerId: String(post.id),
+      ownerId: post.id, // string | number — coerced for you
       collection: 'gallery',
       fileName: image.clientName,
       mimeType: image.type!,
@@ -105,7 +105,7 @@ Reading, listing and deleting go through the same `media` singleton:
 ```ts
 await media.library.url(record.id)            // public url of the original
 await media.library.url(record.id, 'thumb')   // generated lazily on first call, then cached
-await media.library.list('Post', String(post.id), 'gallery')
+await media.library.list('Post', post.id, 'gallery')
 await media.library.delete(record.id)
 
 // Or bind an owner once for a bulk upload

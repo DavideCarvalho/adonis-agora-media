@@ -3,12 +3,7 @@ import type { MediaCollectionConfig } from './media_collection.js';
 import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
-import type {
-  LucidStoreConfig,
-  MemoryStoreConfig,
-  StoreContext,
-  StoreFactory,
-} from './stores/factory.js';
+import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
 
 /**
  * Shape of `config/media.ts`. Storage is delegated to `@adonisjs/drive` — the `disk` is the name of a
@@ -64,10 +59,4 @@ export function defineConfig(config: MediaConfig = {}): MediaConfig {
 }
 
 export { stores, processors };
-export type {
-  StoreContext,
-  StoreFactory,
-  LucidStoreConfig,
-  MemoryStoreConfig,
-  ImageProcessorFactory,
-};
+export type { StoreContext, StoreFactory, LucidStoreConfig, ImageProcessorFactory };

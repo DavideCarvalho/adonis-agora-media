@@ -29,3 +29,21 @@ export class ImageProcessorMissingError extends Error {
     this.name = 'ImageProcessorMissingError';
   }
 }
+
+export class VariantNotFoundError extends Error {
+  readonly code = 'E_MEDIA_VARIANT_NOT_FOUND';
+  constructor(variant: string) {
+    super(`Attachment has no variant "${variant}"`);
+    this.name = 'VariantNotFoundError';
+  }
+}
+
+export class StoreNotConfiguredError extends Error {
+  readonly code = 'E_MEDIA_STORE_NOT_CONFIGURED';
+  constructor(name: string) {
+    super(
+      `Media config selects store "${name}" but no matching factory exists in \`stores\`. Add \`stores.${name}\` to config/media.ts (e.g. \`stores: { ${name}: stores.lucid() }\`), or omit \`store\` to use the in-memory store.`,
+    );
+    this.name = 'StoreNotConfiguredError';
+  }
+}

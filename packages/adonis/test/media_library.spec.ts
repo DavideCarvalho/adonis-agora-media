@@ -1,10 +1,24 @@
+import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { MimeNotAllowedError } from '../src/errors.js';
 import { MediaLibrary } from '../src/media_library.js';
+import type { MediaRecord } from '../src/media_record.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { FakeImageProcessor } from '../src/testing/fake_image_processor.js';
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
+
+/** In-memory store whose `save` can be armed to reject once, to exercise the orphan-cleanup path. */
+class FlakyStore extends InMemoryMediaStore {
+  failNextSave = false;
+  override async save(record: MediaRecord): Promise<MediaRecord> {
+    if (this.failNextSave) {
+      this.failNextSave = false;
+      throw new Error('store.save failed');
+    }
+    return super.save(record);
+  }
+}
 
 function makeLibrary(opts: Partial<ConstructorParameters<typeof MediaLibrary>[0]> = {}) {
   const { resolve, disks } = inMemoryDiskResolver(['fs']);
@@ -180,5 +194,94 @@ describe('MIME whitelist', () => {
       contents: png,
     });
     expect(record.id).toBeDefined();
+  });
+});
+
+describe('upload robustness', () => {
+  it('cleans up the orphaned disk object when the store rejects the save', async () => {
+    const { resolve, disks } = inMemoryDiskResolver(['fs']);
+    const storage = new StorageManager({ default: 'fs', resolve });
+    const store = new FlakyStore();
+    store.failNextSave = true;
+    const library = new MediaLibrary({
+      storage,
+      store,
+      idGenerator: () => 'id-1',
+      clock: () => new Date('2026-06-23T00:00:00.000Z'),
+      emitDiagnostics: false,
+    });
+
+    await expect(
+      library.attach({
+        ownerType: 'Post',
+        ownerId: '1',
+        collection: 'gallery',
+        fileName: 'a.png',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toThrow('store.save failed');
+
+    // The bytes were written before save was attempted, then removed by the compensation step.
+    expect(disks.fs.files.size).toBe(0);
+  });
+
+  it('keeps the old media intact when replacing a single-file collection and the new save fails', async () => {
+    const { resolve, disks } = inMemoryDiskResolver(['fs']);
+    const storage = new StorageManager({ default: 'fs', resolve });
+    const store = new FlakyStore();
+    let counter = 0;
+    const library = new MediaLibrary({
+      storage,
+      store,
+      collections: [{ name: 'avatar', single: true }],
+      idGenerator: () => `id-${++counter}`,
+      clock: () => new Date('2026-06-23T00:00:00.000Z'),
+      emitDiagnostics: false,
+    });
+
+    const first = await library.attach({
+      ownerType: 'User',
+      ownerId: '1',
+      collection: 'avatar',
+      fileName: 'old.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+
+    // Arm a failure for the replacement's save; the previous file must survive.
+    store.failNextSave = true;
+    await expect(
+      library.attach({
+        ownerType: 'User',
+        ownerId: '1',
+        collection: 'avatar',
+        fileName: 'new.png',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toThrow('store.save failed');
+
+    // Old record + bytes intact; the failed replacement left nothing behind.
+    const list = await library.list('User', '1', 'avatar');
+    expect(list.map((r) => r.id)).toEqual([first.id]);
+    expect(disks.fs.files.has(first.path)).toBe(true);
+    expect(disks.fs.files.has('User/1/avatar/id-2/new.png')).toBe(false);
+  });
+
+  it('streams a Readable straight to the disk when the size is known and no conversions run', async () => {
+    const { library, disks } = makeLibrary();
+    const record = await library.attach({
+      ownerType: 'Post',
+      ownerId: '1',
+      collection: 'gallery',
+      fileName: 'big.bin',
+      mimeType: 'application/octet-stream',
+      contents: Readable.from([Buffer.from('streamed-'), Buffer.from('bytes')]),
+      size: 13, // known up front → metadata read-back is skipped
+    });
+
+    expect(record.size).toBe(13);
+    expect(disks.fs.files.get(record.path)?.data.toString()).toBe('streamed-bytes');
   });
 });

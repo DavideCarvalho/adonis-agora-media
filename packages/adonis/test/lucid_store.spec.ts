@@ -77,6 +77,42 @@ describe('LucidMediaStore (sqlite, real migration)', () => {
     expect(all).toHaveLength(1);
   });
 
+  it('the atomic upsert merges every mutable column on conflict (no duplicate row)', async () => {
+    await store.save(
+      record({
+        id: 'a',
+        name: 'first',
+        path: 'p1',
+        size: 1,
+        customProperties: { alt: 'one' },
+        conversions: {},
+        updatedAt: new Date('2026-06-23T00:00:00.000Z'),
+      }),
+    );
+    // Second save of the same id takes the ON CONFLICT (id) DO UPDATE branch.
+    await store.save(
+      record({
+        id: 'a',
+        name: 'second',
+        path: 'p2',
+        size: 42,
+        customProperties: { alt: 'two' },
+        conversions: { thumb: { path: 't.png', disk: 'fs' } },
+        updatedAt: new Date('2026-06-24T00:00:00.000Z'),
+      }),
+    );
+
+    const found = await store.find('a');
+    expect(found?.name).toBe('second');
+    expect(found?.path).toBe('p2');
+    expect(found?.size).toBe(42);
+    expect(found?.customProperties).toEqual({ alt: 'two' });
+    expect(found?.conversions).toEqual({ thumb: { path: 't.png', disk: 'fs' } });
+    expect(found?.updatedAt).toEqual(new Date('2026-06-24T00:00:00.000Z'));
+    // Upsert, not a second insert.
+    expect(await store.listByOwner('Post', '1')).toHaveLength(1);
+  });
+
   it('lists by owner ordered by `order`, and filters by collection', async () => {
     await store.save(record({ id: 'a', order: 2 }));
     await store.save(record({ id: 'b', order: 0 }));

@@ -30,7 +30,8 @@ export interface MediaLibraryOptions {
 
 export interface AttachInput {
   ownerType: string;
-  ownerId: string;
+  /** Owner primary key; a numeric Lucid id is accepted and coerced to a string internally. */
+  ownerId: string | number;
   collection: string;
   fileName: string;
   mimeType: string;
@@ -80,48 +81,74 @@ export class MediaLibrary {
 
   async attach(input: AttachInput): Promise<MediaRecord> {
     const config = this.collections.get(input.collection);
+    const ownerId = String(input.ownerId);
 
     if (config.acceptsMimeTypes && !config.acceptsMimeTypes.includes(input.mimeType)) {
       throw new MimeNotAllowedError(input.collection, input.mimeType);
     }
 
-    // A single-file collection replaces whatever is already there.
-    if (config.single) {
-      const existing = await this.store.listByOwner(
-        input.ownerType,
-        input.ownerId,
-        input.collection,
-      );
-      for (const record of existing) await this.delete(record.id);
-    }
+    // A single-file collection replaces whatever is already there — but only AFTER the new file is
+    // safely written and persisted, so a failed write leaves the old media intact. Capture the
+    // records to replace up front; delete them once the new record commits.
+    const previous = config.single
+      ? await this.store.listByOwner(input.ownerType, ownerId, input.collection)
+      : [];
 
     const disk = input.disk ?? config.disk ?? this.storage.defaultDisk;
     const id = this.newId();
-    const path = `${input.ownerType}/${input.ownerId}/${input.collection}/${id}/${input.fileName}`;
+    const path = `${input.ownerType}/${ownerId}/${input.collection}/${id}/${input.fileName}`;
+    const target = this.storage.disk(disk);
+    const hasConversions = (config.conversions ?? []).length > 0;
 
-    const bytes = await toBytes(input.contents);
-    await this.storage.disk(disk).put(path, bytes, { contentType: input.mimeType });
-    const size = input.size ?? (await this.storage.disk(disk).getMetaData(path)).contentLength;
-    const order = await this.store.nextOrder(input.ownerType, input.ownerId, input.collection);
-    const timestamp = this.now();
+    // Stream large uploads straight through (no in-memory buffer) when we can: a Readable with a
+    // known size, no conversions to generate off the buffered bytes, and a disk that supports it.
+    const canStream =
+      !Buffer.isBuffer(input.contents) &&
+      input.size !== undefined &&
+      !hasConversions &&
+      typeof target.putStream === 'function';
+    if (canStream) {
+      await target.putStream?.(path, input.contents as Readable, { contentType: input.mimeType });
+    } else {
+      const bytes = await toBytes(input.contents);
+      await target.put(path, bytes, { contentType: input.mimeType });
+    }
 
-    const saved = await this.store.save({
-      id,
-      ownerType: input.ownerType,
-      ownerId: input.ownerId,
-      collection: input.collection,
-      name: input.name ?? stripExtension(input.fileName),
-      fileName: input.fileName,
-      mimeType: input.mimeType,
-      size,
-      disk,
-      path,
-      order,
-      customProperties: input.customProperties ?? {},
-      conversions: {},
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
+    let saved: MediaRecord;
+    try {
+      const size = input.size ?? (await target.getMetaData(path)).contentLength;
+      // A single-file collection holds exactly one item, so its order resets to 0 on replace.
+      const order = config.single
+        ? 0
+        : await this.store.nextOrder(input.ownerType, ownerId, input.collection);
+      const timestamp = this.now();
+
+      saved = await this.store.save({
+        id,
+        ownerType: input.ownerType,
+        ownerId,
+        collection: input.collection,
+        name: input.name ?? stripExtension(input.fileName),
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        size,
+        disk,
+        path,
+        order,
+        customProperties: input.customProperties ?? {},
+        conversions: {},
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    } catch (error) {
+      // Compensation (disk + store aren't a single transaction): the bytes landed but the record
+      // didn't persist — best-effort remove the orphaned object before rethrowing.
+      await this.#safeDelete(disk, path);
+      throw error;
+    }
+
+    // The new record is committed; now it's safe to drop what a single-file collection replaced.
+    for (const record of previous) await this.#deleteRecord(record);
 
     this.emit('attach', {
       id: saved.id,
@@ -174,8 +201,8 @@ export class MediaLibrary {
     return updated;
   }
 
-  list(ownerType: string, ownerId: string, collection?: string): Promise<MediaRecord[]> {
-    return this.store.listByOwner(ownerType, ownerId, collection);
+  list(ownerType: string, ownerId: string | number, collection?: string): Promise<MediaRecord[]> {
+    return this.store.listByOwner(ownerType, String(ownerId), collection);
   }
 
   find(id: string): Promise<MediaRecord | null> {
@@ -197,12 +224,30 @@ export class MediaLibrary {
   async delete(id: string): Promise<void> {
     const record = await this.store.find(id);
     if (!record) return;
+    await this.#deleteRecord(record);
+  }
+
+  /** Remove a record we already hold (disk bytes + conversions + store row) and emit `delete`. */
+  async #deleteRecord(record: MediaRecord): Promise<void> {
     await this.storage.disk(record.disk).delete(record.path);
     for (const conversion of Object.values(record.conversions)) {
       await this.storage.disk(conversion.disk).delete(conversion.path);
     }
-    await this.store.delete(id);
-    this.emit('delete', { id, ownerType: record.ownerType, ownerId: record.ownerId });
+    await this.store.delete(record.id);
+    this.emit('delete', {
+      id: record.id,
+      ownerType: record.ownerType,
+      ownerId: record.ownerId,
+    });
+  }
+
+  /** Best-effort disk cleanup for the orphan-compensation path; never masks the original error. */
+  async #safeDelete(disk: string, path: string): Promise<void> {
+    try {
+      await this.storage.disk(disk).delete(path);
+    } catch {
+      // swallow: this is compensation for a failed write; the original error is what matters
+    }
   }
 
   /**

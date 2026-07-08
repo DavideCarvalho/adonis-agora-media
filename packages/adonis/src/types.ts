@@ -12,6 +12,12 @@ import type { Readable } from 'node:stream';
  */
 export interface Disk {
   put(key: string, contents: Uint8Array, options?: DiskWriteOptions): Promise<void>;
+  /**
+   * Write a stream straight to the disk without buffering it in memory (flydrive exposes this). Used
+   * for large uploads when no conversions are needed and the size is known up front. Optional so the
+   * structural contract stays minimal; callers fall back to {@link put} when it is absent.
+   */
+  putStream?(key: string, contents: Readable, options?: DiskWriteOptions): Promise<void>;
   getBytes(key: string): Promise<Uint8Array>;
   getStream(key: string): Promise<Readable>;
   exists(key: string): Promise<boolean>;

@@ -2,6 +2,7 @@ import type { ApplicationService } from '@adonisjs/core/types';
 import type { MediaConfig } from '../src/define_config.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
+import { resolveStore } from '../src/stores/factory.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import type { Disk, DiskResolver } from '../src/types.js';
 
@@ -29,16 +30,18 @@ export default class MediaProvider {
     this.app.container.singleton(MediaManager, async () => {
       const config = this.app.config.get<MediaConfig>('media', {});
 
+      // Validate + build the store from config first, so a misconfigured `store` fails fast (before
+      // we touch Drive) rather than silently booting on a non-durable in-memory fallback.
+      const ctx: StoreContext = { app: this.app };
+      const store = await resolveStore(config, ctx);
+      const imageProcessor = await this.#resolveImageProcessor(config);
+
       // Resolve disks from Drive without a hard dependency: import its service lazily. The Drive
       // disk satisfies our structural `Disk` (getBytes/put/getUrl/...); cast via `unknown` because
       // Drive's full surface is wider than the subset we use.
       const drive = (await import('@adonisjs/drive/services/main'))
         .default as unknown as DriveManagerLike;
       const resolve: DiskResolver = (name) => drive.use(name);
-
-      const ctx: StoreContext = { app: this.app };
-      const store = await this.#resolveStore(config, ctx);
-      const imageProcessor = await this.#resolveImageProcessor(config);
       const defaultDisk = config.disk ?? (await this.#resolveDefaultDiskName());
 
       return new MediaManager({
@@ -55,16 +58,6 @@ export default class MediaProvider {
           : {}),
       });
     });
-  }
-
-  /** Build the configured store; defaults to the in-memory store when none is selected. */
-  async #resolveStore(config: MediaConfig, ctx: StoreContext) {
-    const name = config.store;
-    if (name && config.stores?.[name]) {
-      return config.stores[name](ctx);
-    }
-    const { InMemoryMediaStore } = await import('../src/testing/in_memory_media_store.js');
-    return new InMemoryMediaStore();
   }
 
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */
