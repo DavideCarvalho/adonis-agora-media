@@ -38,6 +38,11 @@
       "import": "./dist/src/stores/lucid.js",
       "default": "./dist/src/stores/lucid.js"
     },
+    "./disks/s3": {
+      "types": "./dist/src/disks/s3.d.ts",
+      "import": "./dist/src/disks/s3.js",
+      "default": "./dist/src/disks/s3.js"
+    },
     "./processors/sharp": {
       "types": "./dist/src/processors/sharp.d.ts",
       "import": "./dist/src/processors/sharp.js",
@@ -54,7 +59,11 @@
       "default": "./dist/src/types.js"
     }
   },
-  "files": ["dist/", "README.md", "CHANGELOG.md"],
+  "files": [
+    "dist/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
@@ -67,10 +76,18 @@
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0",
     "@adonisjs/lucid": "^22.4.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
     "sharp": "^0.33.0"
   },
   "peerDependenciesMeta": {
     "@adonisjs/lucid": {
+      "optional": true
+    },
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
       "optional": true
     },
     "sharp": {
@@ -82,8 +99,12 @@
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0",
     "@adonisjs/lucid": "^22.4.0",
+    "@aws-sdk/client-s3": "^3.726.1",
+    "@aws-sdk/s3-request-presigner": "^3.726.1",
+    "@smithy/util-stream": "^3.3.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.0.0",
+    "aws-sdk-client-mock": "^4.1.0",
     "better-sqlite3": "^11.0.0",
     "luxon": "^3.4.0",
     "sharp": "^0.33.0",

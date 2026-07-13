@@ -1,5 +1,6 @@
 import type { ApplicationService } from '@adonisjs/core/types';
 import type { MediaConfig } from '../src/define_config.js';
+import { resolveConfiguredDisks } from '../src/disks/factory.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import { resolveStore } from '../src/stores/factory.js';
@@ -36,13 +37,24 @@ export default class MediaProvider {
       const store = await resolveStore(config, ctx);
       const imageProcessor = await this.#resolveImageProcessor(config);
 
+      // Build any disks declared in `config.disks` (e.g. the bundled `disks.s3()` driver). Each
+      // factory lazily loads its peer (the AWS SDK), so nothing is imported unless an S3 disk is
+      // actually configured.
+      const configuredDisks = await resolveConfiguredDisks(config.disks);
+
       // Resolve disks from Drive without a hard dependency: import its service lazily. The Drive
       // disk satisfies our structural `Disk` (getBytes/put/getUrl/...); cast via `unknown` because
       // Drive's full surface is wider than the subset we use.
       const drive = (await import('@adonisjs/drive/services/main'))
         .default as unknown as DriveManagerLike;
-      const resolve: DiskResolver = (name) => drive.use(name);
       const defaultDisk = config.disk ?? (await this.#resolveDefaultDiskName());
+
+      // A disk named in `config.disks` wins over a Drive disk of the same name; otherwise fall
+      // through to Drive so existing Drive disks keep working unchanged.
+      const resolve: DiskResolver = (name) => {
+        const key = name ?? defaultDisk;
+        return configuredDisks[key] ?? drive.use(name);
+      };
 
       return new MediaManager({
         defaultDisk,

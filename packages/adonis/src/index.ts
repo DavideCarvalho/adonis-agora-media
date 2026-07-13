@@ -1,16 +1,21 @@
 // Config idiom
-export { defineConfig, stores, processors } from './define_config.js';
+export { defineConfig, stores, processors, disks } from './define_config.js';
 export type {
   MediaConfig,
   StoreContext,
   StoreFactory,
   LucidStoreConfig,
   ImageProcessorFactory,
+  DiskFactory,
+  S3DiskConfig,
+  S3Credentials,
 } from './define_config.js';
 
 // Manager + layers
 export { MediaManager } from './media_manager.js';
 export type { MediaManagerOptions } from './media_manager.js';
+
+export { isExtendedDisk } from './extended_disk.js';
 export { MediaLibrary } from './media_library.js';
 export type { MediaLibraryOptions, AttachInput, OwnerMediaBinding } from './media_library.js';
 export {
@@ -39,6 +44,15 @@ export type {
   DiskWriteOptions,
   DiskMetaData,
   SignedUrlOptions,
+  MultipartPart,
+  MultipartUploadDisk,
+  ExtendedDisk,
+  DiskCapabilities,
+  DiskStat,
+  CopyOptions,
+  ListOptions,
+  ListEntry,
+  ListResult,
 } from './types.js';
 
 // Diagnostics (event types only — `publishMedia` is the internal emit helper and is not exported)

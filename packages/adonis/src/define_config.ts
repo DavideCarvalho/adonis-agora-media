@@ -1,3 +1,5 @@
+import { disks } from './disks/factory.js';
+import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig } from './media_collection.js';
 import { processors } from './processors/factory.js';
@@ -31,10 +33,18 @@ import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/fact
  */
 export interface MediaConfig {
   /**
-   * Name of the `@adonisjs/drive` disk media is written to. Omit to use Drive's default disk. A
-   * collection may override it per-collection, and each `attach` call may override it per-call.
+   * Name of the disk media is written to. Resolved first from the {@link disks} map (e.g. an
+   * `disks.s3()` driver bundled with this package), then from your `@adonisjs/drive` config. Omit
+   * to use Drive's default disk. A collection may override it per-collection, and each `attach`
+   * call may override it per-call.
    */
   disk?: string;
+  /**
+   * Named disks built with the {@link disks} factory (e.g. `disks.s3({ bucket, region })`). Each
+   * factory lazily imports its peer (the AWS SDK for S3) so it only loads when selected. Names here
+   * take precedence over `@adonisjs/drive` disks of the same name.
+   */
+  disks?: Record<string, DiskFactory>;
   /** Name of the media store (a key of {@link stores}). Defaults to `memory` (single-process). */
   store?: string;
   /** Named media stores, built with the {@link stores} factory. */
@@ -58,5 +68,13 @@ export function defineConfig(config: MediaConfig = {}): MediaConfig {
   return config;
 }
 
-export { stores, processors };
-export type { StoreContext, StoreFactory, LucidStoreConfig, ImageProcessorFactory };
+export { stores, processors, disks };
+export type {
+  StoreContext,
+  StoreFactory,
+  LucidStoreConfig,
+  ImageProcessorFactory,
+  DiskFactory,
+  S3DiskConfig,
+  S3Credentials,
+};
