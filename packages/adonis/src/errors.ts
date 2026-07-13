@@ -38,6 +38,16 @@ export class VariantNotFoundError extends Error {
   }
 }
 
+export class UploadNotSupportedError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_NOT_SUPPORTED';
+  constructor(disk: string, operation = 'direct multipart upload') {
+    super(
+      `Disk "${disk}" does not support ${operation}. Use a multipart-capable disk (e.g. \`disks.s3()\`) or the \`proxy\` upload mode.`,
+    );
+    this.name = 'UploadNotSupportedError';
+  }
+}
+
 export class StoreNotConfiguredError extends Error {
   readonly code = 'E_MEDIA_STORE_NOT_CONFIGURED';
   constructor(name: string) {

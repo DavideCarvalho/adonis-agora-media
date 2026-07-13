@@ -6,6 +6,35 @@ import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
+import type { UploadMode } from './upload_mode.js';
+
+/**
+ * Direct-S3 upload configuration. Governs the `proxy`/`direct` multipart upload modes and, when
+ * `routes.enabled`, the HTTP endpoints the provider mounts to drive them (idiomatic AdonisJS routes,
+ * NOT controllers).
+ */
+export interface MediaUploadsConfig {
+  /**
+   * Default upload mode. `direct` presigns multipart parts for the client to upload straight to S3;
+   * `proxy` streams bytes through the app; `auto` picks `direct` on a multipart-capable disk, else
+   * `proxy`. Default `auto`.
+   */
+  mode?: UploadMode;
+  /** Multipart part size in bytes for direct uploads. Default 8 MiB (S3's part minimum is 5 MiB). */
+  partSize?: number;
+  /** Lifetime of presigned part URLs, in seconds. Default 3600. */
+  presignTtlSeconds?: number;
+  /**
+   * Mount the built-in upload HTTP routes. Opt-in — omit or set `enabled: false` to expose the
+   * upload API only through the `MediaManager` methods and wire your own routes.
+   */
+  routes?: {
+    /** Register the routes. Default false. */
+    enabled?: boolean;
+    /** Path prefix for the routes. Default `/media/uploads`. */
+    prefix?: string;
+  };
+}
 
 /**
  * Shape of `config/media.ts`. Storage is delegated to `@adonisjs/drive` — the `disk` is the name of a
@@ -61,6 +90,8 @@ export interface MediaConfig {
   attachmentKeyPrefix?: string;
   /** Emit `agora:media:*` diagnostics events (default true). */
   emitDiagnostics?: boolean;
+  /** Direct-S3 upload settings (default mode, part size, presign TTL, optional HTTP routes). */
+  uploads?: MediaUploadsConfig;
 }
 
 /** Identity helper giving `config/media.ts` full type-checking. */
@@ -77,4 +108,5 @@ export type {
   DiskFactory,
   S3DiskConfig,
   S3Credentials,
+  UploadMode,
 };

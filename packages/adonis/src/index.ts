@@ -2,6 +2,7 @@
 export { defineConfig, stores, processors, disks } from './define_config.js';
 export type {
   MediaConfig,
+  MediaUploadsConfig,
   StoreContext,
   StoreFactory,
   LucidStoreConfig,
@@ -9,12 +10,27 @@ export type {
   DiskFactory,
   S3DiskConfig,
   S3Credentials,
+  UploadMode,
 } from './define_config.js';
 
 // Manager + layers
 export { MediaManager } from './media_manager.js';
 export type { MediaManagerOptions } from './media_manager.js';
 
+// Direct-S3 upload modes (proxy + direct multipart)
+export { UploadManager } from './upload_manager.js';
+export type {
+  UploadManagerOptions,
+  InitiateDirectUploadInput,
+  DirectUploadCreated,
+  PresignPartInput,
+  CompleteDirectUploadInput,
+  AbortDirectUploadInput,
+  ProxyUploadInput,
+} from './upload_manager.js';
+export { resolveUploadMode } from './upload_mode.js';
+export type { ResolvedUploadMode, UploadModeLevels } from './upload_mode.js';
+export { isMultipartCapable } from './multipart.js';
 export { isExtendedDisk } from './extended_disk.js';
 export { MediaLibrary } from './media_library.js';
 export type { MediaLibraryOptions, AttachInput, OwnerMediaBinding } from './media_library.js';
@@ -64,6 +80,9 @@ export type {
   ConversionPayload,
   AttachmentCreatePayload,
   AttachmentDeletePayload,
+  UploadStartPayload,
+  UploadCompletePayload,
+  UploadAbortPayload,
 } from './diagnostics.js';
 
 // Errors
@@ -74,4 +93,5 @@ export {
   ImageProcessorMissingError,
   VariantNotFoundError,
   StoreNotConfiguredError,
+  UploadNotSupportedError,
 } from './errors.js';

@@ -12,7 +12,10 @@ export type MediaDiagnosticEvent =
   | 'delete'
   | 'conversion'
   | 'attachment.create'
-  | 'attachment.delete';
+  | 'attachment.delete'
+  | 'upload.start'
+  | 'upload.complete'
+  | 'upload.abort';
 
 export interface AttachPayload {
   id: string;
@@ -47,6 +50,24 @@ export interface AttachmentDeletePayload {
   path: string;
   variants: string[];
 }
+export interface UploadStartPayload {
+  id: string;
+  disk: string;
+  key: string;
+  mode: 'proxy' | 'direct';
+  size?: number | undefined;
+  contentType?: string | undefined;
+}
+export interface UploadCompletePayload {
+  id: string;
+  disk: string;
+  key: string;
+}
+export interface UploadAbortPayload {
+  id: string;
+  disk: string;
+  key: string;
+}
 
 /** Maps each event to its payload type, so {@link publishMedia} is checked at the call site. */
 export interface MediaDiagnosticPayloads {
@@ -55,6 +76,9 @@ export interface MediaDiagnosticPayloads {
   conversion: ConversionPayload;
   'attachment.create': AttachmentCreatePayload;
   'attachment.delete': AttachmentDeletePayload;
+  'upload.start': UploadStartPayload;
+  'upload.complete': UploadCompletePayload;
+  'upload.abort': UploadAbortPayload;
 }
 
 /**
