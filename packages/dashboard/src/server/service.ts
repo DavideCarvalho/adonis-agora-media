@@ -1,8 +1,18 @@
 import { isExtendedDisk } from '@adonis-agora/media';
-import type { Disk, ExtendedDisk, UploadSession } from '@adonis-agora/media';
 import type {
+  Disk,
+  ExtendedDisk,
+  MediaListOptions,
+  MediaListPage,
+  MediaRecord,
+  UploadSession,
+} from '@adonis-agora/media';
+import type {
+  CollectionFilter,
+  CollectionListResponse,
   DiskInfo,
   DiskListResponse,
+  MediaEntry,
   ObjectDetailResponse,
   ObjectEntry,
   ObjectFolder,
@@ -25,6 +35,8 @@ export interface MediaManagerLike {
   readonly resumable: {
     list(filter?: { disk?: string; keyPrefix?: string }): Promise<UploadSession[]>;
   };
+  /** The persistence SPI — the console reads stored records via the cross-owner `list`. */
+  readonly store: { list(options?: MediaListOptions): Promise<MediaListPage> };
 }
 
 export interface DashboardServiceOptions {
@@ -128,6 +140,24 @@ export class DashboardService {
     return { uploads: sessions.map(toUploadInfo) };
   }
 
+  /**
+   * One cursor-paginated page of stored media-library records across owners/collections, projected to
+   * the SPA's {@link MediaEntry}. Delegates to the real {@link MediaStore.list} — no bespoke query.
+   */
+  async collections(
+    params: CollectionFilter & { cursor?: string; limit?: number } = {},
+  ): Promise<CollectionListResponse> {
+    const page = await this.manager.store.list({
+      ...(params.collection !== undefined ? { collection: params.collection } : {}),
+      ...(params.ownerType !== undefined ? { ownerType: params.ownerType } : {}),
+      ...(params.ownerId !== undefined ? { ownerId: params.ownerId } : {}),
+      ...(params.prefix !== undefined ? { prefix: params.prefix } : {}),
+      ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
+      ...(params.limit !== undefined ? { limit: params.limit } : {}),
+    });
+    return { items: page.items.map(toMediaEntry), nextCursor: page.nextCursor };
+  }
+
   /** Server-side copy (same disk) or streamed cross-disk copy. Original is kept. */
   async copy(body: { disk: string; from: string; to: string; toDisk?: string }): Promise<void> {
     await this.transfer(body, false);
@@ -198,6 +228,25 @@ function folderName(prefix: string): string {
   const trimmed = prefix.replace(/\/+$/, '');
   const idx = trimmed.lastIndexOf('/');
   return idx === -1 ? trimmed : trimmed.slice(idx + 1);
+}
+
+/** Project a stored `MediaRecord` to the console's `MediaEntry` (dates → ISO, conversions → names). */
+function toMediaEntry(record: MediaRecord): MediaEntry {
+  return {
+    id: record.id,
+    ownerType: record.ownerType,
+    ownerId: record.ownerId,
+    collection: record.collection,
+    name: record.name,
+    fileName: record.fileName,
+    mimeType: record.mimeType,
+    sizeBytes: record.size,
+    disk: record.disk,
+    path: record.path,
+    conversions: Object.keys(record.conversions),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
 }
 
 function toUploadInfo(session: UploadSession): UploadInfo {

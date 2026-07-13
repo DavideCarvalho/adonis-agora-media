@@ -19,6 +19,15 @@ describe('DashboardClient', () => {
     expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
   });
 
+  it('builds collections requests with only the present filters', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ items: [], nextCursor: null }));
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await client.collections({ ownerType: 'Post', ownerId: '42', cursor: 'c1', limit: 50 });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('/api/collections?ownerType=Post&ownerId=42&cursor=c1&limit=50');
+    expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
+  });
+
   it('omits empty query params', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ uploads: [] }));
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });

@@ -8,7 +8,6 @@ import { ResumableUploadManager } from './resumable_upload.js';
 import type { UploadSessionStore } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
 import type { DiskResolver } from './types.js';
-import type { UploadMode } from './upload_mode.js';
 import {
   type AbortDirectUploadInput,
   type CompleteDirectUploadInput,
@@ -17,6 +16,7 @@ import {
   type ProxyUploadInput,
   UploadManager,
 } from './upload_manager.js';
+import type { UploadMode } from './upload_mode.js';
 
 export interface MediaManagerOptions {
   /** Default disk name (resolved by `resolve`). */
@@ -60,12 +60,18 @@ export class MediaManager {
   readonly storage: StorageManager;
   readonly library: MediaLibrary;
   readonly attachments: AttachmentManager;
+  /**
+   * The configured persistence SPI. Exposed for management/console reads (e.g. the cross-owner
+   * {@link MediaStore.list}); day-to-day writes go through {@link MediaManager.library}.
+   */
+  readonly store: MediaStore;
   /** Direct-S3 upload coordinator (proxy + direct multipart modes). */
   readonly uploads: UploadManager;
   /** Resumable (TUS) upload coordinator — present only when a session store is configured. */
   readonly #resumable: ResumableUploadManager | undefined;
 
   constructor(options: MediaManagerOptions) {
+    this.store = options.store;
     this.storage = new StorageManager({ default: options.defaultDisk, resolve: options.resolve });
     this.library = new MediaLibrary({
       storage: this.storage,

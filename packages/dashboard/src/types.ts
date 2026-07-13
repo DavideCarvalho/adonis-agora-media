@@ -78,6 +78,40 @@ export interface UploadListResponse {
   uploads: UploadInfo[];
 }
 
+/** A stored media-library record, projected from `@adonis-agora/media`'s `MediaRecord` for the console. */
+export interface MediaEntry {
+  id: string;
+  ownerType: string;
+  ownerId: string;
+  collection: string;
+  /** Logical display name. */
+  name: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  disk: string;
+  path: string;
+  /** Names of the generated conversions present on the record (e.g. `["thumb"]`). */
+  conversions: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One page of the cross-owner collections listing (cursor-based, from the `MediaStore.list`). */
+export interface CollectionListResponse {
+  items: MediaEntry[];
+  /** Present (non-null) only when a further page exists; pass back as `cursor`. */
+  nextCursor: string | null;
+}
+
+/** Filters for the collections listing — every field optional and `AND`ed server-side. */
+export interface CollectionFilter {
+  collection?: string;
+  ownerType?: string;
+  ownerId?: string;
+  prefix?: string;
+}
+
 /** Coarse console topology used to enable/disable UI affordances. */
 export interface Topology {
   disks: number;

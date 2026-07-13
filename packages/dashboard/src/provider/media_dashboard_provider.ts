@@ -129,6 +129,27 @@ export default class MediaDashboardProvider {
           }),
         )
         .as('media.dashboard.uploads');
+      router
+        .get(
+          '/collections',
+          json(async (svc, ctx) => {
+            const collection = str(ctx, 'collection');
+            const ownerType = str(ctx, 'ownerType');
+            const ownerId = str(ctx, 'ownerId');
+            const prefix = str(ctx, 'prefix');
+            const cursor = str(ctx, 'cursor');
+            const limit = ctx.request.input('limit');
+            return svc.collections({
+              ...(collection !== undefined ? { collection } : {}),
+              ...(ownerType !== undefined ? { ownerType } : {}),
+              ...(ownerId !== undefined ? { ownerId } : {}),
+              ...(prefix !== undefined ? { prefix } : {}),
+              ...(cursor !== undefined ? { cursor } : {}),
+              ...(limit !== undefined ? { limit: Number(limit) } : {}),
+            });
+          }),
+        )
+        .as('media.dashboard.collections');
 
       if (actions) {
         router

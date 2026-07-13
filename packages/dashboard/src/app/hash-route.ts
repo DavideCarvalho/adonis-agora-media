@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type Tab = 'browse' | 'uploads' | 'upload';
+export type Tab = 'browse' | 'collections' | 'uploads' | 'upload';
 
 export interface Route {
   tab: Tab;
@@ -8,7 +8,7 @@ export interface Route {
   prefix?: string;
 }
 
-const TABS: Tab[] = ['browse', 'uploads', 'upload'];
+const TABS: Tab[] = ['browse', 'collections', 'uploads', 'upload'];
 
 /** Parse `#/browse/{disk}?prefix={prefix}` into a {@link Route}. */
 export function parseHash(hash: string): Route {

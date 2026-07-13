@@ -43,6 +43,7 @@ function fakeDisk(overrides: Record<string, unknown> = {}) {
 function managerWith(
   disks: Record<string, ReturnType<typeof fakeDisk>>,
   resumable?: unknown,
+  store?: unknown,
 ): MediaManagerLike {
   return {
     storage: {
@@ -51,6 +52,29 @@ function managerWith(
     },
     hasResumable: resumable !== undefined,
     resumable: (resumable ?? { list: vi.fn(async () => []) }) as never,
+    store: (store ?? { list: vi.fn(async () => ({ items: [], nextCursor: null })) }) as never,
+  };
+}
+
+/** A stored `MediaRecord`-shaped row for the collections projection tests. */
+function mediaRecord(over: Record<string, unknown> = {}) {
+  return {
+    id: 'm1',
+    ownerType: 'Post',
+    ownerId: '42',
+    collection: 'gallery',
+    name: 'sunset',
+    fileName: 'sunset.jpg',
+    mimeType: 'image/jpeg',
+    size: 2048,
+    disk: 's3',
+    path: 'Post/42/gallery/m1/sunset.jpg',
+    order: 0,
+    customProperties: {},
+    conversions: { thumb: { path: 't.jpg', disk: 's3' } },
+    createdAt: new Date('2026-07-13T10:00:00Z'),
+    updatedAt: new Date('2026-07-13T11:00:00Z'),
+    ...over,
   };
 }
 
@@ -145,6 +169,44 @@ describe('DashboardService', () => {
       actions: false,
     });
     await expect(svc.uploads()).resolves.toEqual({ uploads: [] });
+  });
+
+  it('lists stored records via MediaStore.list, projecting conversions + ISO dates', async () => {
+    const store = {
+      list: vi.fn(async () => ({ items: [mediaRecord()], nextCursor: 'cursor-2' })),
+    };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const res = await svc.collections({ ownerType: 'Post', ownerId: '42', limit: 25 });
+    expect(store.list).toHaveBeenCalledWith({ ownerType: 'Post', ownerId: '42', limit: 25 });
+    expect(res.nextCursor).toBe('cursor-2');
+    expect(res.items[0]).toEqual({
+      id: 'm1',
+      ownerType: 'Post',
+      ownerId: '42',
+      collection: 'gallery',
+      name: 'sunset',
+      fileName: 'sunset.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 2048,
+      disk: 's3',
+      path: 'Post/42/gallery/m1/sunset.jpg',
+      conversions: ['thumb'],
+      createdAt: '2026-07-13T10:00:00.000Z',
+      updatedAt: '2026-07-13T11:00:00.000Z',
+    });
+  });
+
+  it('forwards only the provided collection filters to the store', async () => {
+    const store = { list: vi.fn(async () => ({ items: [], nextCursor: null })) };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await svc.collections({ collection: 'gallery' });
+    expect(store.list).toHaveBeenCalledWith({ collection: 'gallery' });
   });
 
   it('copies within the same disk via the driver', async () => {

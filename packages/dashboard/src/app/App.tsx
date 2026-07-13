@@ -2,12 +2,14 @@ import type { Tab } from './hash-route';
 import { toHash, useHashRoute } from './hash-route';
 import { useTopology } from './queries';
 import { Dot } from './ui';
+import { CollectionsView } from './views/CollectionsView';
 import { LibraryBrowseView } from './views/LibraryBrowseView';
 import { UploadPanel } from './views/UploadPanel';
 import { UploadsView } from './views/UploadsView';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'browse', label: 'Library' },
+  { id: 'collections', label: 'Collections' },
   { id: 'uploads', label: 'Uploads' },
   { id: 'upload', label: 'Upload' },
 ];
@@ -53,6 +55,7 @@ export function App() {
             {...(route.prefix ? { prefix: route.prefix } : {})}
           />
         )}
+        {route.tab === 'collections' && <CollectionsView />}
         {route.tab === 'uploads' && <UploadsView />}
         {route.tab === 'upload' && <UploadPanel />}
       </main>

@@ -66,7 +66,14 @@ export type { StorageManagerOptions } from './storage_manager.js';
 
 // Model + SPIs
 export type { MediaRecord, MediaConversion } from './media_record.js';
-export type { MediaStore } from './media_store.js';
+export type { MediaStore, MediaListOptions, MediaListPage, MediaCursor } from './media_store.js';
+export {
+  DEFAULT_MEDIA_LIST_LIMIT,
+  MAX_MEDIA_LIST_LIMIT,
+  encodeMediaCursor,
+  decodeMediaCursor,
+  clampMediaListLimit,
+} from './media_store.js';
 export { MediaCollectionRegistry } from './media_collection.js';
 export type { MediaCollectionConfig } from './media_collection.js';
 export type { ConversionPreset, ConversionResult, ImageProcessor } from './image_processor.js';

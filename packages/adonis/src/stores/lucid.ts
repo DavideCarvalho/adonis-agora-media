@@ -1,7 +1,14 @@
 import type { Database } from '@adonisjs/lucid/database';
 import type { QueryClientContract } from '@adonisjs/lucid/types/database';
 import type { MediaConversion, MediaRecord } from '../media_record.js';
-import type { MediaStore } from '../media_store.js';
+import {
+  type MediaListOptions,
+  type MediaListPage,
+  type MediaStore,
+  clampMediaListLimit,
+  decodeMediaCursor,
+  encodeMediaCursor,
+} from '../media_store.js';
 
 export interface LucidMediaStoreOptions {
   /** The Lucid connection name. Defaults to the `Database` default connection. */
@@ -77,6 +84,46 @@ export class LucidMediaStore implements MediaStore {
     if (collection !== undefined) q = q.where('collection', collection);
     const rows = (await q.orderBy('order', 'asc')) as MediaRow[];
     return rows.map(fromRow);
+  }
+
+  async list(options: MediaListOptions = {}): Promise<MediaListPage> {
+    const limit = clampMediaListLimit(options.limit);
+    let q = this.query();
+    if (options.ownerType !== undefined) q = q.where('owner_type', options.ownerType);
+    if (options.ownerId !== undefined) q = q.where('owner_id', options.ownerId);
+    if (options.collection !== undefined) q = q.where('collection', options.collection);
+    if (options.prefix !== undefined && options.prefix !== '') {
+      q = q.where('path', 'like', `${options.prefix}%`);
+    }
+
+    // Keyset pagination on the (created_at desc, id desc) ordering: resume strictly *after* the cursor
+    // row, so pages don't drift or duplicate when rows are inserted concurrently.
+    const cursor = decodeMediaCursor(options.cursor);
+    if (cursor) {
+      q = q.where((builder) => {
+        builder
+          .where('created_at', '<', cursor.createdAt)
+          .orWhere((eq) => eq.where('created_at', cursor.createdAt).where('id', '<', cursor.id));
+      });
+    }
+
+    // Fetch one extra row to detect whether a further page exists without a second COUNT query.
+    const rows = (await q
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(limit + 1)) as MediaRow[];
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const items = page.map(fromRow);
+    const last = page[page.length - 1];
+    return {
+      items,
+      nextCursor:
+        hasMore && last
+          ? encodeMediaCursor({ createdAt: Number(last.created_at), id: last.id })
+          : null,
+    };
   }
 
   async delete(id: string): Promise<void> {

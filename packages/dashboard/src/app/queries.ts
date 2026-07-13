@@ -1,6 +1,13 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import type { CopyMoveBody, DeleteBody, ObjectEntry, ObjectFolder } from '../types';
+import type {
+  CollectionFilter,
+  CopyMoveBody,
+  DeleteBody,
+  MediaEntry,
+  ObjectEntry,
+  ObjectFolder,
+} from '../types';
 import { useDashboard } from './context';
 
 export function useTopology() {
@@ -41,6 +48,35 @@ export function useObjects(disk: string | undefined, prefix: string | undefined)
   );
 
   return { ...query, folders, files };
+}
+
+/** Cursor-paginated listing of stored media-library records, flattened across loaded pages. */
+export function useCollections(filter: CollectionFilter) {
+  const { client } = useDashboard();
+  const query = useInfiniteQuery({
+    queryKey: [
+      'collections',
+      filter.collection ?? '',
+      filter.ownerType ?? '',
+      filter.ownerId ?? '',
+      filter.prefix ?? '',
+    ],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      client.collections({
+        ...filter,
+        ...(pageParam ? { cursor: pageParam } : {}),
+        limit: PAGE_LIMIT,
+      }),
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+
+  const items = useMemo<MediaEntry[]>(
+    () => (query.data?.pages ?? []).flatMap((p) => p.items),
+    [query.data],
+  );
+
+  return { ...query, items };
 }
 
 export function useUploads(filter: { disk?: string; prefix?: string } = {}) {

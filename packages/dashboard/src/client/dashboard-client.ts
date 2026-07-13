@@ -1,4 +1,6 @@
 import type {
+  CollectionFilter,
+  CollectionListResponse,
   CopyMoveBody,
   DeleteBody,
   DiskListResponse,
@@ -120,6 +122,19 @@ export class DashboardClient {
 
   uploads(params: { disk?: string; prefix?: string } = {}): Promise<UploadListResponse> {
     return this.get<UploadListResponse>('/uploads', params);
+  }
+
+  collections(
+    params: CollectionFilter & { cursor?: string; limit?: number } = {},
+  ): Promise<CollectionListResponse> {
+    return this.get<CollectionListResponse>('/collections', {
+      collection: params.collection,
+      ownerType: params.ownerType,
+      ownerId: params.ownerId,
+      prefix: params.prefix,
+      cursor: params.cursor,
+      limit: params.limit,
+    });
   }
 
   copy(body: CopyMoveBody): Promise<void> {
