@@ -48,6 +48,43 @@ export class UploadNotSupportedError extends Error {
   }
 }
 
+export class UploadSessionNotFoundError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_SESSION_NOT_FOUND';
+  constructor(id: string) {
+    super(`Upload session not found: ${id}`);
+    this.name = 'UploadSessionNotFoundError';
+  }
+}
+
+export class UploadOffsetConflictError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_OFFSET_CONFLICT';
+  constructor(
+    readonly expected: number,
+    readonly received: number,
+  ) {
+    super(`Upload offset conflict: expected ${expected}, received ${received}`);
+    this.name = 'UploadOffsetConflictError';
+  }
+}
+
+export class UploadSessionExpiredError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_SESSION_EXPIRED';
+  constructor(id: string) {
+    super(`Upload session has expired: ${id}`);
+    this.name = 'UploadSessionExpiredError';
+  }
+}
+
+export class ResumableUploadsNotConfiguredError extends Error {
+  readonly code = 'E_MEDIA_RESUMABLE_NOT_CONFIGURED';
+  constructor() {
+    super(
+      'Resumable (TUS) uploads are not configured. Set `uploads.resumable` in config/media.ts (e.g. `resumable: { store: \'lucid\', stores: { lucid: uploadSessions.lucid() } }`) to enable the resumable upload session store.',
+    );
+    this.name = 'ResumableUploadsNotConfiguredError';
+  }
+}
+
 export class StoreNotConfiguredError extends Error {
   readonly code = 'E_MEDIA_STORE_NOT_CONFIGURED';
   constructor(name: string) {
@@ -55,5 +92,15 @@ export class StoreNotConfiguredError extends Error {
       `Media config selects store "${name}" but no matching factory exists in \`stores\`. Add \`stores.${name}\` to config/media.ts (e.g. \`stores: { ${name}: stores.lucid() }\`), or omit \`store\` to use the in-memory store.`,
     );
     this.name = 'StoreNotConfiguredError';
+  }
+}
+
+export class UploadSessionStoreNotConfiguredError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_SESSION_STORE_NOT_CONFIGURED';
+  constructor(name: string) {
+    super(
+      `Media config selects resumable session store "${name}" but no matching factory exists in \`uploads.resumable.stores\`. Add \`uploads.resumable.stores.${name}\` to config/media.ts (e.g. \`stores: { ${name}: uploadSessions.lucid() }\`), or omit \`store\` to use the in-memory session store.`,
+    );
+    this.name = 'UploadSessionStoreNotConfiguredError';
   }
 }

@@ -6,8 +6,8 @@ import { stubsRoot } from './stubs/main.js';
  *
  * 1. registers the media service provider in `adonisrc.ts`;
  * 2. publishes `config/media.ts`;
- * 3. publishes the Lucid migration for the optional `lucid` store (run
- *    `node ace migration:run`; delete it if you only use the in-memory store).
+ * 3. publishes the Lucid migrations for the optional `lucid` store and the resumable (TUS) session
+ *    store (run `node ace migration:run`; delete either if you only use the in-memory equivalents).
  *
  * Requires `@adonisjs/drive` to be installed and configured first (`node ace add @adonisjs/drive`).
  */
@@ -20,4 +20,9 @@ export async function configure(command: Configure) {
 
   await codemods.makeUsingStub(stubsRoot, 'config/media.stub', {});
   await codemods.makeUsingStub(stubsRoot, 'database/migrations/create_media_table.stub', {});
+  await codemods.makeUsingStub(
+    stubsRoot,
+    'database/migrations/create_media_upload_sessions_table.stub',
+    {},
+  );
 }

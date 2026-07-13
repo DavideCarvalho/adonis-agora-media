@@ -14,6 +14,7 @@ export type MediaDiagnosticEvent =
   | 'attachment.create'
   | 'attachment.delete'
   | 'upload.start'
+  | 'upload.progress'
   | 'upload.complete'
   | 'upload.abort';
 
@@ -58,6 +59,15 @@ export interface UploadStartPayload {
   size?: number | undefined;
   contentType?: string | undefined;
 }
+export interface UploadProgressPayload {
+  id: string;
+  /** Bytes received so far (the resume offset). */
+  offset: number;
+  /** Number of chunk parts written so far. */
+  parts: number;
+  /** Total expected size in bytes, when known up front. */
+  size?: number | undefined;
+}
 export interface UploadCompletePayload {
   id: string;
   disk: string;
@@ -77,6 +87,7 @@ export interface MediaDiagnosticPayloads {
   'attachment.create': AttachmentCreatePayload;
   'attachment.delete': AttachmentDeletePayload;
   'upload.start': UploadStartPayload;
+  'upload.progress': UploadProgressPayload;
   'upload.complete': UploadCompletePayload;
   'upload.abort': UploadAbortPayload;
 }

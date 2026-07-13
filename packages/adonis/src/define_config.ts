@@ -6,6 +6,12 @@ import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
+import { uploadSessions } from './upload_sessions/factory.js';
+import type {
+  LucidUploadSessionStoreConfig,
+  UploadSessionStoreContext,
+  UploadSessionStoreFactory,
+} from './upload_sessions/factory.js';
 import type { UploadMode } from './upload_mode.js';
 
 /**
@@ -33,6 +39,43 @@ export interface MediaUploadsConfig {
     enabled?: boolean;
     /** Path prefix for the routes. Default `/media/uploads`. */
     prefix?: string;
+  };
+  /**
+   * Resumable (TUS) upload settings. Present ⇒ `media.resumable` is available; when
+   * `routes.enabled`, the provider mounts the TUS protocol endpoints. Absent ⇒ resumable uploads are
+   * disabled and no session store is built.
+   */
+  resumable?: MediaResumableConfig;
+}
+
+/**
+ * Resumable (TUS) upload configuration. The session store persists offset/length/metadata/expiry so
+ * a dropped connection resumes; pick it by name from `stores` (built with the {@link uploadSessions}
+ * factory so each peer is imported lazily). When `routes.enabled`, the provider mounts the TUS
+ * protocol under `routes.prefix` (idiomatic AdonisJS routes, NOT controllers).
+ */
+export interface MediaResumableConfig {
+  /**
+   * Name of the session store (a key of {@link stores} below). Omit to use the in-memory store
+   * (single-process, non-durable).
+   */
+  store?: string;
+  /** Named session stores, built with the {@link uploadSessions} factory (lazy peers). */
+  stores?: Record<string, UploadSessionStoreFactory>;
+  /** Prefix for temporary chunk parts on the target disk (buffered path). Default `.uploads`. */
+  tmpPrefix?: string;
+  /** Session lifetime in seconds (TUS `expiration`). Omit for sessions that never expire. */
+  sessionTtlSeconds?: number;
+  /** Mount the built-in TUS HTTP routes. Opt-in. */
+  routes?: {
+    /** Register the routes. Default false. */
+    enabled?: boolean;
+    /** Path prefix for the TUS routes. Default `/media/uploads/tus`. */
+    prefix?: string;
+    /** Disk resumable uploads land on. Defaults to the media default disk. */
+    disk?: string;
+    /** Reject creations whose `Upload-Length` exceeds this many bytes. */
+    maxSize?: number;
   };
 }
 
@@ -99,7 +142,7 @@ export function defineConfig(config: MediaConfig = {}): MediaConfig {
   return config;
 }
 
-export { stores, processors, disks };
+export { stores, processors, disks, uploadSessions };
 export type {
   StoreContext,
   StoreFactory,
@@ -109,4 +152,7 @@ export type {
   S3DiskConfig,
   S3Credentials,
   UploadMode,
+  UploadSessionStoreContext,
+  UploadSessionStoreFactory,
+  LucidUploadSessionStoreConfig,
 };

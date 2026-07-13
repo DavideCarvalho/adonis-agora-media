@@ -38,6 +38,11 @@
       "import": "./dist/src/stores/lucid.js",
       "default": "./dist/src/stores/lucid.js"
     },
+    "./upload_sessions/lucid": {
+      "types": "./dist/src/upload_sessions/lucid.d.ts",
+      "import": "./dist/src/upload_sessions/lucid.js",
+      "default": "./dist/src/upload_sessions/lucid.js"
+    },
     "./disks/s3": {
       "types": "./dist/src/disks/s3.d.ts",
       "import": "./dist/src/disks/s3.js",

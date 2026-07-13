@@ -37,8 +37,18 @@ export function makeMemoryDatabase(): Database {
  * end-to-end (knex must quote it in the `CREATE TABLE` DDL, or sqlite would reject the migration).
  */
 export async function runMediaMigration(db: Database): Promise<void> {
+  return runMigrationStub(db, 'create_media_table.stub');
+}
+
+/** Run the resumable (TUS) `media_upload_sessions` + `media_upload_parts` migration against `db`. */
+export async function runUploadSessionsMigration(db: Database): Promise<void> {
+  return runMigrationStub(db, 'create_media_upload_sessions_table.stub');
+}
+
+/** Load a package migration stub (stripping its Tempura header) and drive its `up()` on `db`. */
+async function runMigrationStub(db: Database, stubName: string): Promise<void> {
   const stubPath = fileURLToPath(
-    new URL('../stubs/database/migrations/create_media_table.stub', import.meta.url),
+    new URL(`../stubs/database/migrations/${stubName}`, import.meta.url),
   );
   const raw = readFileSync(stubPath, 'utf8');
   // Drop the leading `{{{ ... }}}` Tempura header; the rest is a valid ESM migration module.

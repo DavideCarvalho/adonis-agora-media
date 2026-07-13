@@ -1,7 +1,7 @@
 {{{
   exports({ to: app.configPath('media.ts') })
 }}}
-import { defineConfig, stores, processors } from '@adonis-agora/media'
+import { defineConfig, stores, processors, uploadSessions } from '@adonis-agora/media'
 
 /**
  * Configuration for @adonis-agora/media. Storage is delegated to @adonisjs/drive — `disk` names a disk
@@ -33,4 +33,19 @@ export default defineConfig({
       ],
     },
   ],
+
+  // Resumable (TUS) uploads — opt-in. Mounts the TUS protocol under `routes.prefix` and persists
+  // upload sessions so a dropped connection resumes. Select `lucid` and run `node ace migration:run`
+  // for durable, multi-process sessions; the default in-memory store is single-process only.
+  // uploads: {
+  //   resumable: {
+  //     store: 'lucid',
+  //     stores: {
+  //       memory: uploadSessions.memory(),
+  //       lucid: uploadSessions.lucid(),
+  //     },
+  //     sessionTtlSeconds: 24 * 60 * 60,
+  //     routes: { enabled: true, prefix: '/media/uploads/tus' },
+  //   },
+  // },
 })

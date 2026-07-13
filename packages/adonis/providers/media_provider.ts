@@ -8,6 +8,10 @@ import { MediaManager } from '../src/media_manager.js';
 import type { MultipartPart } from '../src/types.js';
 import { resolveStore } from '../src/stores/factory.js';
 import type { StoreContext } from '../src/stores/factory.js';
+import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
+import type { UploadSessionStore } from '../src/resumable_upload.js';
+import { TusUploadHandler } from '../src/tus.js';
+import type { TusRequest } from '../src/tus.js';
 import type { Disk, DiskResolver } from '../src/types.js';
 
 /** The minimal Drive manager surface we use: `use(name)` returns a disk. */
@@ -39,6 +43,19 @@ export default class MediaProvider {
       const ctx: StoreContext = { app: this.app };
       const store = await resolveStore(config, ctx);
       const imageProcessor = await this.#resolveImageProcessor(config);
+
+      // Build the resumable (TUS) session store only when `uploads.resumable` is configured, so its
+      // peer (`@adonisjs/lucid`) loads lazily and the resumable subsystem stays fully opt-in.
+      const resumable = config.uploads?.resumable;
+      const uploadSessions: UploadSessionStore | undefined = resumable
+        ? await resolveUploadSessionStore(
+            {
+              ...(resumable.store !== undefined ? { store: resumable.store } : {}),
+              ...(resumable.stores !== undefined ? { stores: resumable.stores } : {}),
+            },
+            { app: this.app },
+          )
+        : undefined;
 
       // Build any disks declared in `config.disks` (e.g. the bundled `disks.s3()` driver). Each
       // factory lazily loads its peer (the AWS SDK), so nothing is imported unless an S3 disk is
@@ -78,6 +95,11 @@ export default class MediaProvider {
         ...(config.uploads?.presignTtlSeconds !== undefined
           ? { uploadPresignTtlSeconds: config.uploads.presignTtlSeconds }
           : {}),
+        ...(uploadSessions !== undefined ? { uploadSessions } : {}),
+        ...(resumable?.tmpPrefix !== undefined ? { resumableTmpPrefix: resumable.tmpPrefix } : {}),
+        ...(resumable?.sessionTtlSeconds !== undefined
+          ? { resumableSessionTtlSeconds: resumable.sessionTtlSeconds }
+          : {}),
       });
     });
   }
@@ -98,6 +120,8 @@ export default class MediaProvider {
    */
   boot() {
     const config = this.app.config.get<MediaConfig>('media', {});
+    this.#mountTusRoutes(config);
+
     const routes = config.uploads?.routes;
     if (!routes?.enabled) return;
 
@@ -197,6 +221,69 @@ export default class MediaProvider {
       .as('media.uploads.proxy');
   }
 
+  /**
+   * Mount the optional TUS resumable-upload routes when `uploads.resumable.routes.enabled`. Like the
+   * direct routes these are plain AdonisJS routes (NOT controllers): each resolves the singleton
+   * {@link MediaManager} lazily and drives a framework-agnostic {@link TusUploadHandler} over
+   * `media.resumable`. The handler is built once, lazily, from the resolved manager.
+   *
+   * Routes (relative to `uploads.resumable.routes.prefix`, default `/media/uploads/tus`):
+   * - `OPTIONS /`      → protocol discovery (version, extensions, max size)
+   * - `POST    /`      → create a session (`Upload-Length` + `Upload-Metadata`) → `201` + `Location`
+   * - `HEAD    /:id`   → report `Upload-Offset` (resume point)
+   * - `PATCH   /:id`   → append bytes at `Upload-Offset`; auto-completes at the declared length
+   * - `DELETE  /:id`   → terminate the upload
+   */
+  #mountTusRoutes(config: MediaConfig) {
+    const resumable = config.uploads?.resumable;
+    if (!resumable?.routes?.enabled) return;
+
+    const prefix = (resumable.routes.prefix ?? '/media/uploads/tus').replace(/\/+$/, '');
+    const routeDisk = resumable.routes.disk;
+    const maxSize = resumable.routes.maxSize;
+
+    // Build the TUS handler once, on first request, from the resolved MediaManager singleton.
+    let handler: TusUploadHandler | undefined;
+    const getHandler = async (): Promise<TusUploadHandler> => {
+      if (!handler) {
+        const media = await this.app.container.make(MediaManager);
+        handler = new TusUploadHandler({
+          manager: media.resumable,
+          disk: routeDisk ?? media.storage.defaultDisk,
+          basePath: prefix,
+          ...(maxSize !== undefined ? { maxSize } : {}),
+        });
+      }
+      return handler;
+    };
+
+    const run = (method: TusRequest['method'], withBody = false) => {
+      return async (ctx: HttpContext) => {
+        const tus = await getHandler();
+        const headers: Record<string, string | undefined> = {};
+        for (const [name, value] of Object.entries(ctx.request.headers())) {
+          headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+        }
+        const req: TusRequest = { method, headers };
+        if (ctx.params.id !== undefined) req.uploadId = String(ctx.params.id);
+        if (withBody) req.body = await readRawBody(ctx);
+
+        const res = await tus.handle(req);
+        for (const [name, value] of Object.entries(res.headers)) {
+          ctx.response.header(name, value);
+        }
+        ctx.response.status(res.status);
+        return res.body ?? '';
+      };
+    };
+
+    router.route(prefix, ['OPTIONS'], run('OPTIONS')).as('media.uploads.tus.options');
+    router.post(prefix, run('POST')).as('media.uploads.tus.create');
+    router.route(`${prefix}/:id`, ['HEAD'], run('HEAD')).as('media.uploads.tus.head');
+    router.patch(`${prefix}/:id`, run('PATCH', true)).as('media.uploads.tus.patch');
+    router.delete(`${prefix}/:id`, run('DELETE')).as('media.uploads.tus.delete');
+  }
+
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */
   async #resolveImageProcessor(config: MediaConfig): Promise<ImageProcessor | undefined> {
     const ip = config.imageProcessor;
@@ -224,4 +311,15 @@ function requireKey(ctx: HttpContext): string {
 function readDisk(ctx: HttpContext): string | undefined {
   const value = ctx.request.input('disk');
   return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Buffer the raw request body for a TUS `PATCH`. The chunk arrives as
+ * `application/offset+octet-stream`, which the AdonisJS bodyparser leaves untouched, so the raw Node
+ * request stream still holds the bytes.
+ */
+async function readRawBody(ctx: HttpContext): Promise<Uint8Array> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of ctx.request.request) chunks.push(Buffer.from(chunk));
+  return new Uint8Array(Buffer.concat(chunks));
 }

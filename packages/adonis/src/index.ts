@@ -1,8 +1,9 @@
 // Config idiom
-export { defineConfig, stores, processors, disks } from './define_config.js';
+export { defineConfig, stores, processors, disks, uploadSessions } from './define_config.js';
 export type {
   MediaConfig,
   MediaUploadsConfig,
+  MediaResumableConfig,
   StoreContext,
   StoreFactory,
   LucidStoreConfig,
@@ -11,6 +12,9 @@ export type {
   S3DiskConfig,
   S3Credentials,
   UploadMode,
+  UploadSessionStoreContext,
+  UploadSessionStoreFactory,
+  LucidUploadSessionStoreConfig,
 } from './define_config.js';
 
 // Manager + layers
@@ -30,6 +34,18 @@ export type {
 } from './upload_manager.js';
 export { resolveUploadMode } from './upload_mode.js';
 export type { ResolvedUploadMode, UploadModeLevels } from './upload_mode.js';
+
+// Resumable (TUS) uploads
+export { ResumableUploadManager } from './resumable_upload.js';
+export type {
+  ResumableUploadManagerOptions,
+  UploadSession,
+  UploadSessionStore,
+  UploadSessionListFilter,
+  CreateUploadInput,
+} from './resumable_upload.js';
+export { TusUploadHandler, parseTusMetadata, TUS_VERSION } from './tus.js';
+export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js';
 export { isMultipartCapable } from './multipart.js';
 export { isExtendedDisk } from './extended_disk.js';
 export { MediaLibrary } from './media_library.js';
@@ -81,6 +97,7 @@ export type {
   AttachmentCreatePayload,
   AttachmentDeletePayload,
   UploadStartPayload,
+  UploadProgressPayload,
   UploadCompletePayload,
   UploadAbortPayload,
 } from './diagnostics.js';
@@ -94,4 +111,9 @@ export {
   VariantNotFoundError,
   StoreNotConfiguredError,
   UploadNotSupportedError,
+  UploadSessionNotFoundError,
+  UploadOffsetConflictError,
+  UploadSessionExpiredError,
+  UploadSessionStoreNotConfiguredError,
+  ResumableUploadsNotConfiguredError,
 } from './errors.js';

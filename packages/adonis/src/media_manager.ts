@@ -1,8 +1,11 @@
 import { AttachmentManager } from './attachment.js';
+import { ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig } from './media_collection.js';
 import { MediaLibrary } from './media_library.js';
 import type { MediaStore } from './media_store.js';
+import { ResumableUploadManager } from './resumable_upload.js';
+import type { UploadSessionStore } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
 import type { DiskResolver } from './types.js';
 import type { UploadMode } from './upload_mode.js';
@@ -31,6 +34,15 @@ export interface MediaManagerOptions {
   uploadPartSize?: number;
   /** Presigned part-URL TTL in seconds (direct mode). Default 3600. */
   uploadPresignTtlSeconds?: number;
+  /**
+   * Session store for resumable (TUS) uploads. When provided, `media.resumable` exposes a
+   * {@link ResumableUploadManager}; when omitted, accessing `media.resumable` throws a helpful error.
+   */
+  uploadSessions?: UploadSessionStore;
+  /** Prefix for temporary resumable chunk parts on the target disk. Default `.uploads`. */
+  resumableTmpPrefix?: string;
+  /** Resumable session lifetime in seconds (TUS `expiration`). Omit for never-expiring sessions. */
+  resumableSessionTtlSeconds?: number;
 }
 
 /**
@@ -50,6 +62,8 @@ export class MediaManager {
   readonly attachments: AttachmentManager;
   /** Direct-S3 upload coordinator (proxy + direct multipart modes). */
   readonly uploads: UploadManager;
+  /** Resumable (TUS) upload coordinator — present only when a session store is configured. */
+  readonly #resumable: ResumableUploadManager | undefined;
 
   constructor(options: MediaManagerOptions) {
     this.storage = new StorageManager({ default: options.defaultDisk, resolve: options.resolve });
@@ -83,6 +97,35 @@ export class MediaManager {
         ? { emitDiagnostics: options.emitDiagnostics }
         : {}),
     });
+    if (options.uploadSessions !== undefined) {
+      this.#resumable = new ResumableUploadManager({
+        storage: this.storage,
+        sessions: options.uploadSessions,
+        ...(options.resumableTmpPrefix !== undefined
+          ? { tmpPrefix: options.resumableTmpPrefix }
+          : {}),
+        ...(options.resumableSessionTtlSeconds !== undefined
+          ? { sessionTtlSeconds: options.resumableSessionTtlSeconds }
+          : {}),
+        ...(options.emitDiagnostics !== undefined
+          ? { emitDiagnostics: options.emitDiagnostics }
+          : {}),
+      });
+    }
+  }
+
+  /**
+   * The resumable (TUS) upload coordinator. Throws {@link ResumableUploadsNotConfiguredError} unless
+   * a session store was configured via `uploads.resumable` in `config/media.ts`.
+   */
+  get resumable(): ResumableUploadManager {
+    if (!this.#resumable) throw new ResumableUploadsNotConfiguredError();
+    return this.#resumable;
+  }
+
+  /** Whether resumable (TUS) uploads are configured (a session store is present). */
+  get hasResumable(): boolean {
+    return this.#resumable !== undefined;
   }
 
   /** Resolve a raw disk by name (escape hatch to the underlying Drive disk). */
