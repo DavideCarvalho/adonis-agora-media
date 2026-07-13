@@ -1,0 +1,131 @@
+---
+title: React Client
+description: "@adonis-agora/media-react — a React hook (useMediaUpload), a headless-friendly MediaUploader component, and a framework-free browser upload client (createMediaUploadClient) that speak the provider's actual upload contract across TUS, direct-S3 multipart, and proxy strategies."
+icon: Atom
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+**`@adonis-agora/media-react`** is the first-party browser companion to the server upload routes. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
+
+- **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `uploads.resumable.routes.prefix` (default `/media/uploads/tus`), resuming from the server's `Upload-Offset`.
+- **Direct-S3 multipart** — `POST /direct/initiate` returns presigned part URLs; parts `PUT` straight to S3 and are assembled via `POST /direct/:uploadId/complete`.
+- **Proxy** — a single `PUT /proxy` streams the whole body through the app.
+
+<Callout type="info" title="Separate package">
+  Install it alongside the server library: `npm i @adonis-agora/media-react react`. `react` is an **optional** peer — the `./client` entry point is framework-free and needs no React. This package matches the routes documented in [Upload modes](/docs/media/uploads/upload-modes) and [Resumable / TUS](/docs/media/uploads/resumable-tus).
+</Callout>
+
+---
+
+## `useMediaUpload`
+
+A hook with progress / status state and `pause` / `resume` / `abort`. For `tus`, resume continues from the server offset; for `direct` / `proxy` a resume restarts the transfer.
+
+```tsx
+import { useMediaUpload } from '@adonis-agora/media-react'
+
+function Uploader() {
+  const { upload, pause, resume, abort, status, progress } = useMediaUpload({ mode: 'tus' })
+
+  return (
+    <div>
+      <input
+        type="file"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) upload(file, { filename: file.name, contentType: file.type })
+        }}
+      />
+      <progress value={progress} max={1} />
+      <span>{status}</span>
+    </div>
+  )
+}
+```
+
+- `mode`: `'tus'` (resumable, default) · `'direct'` (presigned S3 multipart) · `'proxy'`.
+- State: `status` (`'idle' | 'uploading' | 'paused' | 'success' | 'error'`), `progress` (`0..1`), `result`, `location` (TUS session), `error`.
+- Actions: `upload(file, meta)`, `pause()`, `resume()`, `abort()` (terminates the TUS session server-side), `reset()`.
+- `direct` / `proxy` need a `key` in the upload `meta` — resolve it server-side in real apps.
+
+The hook accepts every `MediaUploadClientOptions` field (below) plus an optional pre-built `client` for tests or a shared instance.
+
+---
+
+## `MediaUploader`
+
+A minimal, headless-friendly component wired to the hook. The default markup is a file input + progress bar; pass `render` to take full control.
+
+```tsx
+import { MediaUploader } from '@adonis-agora/media-react'
+
+<MediaUploader mode="tus" accept="image/*" onUploaded={(r) => console.log(r)} />
+
+// Fully headless — bring your own UI:
+<MediaUploader
+  mode="direct"
+  meta={{ key: 'u/1/a.png' }}
+  render={({ status, progress, selectFile }) => (
+    /* your markup; call selectFile(file) to start */
+  )}
+/>
+```
+
+| Prop | Type | What |
+|------|------|------|
+| `mode` | `'tus' \| 'direct' \| 'proxy'` | Strategy (default `tus`). |
+| `accept` | `string` | `accept` attribute for the file input. |
+| `meta` | `Partial<UploadMeta>` | Extra metadata (e.g. `key` / `disk` for direct/proxy) merged into every upload. |
+| `unstyled` | `boolean` | Skip the default stylesheet. |
+| `className` | `string` | Class on the wrapper element. |
+| `onUploaded` / `onError` | callbacks | Fire on success / failure. |
+| `render` | function | Headless override receiving the hook state + `selectFile(file)`. |
+
+The default styling uses **Agora design tokens** (`--agora-primary`, `--agora-primary-soft`, `--agora-ink`) through overridable `--agora-media-*` CSS custom properties — retheme by setting a variable, or pass `unstyled` to drop the stylesheet. No vendor branding. (`ensureMediaUploaderStyles` / `mediaUploaderCss` / `MEDIA_UPLOADER_STYLE_ID` are exported if you manage the stylesheet yourself.)
+
+---
+
+## `createMediaUploadClient` (framework-free)
+
+The `./client` entry point needs no React and drives the same three strategies directly.
+
+```ts
+import { createMediaUploadClient } from '@adonis-agora/media-react/client'
+
+const client = createMediaUploadClient({
+  baseUrl: 'https://api.example.com',
+  headers: { Authorization: `Bearer ${token}` },     // merged into every app request
+  getHeaders: async () => ({ Authorization: `Bearer ${await fresh()}` }), // short-lived tokens
+})
+
+await client.uploadTus(file, { filename: 'a.png', contentType: 'image/png' })
+await client.uploadDirect(file, { filename: 'a.png', key: 'u/1/a.png' })
+await client.uploadProxy(file, { filename: 'a.png', key: 'u/1/a.png' })
+```
+
+| Option | Default | What |
+|--------|---------|------|
+| `baseUrl` | `''` (same-origin) | Origin (and optional path) prepended to every relative endpoint. |
+| `tusPath` | `/media/uploads/tus` | TUS base path — match `uploads.resumable.routes.prefix`. |
+| `uploadsPath` | `/media/uploads` | Direct-S3 + proxy base path — match `uploads.routes.prefix`. |
+| `chunkSize` | `8 MiB` | Bytes per TUS chunk / requested direct part size. |
+| `concurrency` | `3` | Max in-flight part `PUT`s for direct-S3 multipart. |
+| `retries` | `3` | Per-chunk / per-part retry attempts. |
+| `fetchImpl` | global `fetch` | Custom fetch for tests / non-browser runtimes. |
+| `headers` | — | Static headers merged into every **app** request. |
+| `getHeaders` | — | Resolved fresh before every app request (short-lived tokens); wins on key conflict. |
+
+<Callout type="warn">
+  `headers` / `getHeaders` are merged into requests against **your app** only. Presigned S3 `PUT`s deliberately receive neither — adding an `Authorization` header there would break the SigV4 signature.
+</Callout>
+
+A `mediaUrl(...)` helper is also exported for composing URLs against the base path.
+
+---
+
+## Next steps
+
+- [Upload modes](/docs/media/uploads/upload-modes) — the direct / proxy routes this client calls
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — the TUS protocol it implements
+- [Dashboard](/docs/media/dashboard) — reuses this client for its upload UI

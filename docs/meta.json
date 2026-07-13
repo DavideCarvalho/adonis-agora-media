@@ -6,7 +6,12 @@
     "configuration",
     "collections-and-conversions",
     "attachments",
+    "uploads",
+    "storage",
+    "react",
+    "dashboard",
     "stores-and-processors",
+    "integrations",
     "testing",
     "roadmap"
   ],

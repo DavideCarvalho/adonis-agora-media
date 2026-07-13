@@ -1,0 +1,149 @@
+---
+title: S3 Disk
+description: The bundled disks.s3() driver — an S3 (or S3-compatible) disk with extended operations (copy/move/deleteMany/list/size/stat), native multipart, and presigned URLs. The AWS SDK is an optional, lazily-imported peer.
+icon: Cloud
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Media delegates storage to [`@adonisjs/drive`](https://github.com/adonisjs/drive), so `local` / `s3` / `gcs` Drive disks work out of the box. On top of that, the package now bundles its **own** S3 driver — `disks.s3()` — a first-class `Disk` that also implements the richer add-on surfaces the direct-upload, resumable, and dashboard features lean on: native multipart, prefix listing, cross-bucket copy/move, batched deletes, and cheap metadata. The AWS SDK stays an **optional peer**, imported lazily only when an S3 disk is actually selected.
+
+<Callout type="info">
+  You don't need this driver to use S3 through Drive. Reach for `disks.s3()` when you want the extended operations (`copy` / `move` / `deleteMany` / `list` / `size` / `stat`) and direct-to-S3 multipart uploads that a plain Drive disk doesn't expose. See [Upload modes](/docs/media/uploads/upload-modes) and the [Dashboard](/docs/media/dashboard).
+</Callout>
+
+---
+
+## Install the peer
+
+The driver needs two optional peers. Install them only if you use an S3 disk:
+
+```sh
+npm i @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+```
+
+Both are declared `optional` in `peerDependenciesMeta`, so nothing is pulled in unless you configure `disks.s3()` and the provider builds it at boot.
+
+---
+
+## Configure
+
+`disks` is a new top-level key on `defineConfig`, parallel to `stores` and `processors`: a name → factory map. Select one with the top-level `disk` (or a per-collection / per-`attach` `disk`). A name in `disks` **takes precedence** over a Drive disk of the same name; any name not found here falls through to Drive.
+
+```ts title="config/media.ts"
+import { defineConfig, disks, stores } from '@adonis-agora/media'
+
+export default defineConfig({
+  disk: 's3',
+  disks: {
+    s3: disks.s3({
+      bucket: 'my-bucket',
+      region: 'us-east-1',
+      publicBaseUrl: 'https://cdn.example.com', // stable public URLs via getUrl()
+    }),
+  },
+  store: 'lucid',
+  stores: { lucid: stores.lucid() },
+})
+```
+
+### `disks.s3(config)` options
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `bucket` | `string` | — (required) | Target bucket. |
+| `region` | `string` | SDK default | AWS region, e.g. `us-east-1`. |
+| `credentials` | `{ accessKeyId, secretAccessKey, sessionToken? }` | SDK provider chain | Static credentials. Omit to use env vars / shared config / IAM role. |
+| `endpoint` | `string` | — | Custom endpoint for S3-compatible services (MinIO, Cloudflare R2, DigitalOcean Spaces, …). |
+| `forcePathStyle` | `boolean` | `false` | Path-style addressing (`endpoint/bucket/key`) — required by most S3-compatible services. |
+| `keyPrefix` | `string` | — | Prefix prepended to every key (e.g. `uploads`). |
+| `publicBaseUrl` | `string` | — | Base URL for stable public URLs (a CDN or the bucket website), used by `getUrl`. |
+
+Each `disks.s3(...)` returns a **lazy thunk**. Calling it in the config file costs nothing; `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` are imported only when the provider builds the selected disk at boot — so you can list an S3 disk in the map even where the AWS SDK isn't installed, as long as you don't select it.
+
+<Callout type="info" title="S3-compatible services">
+  For MinIO / R2 / Spaces, set `endpoint` and (usually) `forcePathStyle: true`:
+
+  ```ts
+  disks.s3({
+    bucket: 'media',
+    endpoint: 'https://s3.example-compatible.com',
+    forcePathStyle: true,
+    credentials: { accessKeyId: '…', secretAccessKey: '…' },
+  })
+  ```
+</Callout>
+
+---
+
+## The base `Disk` contract
+
+Like any Drive disk, `S3Disk` satisfies the structural [`Disk`](/docs/media/stores-and-processors#the-disk-contract-reusing-drive) contract, so it works everywhere the library already writes:
+
+- `put` / `putStream` / `getBytes` / `getStream` / `exists` / `delete` / `getMetaData`
+- `getUrl(key)` — a stable public URL from `publicBaseUrl` (or a synthesised virtual-hosted / path-style URL).
+- `getSignedUrl(key, { expiresIn })` — a time-limited **signed read** URL via the request presigner. `expiresIn` accepts Drive's human duration strings (`'30m'`, `'1h'`, `'45s'`, `'2d'`) or a number of seconds; the default is 30 minutes.
+
+So `media.library.url(id)` and `media.library.signedUrl(id, '1h')` resolve through the S3 disk with no extra wiring.
+
+---
+
+## Extended operations
+
+`S3Disk` also implements the optional `ExtendedDisk` surface — richer object operations that the base contract deliberately leaves out (the in-memory / Drive disks don't provide them). The library detects it structurally at runtime with `isExtendedDisk(disk)`; you can reach the raw disk with `media.disk('s3')`.
+
+```ts
+const s3 = media.disk('s3')
+
+if (isExtendedDisk(s3)) {
+  await s3.copy('a/photo.jpg', 'b/photo.jpg')                 // server-side copy
+  await s3.move('b/photo.jpg', 'c/photo.jpg')                 // copy then delete source
+  await s3.copy('a/x.jpg', 'x.jpg', { toBucket: 'archive' })  // cross-bucket
+  await s3.deleteMany(['a/1.jpg', 'a/2.jpg', 'a/3.jpg'])      // batched delete
+  await s3.size('a/photo.jpg')                                // bytes, no body download
+  await s3.stat('a/photo.jpg')                                // { size, contentType, lastModified }
+
+  const page = await s3.list('uploads/', { delimiter: '/', limit: 100 })
+  page.folders  // sub-prefixes (each ends in the delimiter), from CommonPrefixes
+  page.files    // [{ key, name, sizeBytes, lastModified }]
+  page.cursor   // present when truncated — pass back as options.cursor
+}
+```
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `copy(from, to, { toBucket? })` | `void` | Server-side `CopyObject`; optional cross-bucket. |
+| `move(from, to, { toBucket? })` | `void` | Copy then delete the source. |
+| `deleteMany(keys)` | `void` | `DeleteObjects` in as few round-trips as possible; empty array is a no-op. |
+| `list(prefix, options?)` | `ListResult` | Cursor-paginated `ListObjectsV2`; rolls deeper keys into `folders` via `delimiter` (default `'/'`). |
+| `size(key)` | `number` | Object size from `HeadObject`. |
+| `stat(key)` | `DiskStat` | `{ size, contentType?, lastModified? }` from `HeadObject`. |
+| `capabilities` | `DiskCapabilities` | `{ presign, multipart, publicUrls, list }` — a coarse feature descriptor. |
+
+<Callout type="info">
+  `list` tolerates S3-compatible services that return non-standard XML: when the SDK's entity deserialization trips, the driver falls back to parsing the `ListObjectsV2` XML directly, so listing keeps working on MinIO / R2 and friends.
+</Callout>
+
+---
+
+## Native multipart
+
+`S3Disk` implements the optional `MultipartUploadDisk` surface (`createMultipartUpload` / `uploadPart` / `presignUploadPart` / `completeMultipartUpload` / `abortMultipartUpload`), detected with `isMultipartCapable(disk)`. This is what powers the **direct** upload mode and native-multipart **resumable** uploads — see [Upload modes](/docs/media/uploads/upload-modes) and [Resumable / TUS](/docs/media/uploads/resumable-tus). You rarely call these directly; the `UploadManager` and `ResumableUploadManager` drive them for you.
+
+---
+
+## Import the class directly
+
+Select the disk lazily with `disks.s3()` in config, or import the class from the subpath if you want to construct one by hand (e.g. in a test with a mocked `S3Client`):
+
+```ts
+import { S3Disk } from '@adonis-agora/media/disks/s3'
+```
+
+---
+
+## Next steps
+
+- [Upload modes](/docs/media/uploads/upload-modes) — proxy vs. direct-S3 multipart
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — chunked, resumable uploads
+- [Dashboard](/docs/media/dashboard) — a console over `list` / `stat` / `copy` / `move` / `deleteMany`

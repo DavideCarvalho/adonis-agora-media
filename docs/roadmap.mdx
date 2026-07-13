@@ -1,32 +1,31 @@
 ---
 title: Roadmap
-description: What @adonis-agora/media intentionally defers in the current alpha — resumable/tus uploads, direct S3 presign, a browser/React client, more stores, and richer conversions. The seams exist; the features are not built yet.
+description: What @adonis-agora/media has shipped since the initial alpha — resumable/tus uploads, direct S3 presign, an S3 disk, a React client, and a dashboard — and what is still intentionally deferred (more stores, richer conversions, collection reordering).
 icon: Map
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`@adonis-agora/media`'s current alpha ships a focused core: owner collections, column attachments, image conversions, a pluggable store and processor, and a testing kit — all over `@adonisjs/drive`. Several adjacent capabilities are intentionally **left out** of this release. The SPIs were designed with these in mind (the seams exist), but the features themselves are not built yet.
+`@adonis-agora/media` started as a focused core: owner collections, column attachments, image conversions, a pluggable store and processor, and a testing kit — all over `@adonisjs/drive`. Several capabilities that were deferred in the first alpha have since **landed**; a few are still intentionally left out. This page tracks both.
 
 <Callout type="info" title="Why call it out">
-  The point of this page is honesty about scope. If you're evaluating the library for a use case below, you'll know it isn't there in the current alpha — and roughly where it would slot in when it lands.
+  The point of this page is honesty about scope. If you're evaluating the library for a use case below, you'll know whether it's here today — and, for the deferred ones, roughly where it would slot in when it lands.
 </Callout>
 
 ---
 
-## Deferred for the current alpha
+## Shipped since the initial alpha
 
-### Resumable / tus uploads
+- **Resumable / tus uploads** — the [tus](https://tus.io) `1.0.0` protocol with a pluggable session store (in-memory + Lucid). See [Resumable / TUS](/docs/media/uploads/resumable-tus).
+- **Direct S3 multipart presign** — the `direct` upload mode (browser uploads straight to S3 via presigned part URLs) alongside `proxy`. See [Upload modes](/docs/media/uploads/upload-modes).
+- **A bundled S3 disk** — `disks.s3()` with extended operations (copy / move / deleteMany / list / size / stat) and native multipart, over the optional AWS SDK peer. See [S3 disk](/docs/media/storage/s3-disk).
+- **A browser client + React package** — [`@adonis-agora/media-react`](/docs/media/react): `useMediaUpload`, `MediaUploader`, and a framework-free `createMediaUploadClient`.
+- **A management dashboard** — [`@adonis-agora/media-dashboard`](/docs/media/dashboard), with cross-owner [collection listing](/docs/media/dashboard/collections) via the new `MediaStore.list`.
+- **A Telescope extension** — a "Media" overview dashboard via [`mediaTelescopeExtension`](/docs/media/integrations/telescope).
 
-Large-file, resumable uploads (the [tus](https://tus.io) protocol) and chunked upload sessions are not implemented. Today an upload is a single `attach` / `createFromFile` call that buffers the contents and writes once. A resumable layer would sit in front of the library, assembling chunks before handing the completed file to `attach`.
+---
 
-### Direct S3 multipart presign
-
-The library can produce **signed read** URLs (`signedUrl`) on presign-capable disks, but there's no **direct upload** path yet — i.e. presigning an S3 multipart upload so the browser uploads straight to the bucket (the "direct" mode), versus proxying bytes through your server (the "proxy" mode it does today). Both modes are anticipated; only proxy exists today.
-
-### A browser client + React package
-
-There is no companion browser/React package yet — no `useMediaUpload` hook or `MediaUploader` component. The current surface is server-side only; you wire your own front-end upload UI to a controller that calls the library. A first-party client (with progress, direct presign, and previews) is planned.
+## Still deferred
 
 ### More `MediaStore` drivers
 
@@ -48,17 +47,19 @@ Ordering is append-only in the current alpha — `attach` always takes the next 
 
 ---
 
-## What is in the current alpha
+## What is in the library today
 
-For contrast, the current release does ship:
+For contrast, the library ships:
 
 - **Owner collections** — MIME whitelist, single-file replacement, ordering, per-collection disk. See [Collections & Conversions](/docs/media/collections-and-conversions).
 - **Column attachments** — the adonis-attachment style, with eager image variants. See [Attachments](/docs/media/attachments).
 - **Image conversions** — eager or lazy, cached on the record, via sharp. See [Collections & Conversions](/docs/media/collections-and-conversions#conversions).
 - **Pluggable persistence** — in-memory + Lucid stores with a published migration. See [Stores & Processors](/docs/media/stores-and-processors).
-- **Drive-backed storage** — reuse your `local` / `s3` / `gcs` disks; signed read URLs included.
+- **Drive-backed storage plus a bundled S3 disk** — reuse your `local` / `s3` / `gcs` disks, or the [S3 disk](/docs/media/storage/s3-disk) with extended operations; signed read URLs included.
+- **Uploads for large files** — [proxy and direct-S3](/docs/media/uploads/upload-modes) modes and [resumable TUS](/docs/media/uploads/resumable-tus) sessions.
+- **A browser client and dashboard** — [`@adonis-agora/media-react`](/docs/media/react) and the [management console](/docs/media/dashboard).
 - **A testing kit** — in-memory doubles for every seam. See [Testing](/docs/media/testing).
-- **Structural diagnostics** — `agora:media:*` events, captured by [Telescope](/docs/telescope) when present.
+- **Structural diagnostics** — `agora:media:*` events, captured by [Telescope](/docs/media/integrations/telescope) when present.
 
 ---
 

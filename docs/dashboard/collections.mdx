@@ -1,0 +1,67 @@
+---
+title: Collections View
+description: The cross-owner MediaStore.list — a cursor-paginated, filterable listing of media-library records across every owner (newest first), added for management and console reads. Backs the dashboard's Collections view.
+icon: FolderTree
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The original `MediaStore` only listed records **for one owner** (`listByOwner`), which is all the library needs day-to-day. Management and console views need the opposite: every record **across all owners**, paginated and filterable, newest first. That's the new `MediaStore.list` — and it's what the [Dashboard](/docs/media/dashboard)'s Collections view is built on.
+
+<Callout type="info">
+  `list` is a **read** API for consoles and admin tooling. It's implemented by both bundled stores (in-memory + Lucid). Your own [custom store](/docs/media/stores-and-processors#writing-your-own-store) must implement it too — it's part of the `MediaStore` interface.
+</Callout>
+
+---
+
+## `MediaStore.list`
+
+Reach the store through `media.store` (exposed on the manager for exactly these reads; day-to-day writes still go through `media.library`):
+
+```ts
+import media from '@adonis-agora/media/services/main'
+
+const page = await media.store.list({
+  collection: 'gallery',   // optional filters — all AND-ed
+  ownerType: 'Post',
+  ownerId: '42',
+  prefix: 'Post/42/',      // records whose `path` starts with this
+  limit: 50,               // default 50, clamped to 200
+})
+
+page.items       // MediaRecord[] — ordered createdAt desc, then id desc
+page.nextCursor  // opaque string, or null on the last page
+
+// next page:
+const more = await media.store.list({ cursor: page.nextCursor ?? undefined })
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `collection` | `string?` | Restrict to one collection. |
+| `ownerType` | `string?` | Restrict to one owner type. |
+| `ownerId` | `string?` | Restrict to one owner id (usually paired with `ownerType`). |
+| `prefix` | `string?` | Records whose `path` starts with this prefix. |
+| `cursor` | `string?` | Opaque cursor from a previous page's `nextCursor`. |
+| `limit` | `number?` | Page size. Defaults to `DEFAULT_MEDIA_LIST_LIMIT` (50), clamped to `MAX_MEDIA_LIST_LIMIT` (200). |
+
+Ordering is a **stable keyset** — `createdAt` desc, then `id` desc — so paging stays consistent under concurrent writes (no rows skipped or repeated when new media is attached mid-scan). The cursor carries the last row's `{ createdAt, id }`, URL-safe base64 encoded.
+
+<Callout type="info">
+  The helpers `encodeMediaCursor` / `decodeMediaCursor` / `clampMediaListLimit` and the `DEFAULT_MEDIA_LIST_LIMIT` / `MAX_MEDIA_LIST_LIMIT` constants are exported from the barrel if you build your own store or paginate manually.
+</Callout>
+
+---
+
+## The dashboard Collections view
+
+The console's `GET /collections` route projects each `MediaRecord` into a `MediaEntry` (id, owner, collection, name, file name, MIME type, size, disk, path, the names of generated conversions, and timestamps) and returns a `CollectionListResponse` — `{ items, nextCursor }` — driven directly by `media.store.list`. The same filters (`collection` / `ownerType` / `ownerId` / `prefix`) are exposed as query parameters, so you can drill into one collection or one owner from the UI.
+
+This is a read-only view: it shows what the library has recorded, independent of the raw bucket-browsing **Library** view (which lists disk keys). Together they let you see both the storage layer and the media-library metadata over it.
+
+---
+
+## Next steps
+
+- [Dashboard](/docs/media/dashboard) — the console that surfaces this view
+- [Stores & Processors](/docs/media/stores-and-processors#the-mediastore-persistence) — the `MediaStore` interface `list` belongs to

@@ -1,0 +1,90 @@
+---
+title: Dashboard
+description: "@adonis-agora/media-dashboard — a media-management console (React SPA + thin AdonisJS provider) to browse buckets, watch resumable uploads in progress, upload objects, and copy/move/delete across buckets, over the real disk and session-store surfaces."
+icon: LayoutDashboard
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+**`@adonis-agora/media-dashboard`** is a management console for your media: browse your buckets, watch resumable uploads in progress, upload new objects, and copy / move / delete objects across buckets. It's a small React SPA served by a thin AdonisJS provider, themed to Agora design tokens (light + dark).
+
+Nothing about storage is reimplemented: the console consumes the **real** media surface — disk `list` / `stat` / `copy` / `move` / `deleteMany` (from the [S3 disk](/docs/media/storage/s3-disk)'s extended operations) and the resumable [`UploadSessionStore.list()`](/docs/media/uploads/resumable-tus) — through provider-registered routes, and reuses [`@adonis-agora/media-react`](/docs/media/react) for the upload UI.
+
+<Callout type="info" title="Separate package">
+  `pnpm add @adonis-agora/media-dashboard`. Register its provider **after** the media provider.
+</Callout>
+
+---
+
+## Install
+
+```ts title="adonisrc.ts"
+providers: [
+  () => import('@adonis-agora/media/media_provider'),
+  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
+]
+```
+
+## Configure — `config/media_dashboard.ts`
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media-dashboard'
+import { middleware } from '#start/kernel'
+
+export default defineConfig({
+  basePath: '/media/dashboard',   // where the SPA mounts (default)
+  actions: true,                  // enable copy/move/delete (default: false — read-only)
+  disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
+  middleware: middleware.auth(),  // gate the whole console — SPA + API
+})
+```
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `basePath` | `string` | `/media/dashboard` | Where the SPA is mounted. |
+| `apiBasePath` | `string` | `<basePath>/api` | Where the JSON API is mounted. |
+| `actions` | `boolean` | `false` | Enable mutating actions (copy / move / delete). Off = read-only browser. |
+| `disks` | `string[]` | derived from media config | Disk names the console may browse / act on. |
+| `uploadsPrefix` | `string` | `/media/uploads` | Match `media.uploads.routes.prefix`. |
+| `tusPrefix` | `string` | `/media/uploads/tus` | Match `media.uploads.resumable.routes.prefix`. |
+| `middleware` | handler(s) | — | Host auth applied to the whole console. |
+
+<Callout type="warn">
+  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete — gate the routes with your own `middleware` (an auth guard) before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime bootstrap (`window.__MEDIA_DASHBOARD__`) into `index.html` at serve time.
+</Callout>
+
+---
+
+## Routes
+
+The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`), behind your `middleware`:
+
+| Method | Path | Backed by |
+|--------|------|-----------|
+| `GET` | `/topology` | capability probe (`{ disks, hasUploads, actions }`) |
+| `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
+| `GET` | `/objects?disk&prefix&cursor&limit` | disk `list` |
+| `GET` | `/object?disk&key` | disk `stat` + signed URL |
+| `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
+| `GET` | `/collections?collection&ownerType&ownerId&prefix&cursor&limit` | `MediaStore.list` (see [Collections view](/docs/media/dashboard/collections)) |
+| `POST` | `/copy` · `/move` | disk `copy` / `move` (streamed for cross-disk) — `actions` only |
+| `POST` | `/delete` | disk `deleteMany` — `actions` only |
+
+Uploads go through the core `@adonis-agora/media` TUS / direct routes via `@adonis-agora/media-react`.
+
+---
+
+## Views
+
+- **Library** — pick a disk, walk folders via cursor-paginated `list`, copy / move across buckets, delete.
+- **Collections** — the media-library records themselves (owner, collection, conversions), cross-owner and filterable. See [Collections view](/docs/media/dashboard/collections).
+- **Uploads** — live resumable sessions, polled every 2s from the session store.
+- **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.
+
+---
+
+## Next steps
+
+- [Collections view](/docs/media/dashboard/collections) — the cross-owner `MediaStore.list` behind the console
+- [S3 disk](/docs/media/storage/s3-disk) — the extended operations the Library view drives
+- [React client](/docs/media/react) — the upload UI the console embeds

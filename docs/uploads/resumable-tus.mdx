@@ -1,0 +1,147 @@
+---
+title: Resumable / TUS
+description: Resumable, chunked uploads over the tus 1.0.0 protocol — media.resumable and the opt-in TUS routes under /media/uploads/tus, backed by a pluggable UploadSessionStore (in-memory + Lucid) that persists offset/length/metadata/expiry so a dropped connection resumes.
+icon: RefreshCw
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Large uploads shouldn't restart from zero when a connection drops. The package now implements the [tus](https://tus.io) `1.0.0` resumable protocol: bytes flow through the backend in chunks, each chunk is written immediately as a part on the target disk (native S3 multipart when available, else buffered part objects), and a **session** persists the offset so a `HEAD` tells the client exactly where to resume.
+
+<Callout type="info">
+  The engine (`ResumableUploadManager`) and the TUS server (`TusUploadHandler`) are framework-agnostic; the provider mounts thin AdonisJS routes over them. A browser client that speaks this protocol ships in [`@adonis-agora/media-react`](/docs/media/react) (`mode: 'tus'`, the default there).
+</Callout>
+
+---
+
+## Configure
+
+Resumable uploads are **fully opt-in**. Add `uploads.resumable`; its presence makes `media.resumable` available and, with `routes.enabled`, mounts the TUS endpoints. The session store is picked by name from a map built with the `uploadSessions` factory (each peer imported lazily, mirroring `stores`).
+
+```ts title="config/media.ts"
+import { defineConfig, disks, stores, uploadSessions } from '@adonis-agora/media'
+
+export default defineConfig({
+  disk: 's3',
+  disks: { s3: disks.s3({ bucket: 'my-bucket', region: 'us-east-1' }) },
+  store: 'lucid',
+  stores: { lucid: stores.lucid() },
+
+  uploads: {
+    resumable: {
+      store: 'lucid',
+      stores: {
+        memory: uploadSessions.memory(),
+        lucid: uploadSessions.lucid(), // durable, multi-process sessions
+      },
+      sessionTtlSeconds: 24 * 60 * 60, // TUS expiration; omit for never-expiring sessions
+      routes: { enabled: true, prefix: '/media/uploads/tus', maxSize: 5 * 1024 ** 3 },
+    },
+  },
+})
+```
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `store` | `string` | in-memory | Session store name (a key of `stores`). |
+| `stores` | `Record<string, UploadSessionStoreFactory>` | — | Named session stores (`uploadSessions.memory()`, `uploadSessions.lucid()`). |
+| `tmpPrefix` | `string` | `.uploads` | Prefix for temporary chunk parts on the target disk (buffered path). |
+| `sessionTtlSeconds` | `number` | never | Session lifetime (TUS `expiration`). |
+| `routes.enabled` | `boolean` | `false` | Mount the TUS protocol routes. |
+| `routes.prefix` | `string` | `/media/uploads/tus` | Path prefix for the TUS routes. |
+| `routes.disk` | `string` | media default disk | Disk resumable uploads land on. |
+| `routes.maxSize` | `number` | — | Reject creations whose `Upload-Length` exceeds this. |
+
+<Callout type="warn">
+  Naming a `store` with no matching factory throws `UploadSessionStoreNotConfiguredError` — a silent non-durable fallback would lose in-flight uploads. Only the zero-config path (no `store` named) resolves to the in-memory store, which is single-process and non-durable: fine for a single node, not for a cluster. For durable sessions select `lucid` and run `node ace migration:run`.
+</Callout>
+
+---
+
+## The Lucid session store
+
+`configure` publishes a migration for the TUS `lucid` store alongside the media migration. It creates two portable tables — `media_upload_sessions` (offset / length / metadata / expiry) and `media_upload_parts` (the per-part ETag side-index for assembling native S3 multipart) — with JSON as TEXT and timestamps as epoch-ms integers, so it runs on SQLite / Postgres / MySQL. Import the class from `@adonis-agora/media/upload_sessions/lucid` if you need it by hand.
+
+`uploadSessions.lucid({ connection?, table?, partsTable? })` — `connection` defaults to Lucid's default; `table` defaults to `media_upload_sessions`; `partsTable` defaults to `media_upload_parts`.
+
+---
+
+## TUS protocol routes
+
+With `routes.enabled`, these routes are mounted under `routes.prefix` (default `/media/uploads/tus`). The server implements the `creation`, `termination` and `expiration` extensions.
+
+| Method | Path | Does |
+|--------|------|------|
+| `OPTIONS` | `/` | Advertise `Tus-Version` / `Tus-Extension` / `Tus-Max-Size`. |
+| `POST` | `/` | Create a session from `Upload-Length` + `Upload-Metadata`; returns `201` + `Location`. |
+| `HEAD` | `/:id` | Report `Upload-Offset` (the resume point), plus `Upload-Length` / `Upload-Expires`. |
+| `PATCH` | `/:id` | Append bytes at `Upload-Offset` (`Content-Type: application/offset+octet-stream`); auto-completes at the declared length. |
+| `DELETE` | `/:id` | Terminate (abort) an in-flight upload. |
+
+Storage errors map onto TUS status codes: offset conflict → `409`, expired session → `410 Gone`, unknown session → `404`. The final object key defaults to `uploads/<token>/<filename>` (from the `filename` metadata field).
+
+<Callout type="info">
+  A standard tus client (e.g. `tus-js-client`) points straight at `routes.prefix` and works unchanged. `@adonis-agora/media-react` includes a matching client so you don't need a separate dependency.
+</Callout>
+
+---
+
+## `media.resumable`
+
+The same engine is available programmatically. It throws `ResumableUploadsNotConfiguredError` unless `uploads.resumable` is configured; guard with `media.hasResumable`.
+
+<Steps>
+<Step>
+
+Create a session (reserves a native S3 multipart upload when the disk supports it):
+
+```ts
+const session = await media.resumable.createUpload({
+  disk: 's3',
+  key: `users/${user.id}/video.mp4`,
+  size: file.size,       // TUS Upload-Length (optional)
+  contentType: 'video/mp4',
+})
+```
+
+</Step>
+<Step>
+
+Append chunks — `offset` must equal the session's current offset, and each call returns the new offset:
+
+```ts
+let { offset } = await media.resumable.writeChunk(session.id, 0, chunk1)
+;({ offset } = await media.resumable.writeChunk(session.id, offset, chunk2))
+
+await media.resumable.status(session.id) // { offset, size, expiresAt } — drives HEAD
+```
+
+</Step>
+<Step>
+
+Assemble into the final object (or abort to discard):
+
+```ts
+const { key, disk, size } = await media.resumable.complete(session.id)
+// await media.resumable.abort(session.id)
+```
+
+</Step>
+</Steps>
+
+`media.resumable.list(filter?)` returns in-progress sessions (optionally filtered by `disk` / `keyPrefix`) for an "uploads in progress" view — the [Dashboard](/docs/media/dashboard) uses it. Sessions emit `agora:media:upload.*` diagnostics events, captured by [Telescope](/docs/media/integrations/telescope).
+
+---
+
+## Custom session stores
+
+An `UploadSessionStore` is a POJO implementing `create` / `get` / `update` / `delete`, plus optional `addPart` / `listParts` (only needed for multipart-capable disks) and an optional `list` (for the admin view). Wire it via an `UploadSessionStoreFactory` thunk in `uploads.resumable.stores` so any peer it needs is imported lazily.
+
+---
+
+## Next steps
+
+- [Upload modes](/docs/media/uploads/upload-modes) — single-shot proxy and direct-S3 uploads
+- [React client](/docs/media/react) — `useMediaUpload({ mode: 'tus' })`
+- [S3 disk](/docs/media/storage/s3-disk) — native multipart for resumable uploads

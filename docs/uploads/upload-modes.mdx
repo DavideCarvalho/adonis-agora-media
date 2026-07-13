@@ -1,0 +1,141 @@
+---
+title: Upload Modes
+description: Two upload strategies over a multipart-capable disk — proxy (bytes stream through your app) and direct (the browser uploads straight to S3 via presigned multipart part URLs). MediaManager.uploads and the opt-in provider routes under /media/uploads.
+icon: ArrowUpFromLine
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Beyond the buffer-once `attach` / `createFromFile` calls, the library now ships an **upload coordinator** for large files, with two strategies:
+
+- **`proxy`** — the client sends bytes to your app, which streams them to the disk (`putStream`, no in-memory buffering). Works on **any** disk.
+- **`direct`** — for a multipart-capable disk (the bundled [S3 disk](/docs/media/storage/s3-disk)), your app hands the client **presigned multipart part URLs**; the browser `PUT`s each part straight to S3, then your app assembles them. Bytes never pass through your server.
+
+`auto` (the default) picks `direct` on a multipart-capable disk, else `proxy`.
+
+<Callout type="info">
+  This is the server side. For a browser client that speaks this contract (progress, retries, concurrency), use [`@adonis-agora/media-react`](/docs/media/react) — its `createMediaUploadClient` / `useMediaUpload` implement exactly the routes below.
+</Callout>
+
+---
+
+## Configure
+
+Upload behaviour lives under the `uploads` key. HTTP routes are **opt-in** — omit `routes` to drive uploads only through the `MediaManager` methods and wire your own endpoints.
+
+```ts title="config/media.ts"
+import { defineConfig, disks, stores } from '@adonis-agora/media'
+
+export default defineConfig({
+  disk: 's3',
+  disks: { s3: disks.s3({ bucket: 'my-bucket', region: 'us-east-1' }) },
+  store: 'lucid',
+  stores: { lucid: stores.lucid() },
+
+  uploads: {
+    mode: 'auto',            // 'auto' (default) | 'proxy' | 'direct'
+    partSize: 8 * 1024 * 1024, // multipart part size, default 8 MiB (S3 min is 5 MiB)
+    presignTtlSeconds: 3600,   // lifetime of presigned part URLs, default 3600
+    routes: { enabled: true, prefix: '/media/uploads' }, // opt-in HTTP routes
+  },
+})
+```
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `mode` | `'auto' \| 'proxy' \| 'direct'` | `auto` | Default strategy. `direct` on a non-multipart disk throws `UploadNotSupportedError`. |
+| `partSize` | `number` | `8 MiB` | Multipart part size for direct uploads. |
+| `presignTtlSeconds` | `number` | `3600` | Lifetime of each presigned part URL. |
+| `routes.enabled` | `boolean` | `false` | Mount the built-in upload routes. |
+| `routes.prefix` | `string` | `/media/uploads` | Path prefix for those routes. |
+
+---
+
+## `media.uploads`
+
+The manager exposes an `UploadManager` at `media.uploads`, plus convenience methods on `media` itself. The object **key is yours to resolve server-side** — never trust a client-supplied key in a real app.
+
+<Tabs items={['direct', 'proxy']}>
+<Tab value="direct">
+
+```ts
+import media from '@adonis-agora/media/services/main'
+
+// 1. Begin a multipart upload — get one presigned URL per part.
+const { uploadId, key, disk, partSize, parts } = await media.initiateDirectUpload({
+  key: `users/${user.id}/video.mp4`,
+  contentType: 'video/mp4',
+  size: file.size, // used to pre-compute how many part URLs to return
+})
+// parts: [{ partNumber: 1, url }, { partNumber: 2, url }, …]
+
+// 2. The browser PUTs each part straight to S3 and collects the ETag response header.
+//    (Do this in the client — see @adonis-agora/media-react.)
+
+// 3. Assemble the parts into the final object.
+await media.completeDirectUpload({ key, uploadId, parts: [{ partNumber: 1, etag }, …] })
+
+// …or discard an in-flight upload:
+await media.abortDirectUpload({ key, uploadId })
+
+// Re-presign a single (e.g. retried) part:
+await media.uploads.presignPart({ key, uploadId, partNumber: 2 })
+```
+
+</Tab>
+<Tab value="proxy">
+
+```ts
+import media from '@adonis-agora/media/services/main'
+
+// Stream the whole body through the app to the disk — works on any disk.
+await media.proxyUpload({
+  key: `users/${user.id}/video.mp4`,
+  contents: request.request,   // a Readable — streamed, not buffered
+  contentType: 'video/mp4',
+})
+```
+
+</Tab>
+</Tabs>
+
+`media.uploads.resolveMode({ disk, mode })` tells you which strategy a disk will use (`'proxy'` or `'direct'`), honouring the per-call override, the configured default, and the disk's multipart capability.
+
+<Callout type="warn">
+  These upload methods write bytes to a disk key — they do **not** create a `MediaLibrary` record. Once the object exists, register it (e.g. `media.library.attach` pointing at the key, or your own row) if you want it in a collection.
+</Callout>
+
+---
+
+## Provider routes
+
+With `uploads.routes.enabled`, the provider mounts these **plain AdonisJS routes** (not controllers) under `uploads.routes.prefix` (default `/media/uploads`). Each resolves the `MediaManager` singleton and delegates to it:
+
+| Method | Path | Does |
+|--------|------|------|
+| `POST` | `/direct/initiate` | Begin a multipart upload; returns presigned part URLs. |
+| `POST` | `/direct/:uploadId/parts/:partNumber` | Presign one (retried) part. |
+| `POST` | `/direct/:uploadId/complete` | Assemble the uploaded parts. |
+| `DELETE` | `/direct/:uploadId` | Abort the upload. |
+| `PUT` | `/proxy` | Stream bytes through the app to the disk. |
+
+The `key` (and optional `disk`) come from the JSON body or query string. The routes are unguarded by design — **add your own auth middleware** and resolve the key per user/tenant server-side so a client can't point an upload at another object.
+
+<Callout type="info">
+  Forcing `mode: 'direct'` on a disk that can't do native multipart throws `UploadNotSupportedError` (`E_MEDIA_UPLOAD_NOT_SUPPORTED`), which the routes map to `400`.
+</Callout>
+
+---
+
+## Diagnostics
+
+Direct and proxy uploads emit `agora:media:upload.start` / `upload.complete` / `upload.abort` events on the diagnostics bus (see [Configuration → Diagnostics](/docs/media/configuration#diagnostics)), captured by [Telescope](/docs/media/integrations/telescope) when present.
+
+---
+
+## Next steps
+
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — chunked uploads that resume after a dropped connection
+- [React client](/docs/media/react) — a browser client that drives these routes
+- [S3 disk](/docs/media/storage/s3-disk) — the multipart-capable disk direct mode needs

@@ -1,0 +1,58 @@
+---
+title: Telescope
+description: mediaTelescopeExtension — a first-class @adonis-agora/telescope extension that adds a "Media" overview dashboard (uploads, storage operations, image conversions) built from the agora:media:* diagnostics events. Telescope stays an optional, never-imported peer.
+icon: Telescope
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@adonis-agora/media` already publishes `agora:media:*` lifecycle events onto the diagnostics bus (see [Configuration → Diagnostics](/docs/media/configuration#diagnostics)). When [Telescope](/docs/telescope) is installed, its generic diagnostics watcher records those events automatically — so you get media entries with zero wiring. The new `mediaTelescopeExtension` goes one step further: it contributes a dedicated **"Media" overview dashboard** built from those recorded events.
+
+<Callout type="info">
+  Telescope is an **optional, never-imported peer**. The extension object structurally (not nominally) satisfies Telescope's `TelescopeExtension` contract, so `@adonis-agora/media` never depends on `@adonis-agora/telescope` — installed or not, the media library behaves identically.
+</Callout>
+
+---
+
+## Wire it up
+
+Import the extension from the `./telescope` subpath and add it to `config/telescope.ts`:
+
+```ts title="config/telescope.ts"
+import { defineConfig } from '@adonis-agora/telescope'
+import { mediaTelescopeExtension } from '@adonis-agora/media/telescope'
+
+export default defineConfig({
+  extensions: [mediaTelescopeExtension()],
+})
+```
+
+That's it — no changes to `config/media.ts`. As long as `emitDiagnostics` is on (the default), media operations flow onto the bus, Telescope's generic watcher records them as `type: 'diagnostic'`, `tag: 'lib:media'`, and the dashboard's panels read those recorded entries.
+
+---
+
+## What the dashboard shows
+
+`mediaTelescopeExtension()` registers a **"Media"** dashboard and the data providers its panels bind to, sourced from the media diagnostics events (`attach`, `delete`, `conversion`, `attachment.*`, and the `upload.*` lifecycle):
+
+- Active resumable uploads
+- Upload success rate and throughput
+- Uploads over time
+- Recent uploads
+- Storage operations over time
+- Attachment activity
+- Conversions over time
+- Recent conversions
+
+<Callout type="info">
+  No new watcher and no dedicated `media` entry type are contributed — media events are recorded under the generic `diagnostic` entry type (`tag: 'lib:media'`), so the **"Media" dashboard is the entry point** rather than a separate navigable entry list. (Same design as `@adonis-agora/durable/telescope`.)
+</Callout>
+
+`mediaTelescopeExtension(opts)` accepts the dashboard options (`MediaDashboardOptions`) if you need to tune it; the default (`mediaTelescopeExtension()`) is the common case.
+
+---
+
+## Next steps
+
+- [Configuration → Diagnostics](/docs/media/configuration#diagnostics) — the `agora:media:*` events the dashboard reads
+- [Upload modes](/docs/media/uploads/upload-modes) and [Resumable / TUS](/docs/media/uploads/resumable-tus) — sources of the `upload.*` events

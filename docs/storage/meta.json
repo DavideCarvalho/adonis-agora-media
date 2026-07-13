@@ -1,0 +1,5 @@
+{
+  "title": "Storage",
+  "icon": "Cloud",
+  "pages": ["s3-disk"]
+}

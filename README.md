@@ -7,23 +7,28 @@ Attach files to entities, organize them into collections (MIME whitelist, single
 ordering), and generate image conversions (eager or lazy). Storage is delegated entirely to Drive, so
 you reuse your existing `local` / `s3` / `gcs` disks — this package never reimplements disk drivers.
 
-## Package
+## Packages
 
 | Package | Role |
 |---|---|
-| [`@adonis-agora/media`](./packages/adonis) | The whole library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), provider + `defineConfig`, testing kit |
+| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, provider + `defineConfig`, testing kit |
+| [`@adonis-agora/media-react`](./packages/react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
+| [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA + AdonisJS provider): browse buckets, watch resumable uploads, copy/move/delete objects |
 
-One published package with **subpath exports** (the Agora idiom), so heavy backends stay optional:
+The core package uses **subpath exports** (the Agora idiom), so heavy backends stay optional:
 
 | Subpath | What |
 |---|---|
-| `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, SPIs, errors |
-| `@adonis-agora/media/media_provider` | the service provider |
+| `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, SPIs, errors |
+| `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
+| `@adonis-agora/media/upload_sessions/lucid` | the Lucid resumable `UploadSessionStore` (`@adonisjs/lucid` peer) |
+| `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` peers) |
 | `@adonis-agora/media/processors/sharp` | the sharp `ImageProcessor` (`sharp` peer) |
-| `@adonis-agora/media/testing` | `InMemoryMediaStore`, `InMemoryDisk`, `inMemoryDiskResolver`, `FakeImageProcessor` |
-| `@adonis-agora/media/types` | the structural `Disk` / `DiskResolver` contracts |
+| `@adonis-agora/media/telescope` | `mediaTelescopeExtension` (`@adonis-agora/telescope` optional peer) |
+| `@adonis-agora/media/testing` | `InMemoryMediaStore`, `InMemoryDisk`, `inMemoryDiskResolver`, `FakeImageProcessor`, `InMemoryUploadSessionStore` |
+| `@adonis-agora/media/types` | the structural `Disk` / `DiskResolver` / `ExtendedDisk` / `MultipartUploadDisk` contracts |
 
 ## Install
 
@@ -155,13 +160,24 @@ const library = new MediaLibrary({
 In a real app you can also `drive.fake()` from `@adonisjs/drive` to back the disks with an in-memory
 fake while keeping the rest of the wiring intact.
 
+## Uploads, S3 and the dashboard
+
+Large-file uploads ship in three flavours — **proxy** (bytes stream through your app), **direct-S3
+multipart** (the browser uploads straight to the bucket via presigned part URLs), and **resumable
+[tus](https://tus.io)** sessions (pluggable in-memory + Lucid session stores). Opt in under `uploads`
+in `config/media.ts`; the provider mounts the routes under `/media/uploads` and `/media/uploads/tus`.
+The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
+native multipart over the optional AWS SDK peer. Drive it from the browser with
+[`@adonis-agora/media-react`](./packages/react), and manage it all from
+[`@adonis-agora/media-dashboard`](./packages/dashboard).
+
 ## Roadmap (deferred)
 
-These seams exist in the SPIs but are intentionally **not built** in the current alpha:
+These seams exist in the SPIs but are intentionally **not built** yet:
 
-- Resumable / tus uploads and direct S3 multipart presign (proxy + direct upload modes).
-- A browser client + React (`useMediaUpload` / `MediaUploader`) package.
-- Additional `MediaStore` drivers and video/PDF thumbnail conversions, responsive `srcset`, antivirus hook.
+- Additional `MediaStore` drivers (document / Redis).
+- Video/PDF thumbnail conversions, responsive `srcset`, and an antivirus/scanning hook in `attach`.
+- A first-party collection reordering API (ordering is append-only today).
 
 ## Develop
 
