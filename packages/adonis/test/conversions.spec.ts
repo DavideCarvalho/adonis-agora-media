@@ -153,3 +153,46 @@ describe('conversions', () => {
     });
   });
 });
+
+/**
+ * `attach` documents that a single-file collection only drops the old media once the new one is
+ * "safely written and persisted". Eager conversions ran AFTER that delete, so a processor failure
+ * destroyed the previous media and threw — the caller never persisted the new id either, leaving
+ * the owner with nothing. A corrupt upload that sharp cannot decode is enough to trigger it.
+ */
+describe('attach: single-file replace vs eager conversion failure', () => {
+  const collections = [
+    { name: 'avatar', single: true, conversions: [{ name: 'thumbnail', width: 300, eager: true }] },
+  ];
+
+  it('keeps the previous media when an eager conversion throws', async () => {
+    const ip = new FakeImageProcessor();
+    const { library, store, disks } = makeLibrary(collections, ip);
+
+    const first = await library.attach({
+      ownerType: 'AppUser', ownerId: 'u1', collection: 'avatar',
+      fileName: 'a.png', mimeType: 'image/png', contents: png,
+    });
+    expect(first.conversions.thumbnail).toBeDefined();
+
+    // O upload seguinte e um arquivo que o processador nao consegue decodificar.
+    ip.convert = async () => {
+      throw new Error('Input buffer contains unsupported image format');
+    };
+
+    await expect(
+      library.attach({
+        ownerType: 'AppUser', ownerId: 'u1', collection: 'avatar',
+        fileName: 'b.png', mimeType: 'image/png', contents: Buffer.from('corrupt'),
+      })
+    ).rejects.toThrow(/unsupported image format/);
+
+    // O avatar anterior tem que continuar de pe: registro, bytes e a conversion dele.
+    expect(await store.find(first.id)).not.toBeNull();
+    expect(disks.fs.files.has(first.path)).toBe(true);
+    expect(disks.fs.files.has(first.conversions.thumbnail!.path)).toBe(true);
+
+    // E o owner nao pode ficar com dois registros numa collection single.
+    expect(await library.list('AppUser', 'u1', 'avatar')).toHaveLength(1);
+  });
+})

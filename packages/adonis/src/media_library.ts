@@ -94,9 +94,9 @@ export class MediaLibrary {
       throw new MimeNotAllowedError(input.collection, input.mimeType);
     }
 
-    // A single-file collection replaces whatever is already there — but only AFTER the new file is
-    // safely written and persisted, so a failed write leaves the old media intact. Capture the
-    // records to replace up front; delete them once the new record commits.
+    // A single-file collection replaces whatever is already there — but only once the new media is
+    // written, persisted AND renderable, so anything that fails on the way leaves the old media
+    // intact. Capture the records to replace up front; drop them at the end.
     const previous = config.single
       ? await this.store.listByOwner(input.ownerType, ownerId, input.collection)
       : [];
@@ -159,7 +159,26 @@ export class MediaLibrary {
       throw error;
     }
 
-    // The new record is committed; now it's safe to drop what a single-file collection replaced.
+    // Eager presets are generated synchronously on attach; lazy ones on first `url()`. This runs
+    // BEFORE `previous` is dropped: a preset that throws must not leave the owner with nothing.
+    const eager = (config.conversions ?? []).filter((p) => p.eager);
+    let current = saved;
+    if (eager.length > 0) {
+      try {
+        for (const preset of eager) current = await this.ensureConversion(saved.id, preset.name);
+      } catch (error) {
+        // The new media can't be rendered, so roll it back whole — bytes, any conversions already
+        // written, and the row — and leave what it was replacing untouched.
+        await this.#safeDelete(disk, path);
+        for (const variant of Object.values(current.conversions)) {
+          await this.#safeDelete(variant.disk, variant.path);
+        }
+        await this.store.delete(saved.id);
+        throw error;
+      }
+    }
+
+    // The new media is committed and renderable; only now is it safe to drop what it replaced.
     for (const record of previous) await this.#deleteRecord(record);
 
     this.emit('attach', {
@@ -173,11 +192,6 @@ export class MediaLibrary {
       mimeType: saved.mimeType,
     });
 
-    // Eager presets are generated synchronously on attach; lazy ones on first `url()`.
-    const eager = (config.conversions ?? []).filter((p) => p.eager);
-    if (eager.length === 0) return saved;
-    let current = saved;
-    for (const preset of eager) current = await this.ensureConversion(saved.id, preset.name);
     return current;
   }
 
