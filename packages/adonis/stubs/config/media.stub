@@ -4,13 +4,13 @@
 import { defineConfig, stores, processors, uploadSessions } from '@adonis-agora/media'
 
 /**
- * Configuration for @adonis-agora/media. Storage is delegated to @adonisjs/drive — `disk` names a disk
- * from your config/drive.ts (omit to use Drive's default). Pick a `store` by name from the map below;
+ * Configuration for @adonis-agora/media. Storage is delegated to @adonisjs/drive — 'disk' names a disk
+ * from your config/drive.ts (omit to use Drive's default). Pick a 'store' by name from the map below;
  * each driver's peer dependency is imported lazily, only when selected. The default store is the
- * in-process `memory` store (single-process, non-durable). For production select `lucid` and run
- * `node ace migration:run`.
+ * in-process 'memory' store (single-process, non-durable). For production select 'lucid' and run
+ * 'node ace migration:run'.
  *
- * Conversions need an image processor — `processors.sharp()` loads the optional `sharp` peer lazily.
+ * Conversions need an image processor — 'processors.sharp()' loads the optional 'sharp' peer lazily.
  */
 export default defineConfig({
   // disk: 's3', // omit to use Drive's default disk
@@ -34,8 +34,8 @@ export default defineConfig({
     },
   ],
 
-  // Resumable (TUS) uploads — opt-in. Mounts the TUS protocol under `routes.prefix` and persists
-  // upload sessions so a dropped connection resumes. Select `lucid` and run `node ace migration:run`
+  // Resumable (TUS) uploads — opt-in. Mounts the TUS protocol under 'routes.prefix' and persists
+  // upload sessions so a dropped connection resumes. Select 'lucid' and run 'node ace migration:run'
   // for durable, multi-process sessions; the default in-memory store is single-process only.
   // uploads: {
   //   resumable: {

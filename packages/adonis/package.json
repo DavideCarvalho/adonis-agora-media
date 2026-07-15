@@ -69,7 +69,11 @@
       "default": "./dist/src/telescope/index.js"
     }
   },
-  "files": ["dist/", "README.md", "CHANGELOG.md"],
+  "files": [
+    "dist/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
@@ -79,10 +83,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
+    "@adonis-agora/telescope": "^0.4.0",
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0",
     "@adonisjs/lucid": "^22.4.0",
-    "@adonis-agora/telescope": "^0.4.0",
     "@aws-sdk/client-s3": "^3.0.0",
     "@aws-sdk/s3-request-presigner": "^3.0.0",
     "sharp": "^0.33.0"
@@ -118,6 +122,7 @@
     "better-sqlite3": "^11.0.0",
     "luxon": "^3.4.0",
     "sharp": "^0.33.0",
+    "tempura": "0.4.1",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0"
   },

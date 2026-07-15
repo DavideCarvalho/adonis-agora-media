@@ -4,8 +4,8 @@
 import { BaseSchema } from '@adonisjs/lucid/schema'
 
 /**
- * The `media` table for the @adonis-agora/media `lucid` store. JSON payloads (`custom_properties`,
- * `conversions`) are stored as TEXT — the store (de)serializes them — and timestamps as epoch-ms
+ * The 'media' table for the @adonis-agora/media 'lucid' store. JSON payloads ('custom_properties',
+ * 'conversions') are stored as TEXT — the store (de)serializes them — and timestamps as epoch-ms
  * integers, so the schema is portable across SQLite / Postgres / MySQL.
  */
 export default class extends BaseSchema {

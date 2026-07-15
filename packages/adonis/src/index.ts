@@ -130,3 +130,7 @@ export {
   UploadSessionStoreNotConfiguredError,
   ResumableUploadsNotConfiguredError,
 } from './errors.js';
+
+// `node ace configure` reaches the hook through this entry point, not through the package's
+// `./configure` export path.
+export { configure } from '../configure.js';
