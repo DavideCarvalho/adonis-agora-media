@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { glob } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { compile } from 'tempura';
 import { describe, expect, it } from 'vitest';
 import { configure } from '../configure.js';
