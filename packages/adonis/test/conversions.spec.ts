@@ -170,8 +170,12 @@ describe('attach: single-file replace vs eager conversion failure', () => {
     const { library, store, disks } = makeLibrary(collections, ip);
 
     const first = await library.attach({
-      ownerType: 'AppUser', ownerId: 'u1', collection: 'avatar',
-      fileName: 'a.png', mimeType: 'image/png', contents: png,
+      ownerType: 'AppUser',
+      ownerId: 'u1',
+      collection: 'avatar',
+      fileName: 'a.png',
+      mimeType: 'image/png',
+      contents: png,
     });
     expect(first.conversions.thumbnail).toBeDefined();
 
@@ -182,9 +186,13 @@ describe('attach: single-file replace vs eager conversion failure', () => {
 
     await expect(
       library.attach({
-        ownerType: 'AppUser', ownerId: 'u1', collection: 'avatar',
-        fileName: 'b.png', mimeType: 'image/png', contents: Buffer.from('corrupt'),
-      })
+        ownerType: 'AppUser',
+        ownerId: 'u1',
+        collection: 'avatar',
+        fileName: 'b.png',
+        mimeType: 'image/png',
+        contents: Buffer.from('corrupt'),
+      }),
     ).rejects.toThrow(/unsupported image format/);
 
     // O avatar anterior tem que continuar de pe: registro, bytes e a conversion dele.
@@ -195,4 +203,4 @@ describe('attach: single-file replace vs eager conversion failure', () => {
     // E o owner nao pode ficar com dois registros numa collection single.
     expect(await library.list('AppUser', 'u1', 'avatar')).toHaveLength(1);
   });
-})
+});
