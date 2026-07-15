@@ -5,6 +5,7 @@ import { publishMedia } from './diagnostics.js';
 import { ImageProcessorMissingError, VariantNotFoundError } from './errors.js';
 import type { ConversionPreset, ImageProcessor } from './image_processor.js';
 import type { StorageManager } from './storage_manager.js';
+import type { SignedUrlOptions } from './types.js';
 
 export interface AttachmentVariant {
   disk: string;
@@ -82,6 +83,12 @@ export interface CreateAttachmentOptions {
   /** Display name override (defaults to the file name). */
   name?: string;
   meta?: Record<string, unknown>;
+}
+
+/** Options for {@link AttachmentManager.signedUrl}: the disk's response headers, plus a variant to sign instead of the original. */
+export interface AttachmentSignedUrlOptions extends Omit<SignedUrlOptions, 'expiresIn'> {
+  /** Sign this named variant instead of the original. */
+  variant?: string;
 }
 
 export interface AttachmentManagerOptions {
@@ -202,14 +209,22 @@ export class AttachmentManager {
     return this.storage.disk(target.disk).getUrl(target.path);
   }
 
-  /** Signed, expiring URL (presign-capable disks). */
+  /**
+   * Signed, expiring URL (presign-capable disks). Everything in `options` except `variant` is a
+   * response header baked into the URL, applying to whoever follows the link rather than to this
+   * call: `contentDisposition` is what forces a download with a chosen file name.
+   */
   async signedUrl(
     attachment: Attachment,
     expiresIn: string | number,
-    variant?: string,
+    options: AttachmentSignedUrlOptions = {},
   ): Promise<string> {
+    const { variant, ...responseOptions } = options;
     const target = this.resolve(attachment, variant);
-    return this.storage.disk(target.disk).getSignedUrl(target.path, { expiresIn });
+    return this.storage.disk(target.disk).getSignedUrl(target.path, {
+      expiresIn,
+      ...responseOptions,
+    });
   }
 
   /** Remove the attachment and all its variants from storage. */

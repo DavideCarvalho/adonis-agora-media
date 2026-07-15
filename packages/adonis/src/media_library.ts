@@ -13,6 +13,7 @@ import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_col
 import type { MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import type { StorageManager } from './storage_manager.js';
+import type { SignedUrlOptions } from './types.js';
 
 export interface MediaLibraryOptions {
   storage: StorageManager;
@@ -42,6 +43,12 @@ export interface AttachInput {
   customProperties?: Record<string, unknown>;
   /** Disk override (else collection disk, else storage default). */
   disk?: string;
+}
+
+/** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
+export interface MediaSignedUrlOptions extends Omit<SignedUrlOptions, 'expiresIn'> {
+  /** Sign this named conversion instead of the original (generated lazily if absent). */
+  conversion?: string;
 }
 
 /**
@@ -271,17 +278,30 @@ export class MediaLibrary {
     return this.storage.disk(record.disk).getUrl(record.path);
   }
 
-  /** Signed, expiring URL for a media record or one of its conversions. */
-  async signedUrl(id: string, expiresIn: string | number, conversion?: string): Promise<string> {
+  /**
+   * Signed, expiring URL for a media record or one of its conversions.
+   *
+   * Everything in `options` except `conversion` is a response header the presigner bakes into
+   * the URL, so it applies to whoever follows the link rather than to this call:
+   * `contentDisposition` is what forces a download with a chosen file name.
+   */
+  async signedUrl(
+    id: string,
+    expiresIn: string | number,
+    options: MediaSignedUrlOptions = {},
+  ): Promise<string> {
+    const { conversion, ...responseOptions } = options;
+    const signOptions: SignedUrlOptions = { expiresIn, ...responseOptions };
+
     if (conversion) {
       const record = await this.ensureConversion(id, conversion);
       const variant = record.conversions[conversion];
       if (!variant) throw new MediaNotFoundError(`${id}#${conversion}`);
-      return this.storage.disk(variant.disk).getSignedUrl(variant.path, { expiresIn });
+      return this.storage.disk(variant.disk).getSignedUrl(variant.path, signOptions);
     }
     const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
-    return this.storage.disk(record.disk).getSignedUrl(record.path, { expiresIn });
+    return this.storage.disk(record.disk).getSignedUrl(record.path, signOptions);
   }
 }
 

@@ -131,4 +131,25 @@ describe('conversions', () => {
     expect(signed).toContain('signature=fake');
     expect(signed).toContain('expires=30m');
   });
+
+  it('forwards contentDisposition to the disk when signing', async () => {
+    const { library, disks } = makeLibrary([{ name: 'recordings' }]);
+    const record = await library.attach({
+      ownerType: 'Meeting',
+      ownerId: '1',
+      collection: 'recordings',
+      fileName: 'rec.mp4',
+      mimeType: 'video/mp4',
+      contents: Buffer.from('bytes'),
+    });
+
+    await library.signedUrl(record.id, 300, {
+      contentDisposition: 'attachment; filename="gravacao-1.mp4"',
+    });
+
+    expect(disks.fs.lastSignedUrlOptions).toEqual({
+      expiresIn: 300,
+      contentDisposition: 'attachment; filename="gravacao-1.mp4"',
+    });
+  });
 });

@@ -30,6 +30,9 @@ interface StoredFile {
 export class InMemoryDisk implements Disk {
   readonly files = new Map<string, StoredFile>();
 
+  /** Options from the most recent `getSignedUrl` call, so tests can assert the contract. */
+  lastSignedUrlOptions: SignedUrlOptions | undefined;
+
   constructor(
     /** Used to render `getUrl`/`getSignedUrl`. */
     private readonly baseUrl = 'memory://disk',
@@ -76,6 +79,7 @@ export class InMemoryDisk implements Disk {
   }
 
   async getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string> {
+    this.lastSignedUrlOptions = options;
     const expires = options?.expiresIn ?? '';
     return `${this.baseUrl}/${key}?signature=fake&expires=${expires}`;
   }

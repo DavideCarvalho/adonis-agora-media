@@ -49,7 +49,12 @@ export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js'
 export { isMultipartCapable } from './multipart.js';
 export { isExtendedDisk } from './extended_disk.js';
 export { MediaLibrary } from './media_library.js';
-export type { MediaLibraryOptions, AttachInput, OwnerMediaBinding } from './media_library.js';
+export type {
+  MediaLibraryOptions,
+  AttachInput,
+  OwnerMediaBinding,
+  MediaSignedUrlOptions,
+} from './media_library.js';
 export {
   Attachment,
   AttachmentManager,
@@ -60,6 +65,7 @@ export type {
   AttachmentManagerOptions,
   CreateAttachmentInput,
   CreateAttachmentOptions,
+  AttachmentSignedUrlOptions,
 } from './attachment.js';
 export { StorageManager } from './storage_manager.js';
 export type { StorageManagerOptions } from './storage_manager.js';
