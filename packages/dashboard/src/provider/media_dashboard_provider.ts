@@ -9,8 +9,19 @@ import type { MediaDashboardConfig } from '../define_config.js';
 import { DashboardError, DashboardService } from '../server/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from './serve.js';
 
-/** Directory of the built SPA (`dist/spa`), relative to this compiled provider (`dist/provider`). */
-const SPA_DIR = fileURLToPath(new URL('../spa/', import.meta.url));
+/**
+ * Directory of the built SPA (`dist/spa`), relative to this compiled provider (`dist/provider`).
+ *
+ * Resolved lazily, on the first request that serves an asset. At module scope this ran on import,
+ * and `fileURLToPath` throws on any non-`file:` `import.meta.url` — which made the whole provider
+ * unimportable under a test runner, so nothing here could be covered. That is exactly how a config
+ * bug that silently dropped the auth middleware shipped untested.
+ */
+let spaDir: string | undefined;
+function spaDirectory(): string {
+  spaDir ??= fileURLToPath(new URL('../spa/', import.meta.url));
+  return spaDir;
+}
 
 /**
  * Mounts the media-management console: a React SPA plus a JSON API, both under a configurable path and
@@ -31,7 +42,12 @@ export default class MediaDashboardProvider {
   constructor(protected app: ApplicationService) {}
 
   boot() {
-    const config = this.app.config.get<MediaDashboardConfig>('mediaDashboard', {});
+    // `media_dashboard`, NOT `mediaDashboard`: AdonisJS keys config by the LITERAL file name, so
+    // `config/media_dashboard.ts` lands under `media_dashboard`. Reading the camelCase key returned
+    // the `{}` default and silently discarded the whole config — including `middleware`, which left
+    // the dashboard and its JSON API mounted with NO auth. Sibling libs confirm the convention
+    // (`config/telescope_ui.ts` -> `config.get('telescope_ui')`).
+    const config = this.app.config.get<MediaDashboardConfig>('media_dashboard', {});
 
     const basePath = normalizePath(config.basePath ?? '/media/dashboard');
     const apiBase = normalizePath(config.apiBasePath ?? `${basePath}/api`);
@@ -195,7 +211,7 @@ export default class MediaDashboardProvider {
     const serveIndex = async (ctx: HttpContext) => {
       let html: string;
       try {
-        html = await readFile(resolvePath(SPA_DIR, 'index.html'), 'utf8');
+        html = await readFile(resolvePath(spaDirectory(), 'index.html'), 'utf8');
       } catch {
         return ctx.response
           .status(404)
@@ -212,8 +228,8 @@ export default class MediaDashboardProvider {
       router
         .get('/assets/:file', async (ctx: HttpContext) => {
           const file = basename(String(ctx.params.file));
-          const path = resolvePath(SPA_DIR, 'assets', file);
-          if (!path.startsWith(resolvePath(SPA_DIR, 'assets')))
+          const path = resolvePath(spaDirectory(), 'assets', file);
+          if (!path.startsWith(resolvePath(spaDirectory(), 'assets')))
             return ctx.response.status(404).send('');
           let bytes: Buffer;
           try {
