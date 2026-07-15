@@ -54,11 +54,16 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Deliberadamente vazio: o setup-node escreve o .npmrc com
-          # _authToken=${NODE_AUTH_TOKEN}, e um token de verdade ali GANHA do OIDC -- o npm
-          # usa o token e nunca troca o id-token por credencial. Vazio, o npm ve que nao ha
-          # auth e cai no trusted publishing. O secret NPM_TOKEN segue existindo; basta
-          # devolver `${{ secrets.NPM_TOKEN }}` aqui pra reverter pro token.
-          NODE_AUTH_TOKEN: ''
+          # TEMPORARIO -- reverter para '' logo apos este run. Ver o comentario abaixo.
+          #
+          # Normalmente isto fica VAZIO de proposito: o setup-node escreve o .npmrc com
+          # _authToken=${NODE_AUTH_TOKEN}, e um token de verdade ali GANHA do OIDC -- o npm usa o
+          # token e nunca troca o id-token por credencial. Vazio, o npm ve que nao ha auth e cai
+          # no trusted publishing.
+          #
+          # media-react e media-dashboard nunca foram publicados, e o OIDC nao consegue criar
+          # pacote que nao existe: a config de trusted publisher mora na pagina do pacote, que so
+          # existe depois do primeiro publish (npm/cli#8544). O token quebra esse circulo uma vez.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
 # trigger workflow registration
