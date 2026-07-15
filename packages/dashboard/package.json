@@ -1,6 +1,6 @@
 {
   "name": "@adonis-agora/media-dashboard",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Media-management dashboard for @adonis-agora/media — browse buckets, watch resumable uploads in progress, upload, and copy/move/delete objects across buckets. A React SPA served by a thin AdonisJS provider, themed to Agora design tokens. Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
   "peerDependencies": {
-    "@adonis-agora/media": "^0.1.0",
+    "@adonis-agora/media": "^0.2.0",
     "@adonisjs/core": "^7.3.0"
   },
   "devDependencies": {
