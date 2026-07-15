@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { Attachment, AttachmentManager } from '../src/attachment.js';
 import { StorageManager } from '../src/storage_manager.js';
@@ -20,6 +21,25 @@ function makeManager(imageProcessor?: any) {
 const png = Buffer.from('fake-png-bytes');
 
 describe('AttachmentManager (column model)', () => {
+  /**
+   * The streaming path had no coverage at all here, and it was dropping the declared size
+   * before it reached the disk — which a real S3 disk cannot write a stream without. The
+   * in-memory disk holds the bytes and never needs the declaration, so the gap was invisible
+   * until a live MinIO rejected the request.
+   */
+  it('forwards the declared size to the disk when streaming a Readable', async () => {
+    const { manager, disks } = makeManager();
+    const att = await manager.createFromFile({
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      contents: Readable.from([Buffer.from('streamed-'), Buffer.from('bytes')]),
+      size: 14,
+    });
+    const stored = disks.fs.files.get(att.path);
+    expect(stored?.data.toString()).toBe('streamed-bytes');
+    expect(stored?.contentLength).toBe(14);
+  });
+
   it('creates an attachment, stores bytes, and serializes round-trip', async () => {
     const { manager, disks } = makeManager();
     const att = await manager.createFromFile({

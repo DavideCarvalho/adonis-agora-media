@@ -63,17 +63,36 @@ describe('S3Disk (mocked S3 client)', () => {
     expect(mock.commandCalls(PutObjectCommand)[0]?.args[0].input.ACL).toBeUndefined();
   });
 
-  it('putStream sends a PutObjectCommand with the stream body', async () => {
+  /**
+   * ContentLength is asserted explicitly because the mock CANNOT catch its absence: it
+   * intercepts the command before the SDK's header middleware runs, so the earlier version of
+   * this test passed against a `putStream` that threw
+   * `Invalid value "undefined" for header "x-amz-decoded-content-length"` on every real
+   * request. Only a live S3/MinIO caught it. Asserting the field is what maps this mock back
+   * onto the real failure.
+   */
+  it('putStream sends a PutObjectCommand with the stream body and its ContentLength', async () => {
     mock.on(PutObjectCommand).resolves({});
     const d = new S3Disk({ client, bucket: 'b' });
     await d.putStream('big.bin', Readable.from(Buffer.from('data')), {
       contentType: 'application/octet-stream',
+      contentLength: 4,
     });
     expect(mock.commandCalls(PutObjectCommand)[0]?.args[0].input).toMatchObject({
       Bucket: 'b',
       Key: 'big.bin',
       ContentType: 'application/octet-stream',
+      ContentLength: 4,
     });
+  });
+
+  it('putStream fails fast when contentLength is missing, instead of at the SDK header layer', async () => {
+    mock.on(PutObjectCommand).resolves({});
+    const d = new S3Disk({ client, bucket: 'b' });
+    await expect(
+      d.putStream('big.bin', Readable.from(Buffer.from('data')), { contentType: 'x' }),
+    ).rejects.toThrow(/contentLength/);
+    expect(mock.commandCalls(PutObjectCommand)).toHaveLength(0);
   });
 
   it('getBytes round-trips the object body as a Uint8Array', async () => {

@@ -283,5 +283,10 @@ describe('upload robustness', () => {
 
     expect(record.size).toBe(13);
     expect(disks.fs.files.get(record.path)?.data.toString()).toBe('streamed-bytes');
+    // The size must REACH the disk, not just land on the record: a real S3 disk cannot write
+    // a stream without it. This layer once dropped it, and every assertion above still passed
+    // — the in-memory disk holds the bytes and never needs the declaration, so only a live
+    // S3/MinIO surfaced it.
+    expect(disks.fs.files.get(record.path)?.contentLength).toBe(13);
   });
 });

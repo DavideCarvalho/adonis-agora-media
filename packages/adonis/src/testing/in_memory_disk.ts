@@ -11,6 +11,15 @@ interface StoredFile {
   data: Buffer;
   contentType?: string | undefined;
   lastModified: Date;
+  /**
+   * The `contentLength` the writer declared, recorded verbatim (`undefined` when it declared
+   * none, and always `undefined` for `put`, which needs no declaration).
+   *
+   * It is kept only so tests can assert it. A real S3 disk CANNOT write a stream without it,
+   * but this disk has the bytes in hand and never needs it — so silently ignoring it let
+   * callers drop the size and still pass every test here, while failing against real S3.
+   */
+  contentLength?: number | undefined;
 }
 
 /**
@@ -41,6 +50,7 @@ export class InMemoryDisk implements Disk {
       data: Buffer.concat(chunks),
       contentType: options?.contentType,
       lastModified: new Date(),
+      contentLength: options?.contentLength,
     });
   }
 

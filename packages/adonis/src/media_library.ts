@@ -108,7 +108,12 @@ export class MediaLibrary {
       !hasConversions &&
       typeof target.putStream === 'function';
     if (canStream) {
-      await target.putStream?.(path, input.contents as Readable, { contentType: input.mimeType });
+      // `input.size` is forwarded, not dropped: it is the very thing that makes this path
+      // eligible (see `canStream`), and S3's putStream cannot write without it.
+      await target.putStream?.(path, input.contents as Readable, {
+        contentType: input.mimeType,
+        contentLength: input.size as number,
+      });
     } else {
       const bytes = await toBytes(input.contents);
       await target.put(path, bytes, { contentType: input.mimeType });

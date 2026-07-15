@@ -30,6 +30,13 @@ export interface Disk {
 export interface DiskWriteOptions {
   contentType?: string;
   visibility?: 'public' | 'private';
+  /**
+   * Byte size of the payload. Load-bearing for {@link Disk.putStream}: a stream has no
+   * knowable length, and the S3 API requires `ContentLength` up front — without it the AWS
+   * SDK rejects the request ("Invalid value \"undefined\" for header
+   * x-amz-decoded-content-length"). Ignored by `put`, whose payload measures itself.
+   */
+  contentLength?: number;
 }
 
 export interface SignedUrlOptions {

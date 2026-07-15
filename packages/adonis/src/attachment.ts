@@ -133,7 +133,12 @@ export class AttachmentManager {
       presets.length === 0 &&
       typeof target.putStream === 'function';
     if (canStream) {
-      await target.putStream?.(path, input.contents as Readable, { contentType: input.mimeType });
+      // See MediaLibrary.attach: `input.size` gates this path, so it must reach the disk —
+      // S3's putStream cannot write without it.
+      await target.putStream?.(path, input.contents as Readable, {
+        contentType: input.mimeType,
+        contentLength: input.size as number,
+      });
     } else {
       const bytes = await toBytes(input.contents);
       await target.put(path, bytes, { contentType: input.mimeType });

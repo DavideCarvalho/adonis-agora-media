@@ -137,14 +137,26 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     );
   }
 
+  /**
+   * `ContentLength` is required, not an optimization: S3 cannot size a stream, so the SDK
+   * derives `x-amz-decoded-content-length` from it and throws
+   * `Invalid value "undefined" for header "x-amz-decoded-content-length"` when it is absent.
+   * Callers that reach this path already know the size (it is what makes streaming eligible).
+   */
   async putStream(key: string, contents: Readable, options?: DiskWriteOptions): Promise<void> {
+    if (options?.contentLength === undefined) {
+      throw new Error(
+        `S3Disk.putStream requires options.contentLength for key: ${key} — S3 cannot size a stream.`,
+      );
+    }
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: this.key(key),
         Body: contents,
-        ContentType: options?.contentType,
-        ACL: options?.visibility === 'public' ? 'public-read' : undefined,
+        ContentLength: options.contentLength,
+        ContentType: options.contentType,
+        ACL: options.visibility === 'public' ? 'public-read' : undefined,
       }),
     );
   }
