@@ -79,7 +79,7 @@ export class ResumableUploadsNotConfiguredError extends Error {
   readonly code = 'E_MEDIA_RESUMABLE_NOT_CONFIGURED';
   constructor() {
     super(
-      'Resumable (TUS) uploads are not configured. Set `uploads.resumable` in config/media.ts (e.g. `resumable: { store: \'lucid\', stores: { lucid: uploadSessions.lucid() } }`) to enable the resumable upload session store.',
+      "Resumable (TUS) uploads are not configured. Set `uploads.resumable` in config/media.ts (e.g. `resumable: { store: 'lucid', stores: { lucid: uploadSessions.lucid() } }`) to enable the resumable upload session store.",
     );
     this.name = 'ResumableUploadsNotConfiguredError';
   }

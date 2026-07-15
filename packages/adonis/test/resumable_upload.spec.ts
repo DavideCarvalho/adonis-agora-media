@@ -200,11 +200,13 @@ describe('ResumableUploadManager — native multipart (mocked S3)', () => {
 describe('parseTusMetadata', () => {
   const b64 = (s: string) => Buffer.from(s).toString('base64');
   it('decodes base64 key/value pairs (and bare keys)', () => {
-    expect(parseTusMetadata(`filename ${b64('a.png')},filetype ${b64('image/png')},is_ok`)).toEqual({
-      filename: 'a.png',
-      filetype: 'image/png',
-      is_ok: '',
-    });
+    expect(parseTusMetadata(`filename ${b64('a.png')},filetype ${b64('image/png')},is_ok`)).toEqual(
+      {
+        filename: 'a.png',
+        filetype: 'image/png',
+        is_ok: '',
+      },
+    );
     expect(parseTusMetadata(undefined)).toEqual({});
   });
 });

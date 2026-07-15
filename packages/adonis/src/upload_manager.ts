@@ -3,8 +3,8 @@ import { publishMedia } from './diagnostics.js';
 import { UploadNotSupportedError } from './errors.js';
 import { isMultipartCapable } from './multipart.js';
 import type { StorageManager } from './storage_manager.js';
-import { type ResolvedUploadMode, type UploadMode, resolveUploadMode } from './upload_mode.js';
 import type { MultipartPart } from './types.js';
+import { type ResolvedUploadMode, type UploadMode, resolveUploadMode } from './upload_mode.js';
 
 /** Default size of each multipart part when the caller gives none (8 MiB — S3's part minimum is 5 MiB). */
 const DEFAULT_PART_SIZE = 8 * 1024 * 1024;
@@ -246,7 +246,8 @@ export class UploadManager {
   }): Promise<MultipartPart> {
     const diskName = input.disk ?? this.storage.defaultDisk;
     const disk = this.storage.disk(diskName);
-    if (!isMultipartCapable(disk)) throw new UploadNotSupportedError(diskName, 'proxy multipart part');
+    if (!isMultipartCapable(disk))
+      throw new UploadNotSupportedError(diskName, 'proxy multipart part');
 
     return disk.uploadPart(input.key, input.uploadId, input.partNumber, input.body);
   }

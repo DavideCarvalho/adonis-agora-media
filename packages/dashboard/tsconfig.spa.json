@@ -11,5 +11,12 @@
     "verbatimModuleSyntax": false
   },
   "include": ["src/types.ts", "src/client/**/*.ts", "src/app/**/*.ts", "src/app/**/*.tsx"],
-  "exclude": ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx", "dist/**", "node_modules"]
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "dist/**",
+    "node_modules"
+  ]
 }

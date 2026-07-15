@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -7,7 +8,6 @@ import {
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { type AwsClientStub, mockClient } from 'aws-sdk-client-mock';
-import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { S3Disk } from '../src/disks/s3.js';
 import { UploadNotSupportedError } from '../src/errors.js';
@@ -191,7 +191,10 @@ describe('UploadManager — direct mode (mocked S3)', () => {
     expect(created.parts).toHaveLength(2);
 
     // The client would PUT to each presigned URL and collect ETags; simulate the ETags here.
-    const parts = created.parts.map((p) => ({ partNumber: p.partNumber, etag: `etag-${p.partNumber}` }));
+    const parts = created.parts.map((p) => ({
+      partNumber: p.partNumber,
+      etag: `etag-${p.partNumber}`,
+    }));
     const done = await manager.completeDirect({
       key: 'movie.mp4',
       uploadId: created.uploadId,

@@ -257,9 +257,10 @@ export class ResumableUploadManager {
     return (await this.sessions.list?.(filter)) ?? [];
   }
 
-  private emit<
-    E extends 'upload.start' | 'upload.progress' | 'upload.complete' | 'upload.abort',
-  >(event: E, payload: Parameters<typeof publishMedia<E>>[1]): void {
+  private emit<E extends 'upload.start' | 'upload.progress' | 'upload.complete' | 'upload.abort'>(
+    event: E,
+    payload: Parameters<typeof publishMedia<E>>[1],
+  ): void {
     if (this.emitDiagnostics) publishMedia(event, payload);
   }
 

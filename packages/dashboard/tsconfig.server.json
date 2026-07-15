@@ -7,6 +7,12 @@
     "types": ["node"],
     "lib": ["ES2022"]
   },
-  "include": ["src/types.ts", "src/index.ts", "src/define_config.ts", "src/server/**/*.ts", "src/provider/**/*.ts"],
+  "include": [
+    "src/types.ts",
+    "src/index.ts",
+    "src/define_config.ts",
+    "src/server/**/*.ts",
+    "src/provider/**/*.ts"
+  ],
   "exclude": ["**/*.spec.ts", "**/*.test.ts", "dist/**", "node_modules"]
 }

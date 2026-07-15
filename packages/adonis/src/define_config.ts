@@ -6,13 +6,13 @@ import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
+import type { UploadMode } from './upload_mode.js';
 import { uploadSessions } from './upload_sessions/factory.js';
 import type {
   LucidUploadSessionStoreConfig,
   UploadSessionStoreContext,
   UploadSessionStoreFactory,
 } from './upload_sessions/factory.js';
-import type { UploadMode } from './upload_mode.js';
 
 /**
  * Direct-S3 upload configuration. Governs the `proxy`/`direct` multipart upload modes and, when

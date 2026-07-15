@@ -71,10 +71,7 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 
   async get(id: string): Promise<UploadSession | null> {
-    const row = (await this.client()
-      .from(this.table)
-      .where('id', id)
-      .first()) as SessionRow | null;
+    const row = (await this.client().from(this.table).where('id', id).first()) as SessionRow | null;
     return row ? fromRow(row) : null;
   }
 

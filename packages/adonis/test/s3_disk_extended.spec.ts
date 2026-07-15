@@ -195,8 +195,12 @@ describe('S3Disk — ExtendedDisk surface', () => {
     });
 
     it('uses the bucket override from options', async () => {
-      mock.on(ListObjectsV2Command).resolves({ CommonPrefixes: [], Contents: [], IsTruncated: false });
-      await new S3Disk({ client, bucket: 'default-bucket' }).list('docs/', { bucket: 'other-bucket' });
+      mock
+        .on(ListObjectsV2Command)
+        .resolves({ CommonPrefixes: [], Contents: [], IsTruncated: false });
+      await new S3Disk({ client, bucket: 'default-bucket' }).list('docs/', {
+        bucket: 'other-bucket',
+      });
       expect(mock.commandCalls(ListObjectsV2Command)[0]?.args[0].input).toMatchObject({
         Bucket: 'other-bucket',
       });

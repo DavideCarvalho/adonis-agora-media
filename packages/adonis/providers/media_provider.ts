@@ -5,14 +5,14 @@ import type { MediaConfig } from '../src/define_config.js';
 import { resolveConfiguredDisks } from '../src/disks/factory.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
-import type { MultipartPart } from '../src/types.js';
+import type { UploadSessionStore } from '../src/resumable_upload.js';
 import { resolveStore } from '../src/stores/factory.js';
 import type { StoreContext } from '../src/stores/factory.js';
-import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
-import type { UploadSessionStore } from '../src/resumable_upload.js';
 import { TusUploadHandler } from '../src/tus.js';
 import type { TusRequest } from '../src/tus.js';
+import type { MultipartPart } from '../src/types.js';
 import type { Disk, DiskResolver } from '../src/types.js';
+import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
 
 /** The minimal Drive manager surface we use: `use(name)` returns a disk. */
 interface DriveManagerLike {
@@ -147,77 +147,92 @@ export default class MediaProvider {
     };
 
     router
-      .post(`${prefix}/direct/initiate`, json(async (media, ctx) => {
-        const body = ctx.request.body() as {
-          key: string;
-          contentType?: string;
-          visibility?: 'public' | 'private';
-          size?: number;
-          partSize?: number;
-          disk?: string;
-        };
-        return media.initiateDirectUpload({
-          key: body.key,
-          ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
-          ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
-          ...(body.size !== undefined ? { size: body.size } : {}),
-          ...(body.partSize !== undefined ? { partSize: body.partSize } : {}),
-          ...(body.disk !== undefined ? { disk: body.disk } : {}),
-        });
-      }))
+      .post(
+        `${prefix}/direct/initiate`,
+        json(async (media, ctx) => {
+          const body = ctx.request.body() as {
+            key: string;
+            contentType?: string;
+            visibility?: 'public' | 'private';
+            size?: number;
+            partSize?: number;
+            disk?: string;
+          };
+          return media.initiateDirectUpload({
+            key: body.key,
+            ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
+            ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
+            ...(body.size !== undefined ? { size: body.size } : {}),
+            ...(body.partSize !== undefined ? { partSize: body.partSize } : {}),
+            ...(body.disk !== undefined ? { disk: body.disk } : {}),
+          });
+        }),
+      )
       .as('media.uploads.direct.initiate');
 
     router
-      .post(`${prefix}/direct/:uploadId/parts/:partNumber`, json(async (media, ctx) => {
-        const key = requireKey(ctx);
-        const disk = readDisk(ctx);
-        return media.uploads.presignPart({
-          key,
-          uploadId: String(ctx.params.uploadId),
-          partNumber: Number(ctx.params.partNumber),
-          ...(disk !== undefined ? { disk } : {}),
-        });
-      }))
+      .post(
+        `${prefix}/direct/:uploadId/parts/:partNumber`,
+        json(async (media, ctx) => {
+          const key = requireKey(ctx);
+          const disk = readDisk(ctx);
+          return media.uploads.presignPart({
+            key,
+            uploadId: String(ctx.params.uploadId),
+            partNumber: Number(ctx.params.partNumber),
+            ...(disk !== undefined ? { disk } : {}),
+          });
+        }),
+      )
       .as('media.uploads.direct.presignPart');
 
     router
-      .post(`${prefix}/direct/:uploadId/complete`, json(async (media, ctx) => {
-        const body = ctx.request.body() as { key: string; parts: MultipartPart[]; disk?: string };
-        return media.completeDirectUpload({
-          key: body.key,
-          uploadId: String(ctx.params.uploadId),
-          parts: body.parts,
-          ...(body.disk !== undefined ? { disk: body.disk } : {}),
-        });
-      }))
+      .post(
+        `${prefix}/direct/:uploadId/complete`,
+        json(async (media, ctx) => {
+          const body = ctx.request.body() as { key: string; parts: MultipartPart[]; disk?: string };
+          return media.completeDirectUpload({
+            key: body.key,
+            uploadId: String(ctx.params.uploadId),
+            parts: body.parts,
+            ...(body.disk !== undefined ? { disk: body.disk } : {}),
+          });
+        }),
+      )
       .as('media.uploads.direct.complete');
 
     router
-      .delete(`${prefix}/direct/:uploadId`, json(async (media, ctx) => {
-        const key = requireKey(ctx);
-        const disk = readDisk(ctx);
-        await media.abortDirectUpload({
-          key,
-          uploadId: String(ctx.params.uploadId),
-          ...(disk !== undefined ? { disk } : {}),
-        });
-        return { ok: true };
-      }))
+      .delete(
+        `${prefix}/direct/:uploadId`,
+        json(async (media, ctx) => {
+          const key = requireKey(ctx);
+          const disk = readDisk(ctx);
+          await media.abortDirectUpload({
+            key,
+            uploadId: String(ctx.params.uploadId),
+            ...(disk !== undefined ? { disk } : {}),
+          });
+          return { ok: true };
+        }),
+      )
       .as('media.uploads.direct.abort');
 
     router
-      .put(`${prefix}/proxy`, json(async (media, ctx) => {
-        const key = requireKey(ctx);
-        const disk = readDisk(ctx);
-        const contentType = ctx.request.header('content-type');
-        return media.proxyUpload({
-          key,
-          // The raw Node request is a Readable — stream it straight to the disk without buffering.
-          contents: ctx.request.request,
-          ...(contentType !== undefined ? { contentType } : {}),
-          ...(disk !== undefined ? { disk } : {}),
-        });
-      }, 201))
+      .put(
+        `${prefix}/proxy`,
+        json(async (media, ctx) => {
+          const key = requireKey(ctx);
+          const disk = readDisk(ctx);
+          const contentType = ctx.request.header('content-type');
+          return media.proxyUpload({
+            key,
+            // The raw Node request is a Readable — stream it straight to the disk without buffering.
+            contents: ctx.request.request,
+            ...(contentType !== undefined ? { contentType } : {}),
+            ...(disk !== undefined ? { disk } : {}),
+          });
+        }, 201),
+      )
       .as('media.uploads.proxy');
   }
 
