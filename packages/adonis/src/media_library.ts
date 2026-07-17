@@ -34,6 +34,13 @@ export interface AttachInput {
   /** Owner primary key; a numeric Lucid id is accepted and coerced to a string internally. */
   ownerId: string | number;
   collection: string;
+  /**
+   * Deterministic id segment for the storage key, replacing the generated UUID. Use for
+   * idempotent overwrites (e.g. a durable step that re-renders the same file): a fixed id
+   * yields a fixed key that the disk overwrites on retry, instead of orphaning the prior
+   * object under a fresh UUID.
+   */
+  id?: string;
   fileName: string;
   mimeType: string;
   contents: Buffer | Readable;
@@ -102,7 +109,7 @@ export class MediaLibrary {
       : [];
 
     const disk = input.disk ?? config.disk ?? this.storage.defaultDisk;
-    const id = this.newId();
+    const id = input.id ?? this.newId();
     const path = `${input.ownerType}/${ownerId}/${input.collection}/${id}/${input.fileName}`;
     const target = this.storage.disk(disk);
     const hasConversions = (config.conversions ?? []).length > 0;
