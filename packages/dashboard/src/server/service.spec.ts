@@ -116,6 +116,25 @@ describe('DashboardService', () => {
     expect(res.cursor).toBe('next-token');
   });
 
+  it('drops phantom empty-name folders (leading-slash CommonPrefix) from a listing', async () => {
+    // A stray leading-slash key makes S3 emit a "/" CommonPrefix (empty name). The driver
+    // normalizes an all-slash prefix back to root, so entering it re-lists root forever —
+    // it must never reach the client.
+    const disk = fakeDisk({
+      list: vi.fn(async () => ({
+        folders: ['/', 'bases/', 'templates/'],
+        files: [],
+      })),
+    });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const res = await svc.objects('s3', {});
+    expect(res.folders.map((folder) => folder.prefix)).toEqual(['bases/', 'templates/']);
+    expect(res.folders.every((folder) => folder.name !== '')).toBe(true);
+  });
+
   it('returns object detail with a signed url', async () => {
     const disk = fakeDisk();
     const svc = new DashboardService(managerWith({ s3: disk }), {

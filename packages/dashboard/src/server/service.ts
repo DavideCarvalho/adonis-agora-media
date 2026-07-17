@@ -102,10 +102,15 @@ export class DashboardService {
       ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
     });
-    const folders: ObjectFolder[] = result.folders.map((prefix) => ({
-      name: folderName(prefix),
-      prefix,
-    }));
+    // Drop phantom folders whose name is empty — a CommonPrefix of only slashes (`/`, `//`),
+    // produced by a stray key with a leading slash. The S3 driver normalizes such a prefix back
+    // to the root, so listing INTO one returns the root again (the phantom included) — a self-
+    // reference that infinite-loops the browser (endless re-list of root). Filtering it out removes
+    // the trap; those leading-slash keys are unreachable from the console anyway (the driver strips
+    // the leading slash).
+    const folders: ObjectFolder[] = result.folders
+      .map((prefix) => ({ name: folderName(prefix), prefix }))
+      .filter((folder) => folder.name !== '');
     const files: ObjectEntry[] = result.files.map((entry) => ({
       key: entry.key,
       name: entry.name,
