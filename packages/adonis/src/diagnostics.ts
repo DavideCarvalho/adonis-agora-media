@@ -7,16 +7,75 @@
 const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');
 type EmitFn = (lib: string, event: string, payload: unknown) => void;
 
-export type MediaDiagnosticEvent =
-  | 'attach'
-  | 'delete'
-  | 'conversion'
-  | 'attachment.create'
-  | 'attachment.delete'
-  | 'upload.start'
-  | 'upload.progress'
-  | 'upload.complete'
-  | 'upload.abort';
+/**
+ * Every media milestone published on `agora:media:<event>`. The single runtime source for the
+ * {@link MediaDiagnosticEvent} union — a Telescope watcher iterates this to subscribe/claim.
+ */
+export const MEDIA_DIAGNOSTIC_EVENTS = [
+  'attach',
+  'delete',
+  'conversion',
+  'attachment.create',
+  'attachment.delete',
+  'upload.start',
+  'upload.progress',
+  'upload.complete',
+  'upload.abort',
+] as const;
+
+export type MediaDiagnosticEvent = (typeof MEDIA_DIAGNOSTIC_EVENTS)[number];
+
+/**
+ * The claim registry, published by `@adonis-agora/diagnostics` under this global slot as a
+ * reference-counted `Map<`${lib}:${event}`, number>`. Read STRUCTURALLY — same decoupling as
+ * {@link EMIT_SLOT}: media never imports the diagnostics package. A lib-specific Telescope watcher
+ * claims the channels it records here so the generic `DiagnosticsWatcher` skips them (its
+ * `recordClaimed: false` default), avoiding double-recording. The raw convention is documented by
+ * `@adonis-agora/diagnostics`' `claims.ts` precisely so a non-dependent package can participate.
+ */
+const CLAIMS_SLOT = Symbol.for('@agora/diagnostics:claims');
+
+/** The shared claim registry, creating the slot Map on first claim (converges with the diagnostics package's own `globalSlot`, since a `Symbol.for` slot holds one instance). */
+function claimsRegistry(): Map<string, number> {
+  const g = globalThis as Record<symbol, unknown>;
+  let registry = g[CLAIMS_SLOT] as Map<string, number> | undefined;
+  if (registry === undefined) {
+    registry = new Map<string, number>();
+    g[CLAIMS_SLOT] = registry;
+  }
+  return registry;
+}
+
+/**
+ * Claim `media:<event>` for every event, so the generic diagnostics→telescope bridge skips them.
+ * Reference-counted (mirrors `@adonis-agora/diagnostics`' `claimDiagnostics`): claiming an already
+ * claimed key increments its count; the returned release decrements, deleting the key only at zero.
+ * Idempotent release.
+ */
+export function claimMediaDiagnostics(events: readonly string[]): () => void {
+  const registry = claimsRegistry();
+  const keys = events.map((event) => `media:${event}`);
+  for (const key of keys) registry.set(key, (registry.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const key of keys) {
+      const count = registry.get(key);
+      if (count === undefined) continue;
+      if (count <= 1) registry.delete(key);
+      else registry.set(key, count - 1);
+    }
+  };
+}
+
+/** Whether `media:<event>` is currently claimed — the structural mirror of the diagnostics package's `isDiagnosticClaimed('media', event)`. */
+export function isMediaDiagnosticClaimed(event: string): boolean {
+  const registry = (globalThis as Record<symbol, unknown>)[CLAIMS_SLOT] as
+    | Map<string, number>
+    | undefined;
+  return registry?.has(`media:${event}`) ?? false;
+}
 
 export interface AttachPayload {
   id: string;

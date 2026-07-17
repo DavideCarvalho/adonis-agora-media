@@ -1,5 +1,6 @@
 export { type MediaDashboardOptions, mediaDashboard } from './dashboard.js';
 export { mediaTelescopeExtension } from './extension.js';
+export { MediaWatcher } from './media_watcher.js';
 export {
   mediaActiveUploadsProvider,
   mediaAttachmentActivityProvider,
@@ -20,4 +21,6 @@ export type {
   TelescopeExtension,
   TelescopeStoreLike,
   TelescopeEntryLike,
+  TelescopeRecordInput,
+  WatcherContext,
 } from './telescope-sdk.js';
