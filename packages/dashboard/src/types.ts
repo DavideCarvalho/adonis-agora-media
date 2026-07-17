@@ -133,3 +133,9 @@ export interface DeleteBody {
   disk: string;
   keys: string[];
 }
+
+/** Body for the folder create/delete actions — a disk and the folder prefix. */
+export interface FolderBody {
+  disk: string;
+  prefix: string;
+}

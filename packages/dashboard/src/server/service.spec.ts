@@ -56,6 +56,11 @@ function managerWith(
   };
 }
 
+/** A `ListEntry`-shaped file row for the folder-sweep tests. */
+function entryOf(key: string) {
+  return { key, name: key.split('/').pop() ?? key, sizeBytes: 1, lastModified: null };
+}
+
 /** A stored `MediaRecord`-shaped row for the collections projection tests. */
 function mediaRecord(over: Record<string, unknown> = {}) {
   return {
@@ -274,6 +279,110 @@ describe('DashboardService', () => {
     );
     await expect(svc.copy({ disk: 's3', from: 'a', to: 'b' })).rejects.toMatchObject({
       status: 403,
+    });
+  });
+
+  it('createFolder writes a zero-byte marker with exactly one trailing slash (no double-slash)', async () => {
+    const disk = fakeDisk({ put: vi.fn(async () => {}) });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    // A trailing slash on the input must not double up in the key.
+    await svc.createFolder({ disk: 's3', prefix: 'reports/' });
+    expect(disk.put).toHaveBeenCalledWith('reports/', new Uint8Array(0));
+  });
+
+  it('createFolder rejects an empty prefix and is actions-gated', async () => {
+    const open = new DashboardService(managerWith({ s3: fakeDisk() }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await expect(open.createFolder({ disk: 's3', prefix: '///' })).rejects.toMatchObject({
+      status: 400,
+    });
+    const gated = new DashboardService(managerWith({ s3: fakeDisk() }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(gated.createFolder({ disk: 's3', prefix: 'reports' })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it('deleteFolder is truly recursive: flat delimiter, paginated, nested keys gone, marker last', async () => {
+    const listCalls: Array<{ prefix: string; delimiter?: string; cursor?: string }> = [];
+    const deletedMany: string[][] = [];
+    const deletedSingle: string[] = [];
+    const disk = fakeDisk({
+      list: vi.fn(async (prefix: string, opts?: { delimiter?: string; cursor?: string }) => {
+        listCalls.push({ prefix, delimiter: opts?.delimiter, cursor: opts?.cursor });
+        if (opts?.cursor === undefined) {
+          // First page includes a NESTED key — only reachable with a flat (empty-delimiter) sweep.
+          return { folders: [], files: [entryOf('reports/deep/a.txt')], cursor: 'p2' };
+        }
+        return { folders: [], files: [entryOf('reports/b.txt')] };
+      }),
+      deleteMany: vi.fn(async (keys: string[]) => {
+        deletedMany.push(keys);
+      }),
+      delete: vi.fn(async (key: string) => {
+        deletedSingle.push(key);
+      }),
+    });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+
+    await svc.deleteFolder({ disk: 's3', prefix: 'reports' });
+
+    // Every sweep used the folder prefix with an EMPTY delimiter (flat → nested keys surface).
+    expect(listCalls.every((c) => c.prefix === 'reports/' && c.delimiter === '')).toBe(true);
+    expect(listCalls.map((c) => c.cursor)).toEqual([undefined, 'p2']);
+    // Nested key from page one is deleted; the marker is deleted LAST and only after the sweep.
+    expect(deletedMany).toEqual([['reports/deep/a.txt'], ['reports/b.txt']]);
+    expect(deletedMany.flat()).toContain('reports/deep/a.txt');
+    expect(deletedSingle).toEqual(['reports/']);
+  });
+
+  it('moveFolder relocates every key preserving relative path, writes dest marker, drops source marker', async () => {
+    const listCalls: Array<{ delimiter?: string }> = [];
+    const disk = fakeDisk({
+      list: vi.fn(async (_prefix: string, opts?: { delimiter?: string; cursor?: string }) => {
+        listCalls.push({ delimiter: opts?.delimiter });
+        return { folders: [], files: [entryOf('src/deep/a.txt'), entryOf('src/b.txt')] };
+      }),
+      move: vi.fn(async () => {}),
+      put: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+
+    await svc.moveFolder({ disk: 's3', from: 'src', to: 'dst' });
+
+    expect(listCalls.every((c) => c.delimiter === '')).toBe(true);
+    // Each key keeps its path relative to the source prefix.
+    expect(disk.move).toHaveBeenCalledWith('src/deep/a.txt', 'dst/deep/a.txt');
+    expect(disk.move).toHaveBeenCalledWith('src/b.txt', 'dst/b.txt');
+    // Destination marker written, source marker removed.
+    expect(disk.put).toHaveBeenCalledWith('dst/', new Uint8Array(0));
+    expect(disk.delete).toHaveBeenCalledWith('src/');
+  });
+
+  it('rejects moving/copying a folder into itself on the same disk', async () => {
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await expect(svc.moveFolder({ disk: 's3', from: 'a', to: 'a/child' })).rejects.toMatchObject({
+      status: 400,
+    });
+    await expect(svc.copyFolder({ disk: 's3', from: 'a', to: 'a' })).rejects.toMatchObject({
+      status: 400,
     });
   });
 

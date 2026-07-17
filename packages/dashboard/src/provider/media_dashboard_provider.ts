@@ -197,6 +197,38 @@ export default class MediaDashboardProvider {
             }),
           )
           .as('media.dashboard.delete');
+        router
+          .post(
+            '/folder',
+            json(async (svc, ctx) => {
+              await svc.createFolder(folderBody(ctx));
+            }),
+          )
+          .as('media.dashboard.folder.create');
+        router
+          .post(
+            '/folder/delete',
+            json(async (svc, ctx) => {
+              await svc.deleteFolder(folderBody(ctx));
+            }),
+          )
+          .as('media.dashboard.folder.delete');
+        router
+          .post(
+            '/folder/copy',
+            json(async (svc, ctx) => {
+              await svc.copyFolder(copyMoveBody(ctx));
+            }),
+          )
+          .as('media.dashboard.folder.copy');
+        router
+          .post(
+            '/folder/move',
+            json(async (svc, ctx) => {
+              await svc.moveFolder(copyMoveBody(ctx));
+            }),
+          )
+          .as('media.dashboard.folder.move');
       }
     });
     group.prefix(apiBase);
@@ -281,6 +313,13 @@ function copyMoveBody(ctx: HttpContext): {
     to: body.to ?? '',
     ...(body.toDisk !== undefined ? { toDisk: body.toDisk } : {}),
   };
+}
+
+/** Body for the folder create/delete actions — a disk and the folder prefix. */
+function folderBody(ctx: HttpContext): { disk: string; prefix: string } {
+  const body = ctx.request.body() as { disk?: string; prefix?: string };
+  if (!body.disk) throw new DashboardError('disk is required', 400);
+  return { disk: body.disk, prefix: body.prefix ?? '' };
 }
 
 /** Apply host middleware to a route group without depending on Adonis's exact middleware typings. */

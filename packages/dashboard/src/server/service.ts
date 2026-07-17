@@ -28,6 +28,14 @@ export const URL_TTL_SECONDS = 300;
 /** Cap on the get→put streaming path used for cross-disk copy/move (drivers can't copy across disks). */
 export const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 
+/** Page size for the flat sweep that recursive folder delete/copy/move paginates over. */
+export const FOLDER_SWEEP_LIMIT = 1000;
+
+/** Strip leading and trailing slashes — a folder prefix normalized to its bare path (no delimiter). */
+function normalizeFolder(prefix: string): string {
+  return prefix.replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
 /** The slice of `MediaManager` the dashboard depends on — kept structural so it's trivial to fake in tests. */
 export interface MediaManagerLike {
   readonly storage: { readonly defaultDisk: string; disk(name?: string): Disk };
@@ -181,6 +189,65 @@ export class DashboardService {
     await disk.deleteMany(body.keys);
   }
 
+  /**
+   * Create a "folder" — a zero-byte marker object at `<prefix>/`, which S3-style delimiter listing
+   * surfaces as a navigable folder. Normalizes to exactly one trailing slash (so the key never
+   * double-slashes); rejects an empty prefix. Actions-gated.
+   */
+  async createFolder(body: { disk: string; prefix: string }): Promise<void> {
+    this.assertActions();
+    const disk = this.extended(body.disk);
+    const normalized = normalizeFolder(body.prefix);
+    if (normalized === '') throw new DashboardError('folder name is required', 400);
+    await disk.put(`${normalized}/`, new Uint8Array(0));
+  }
+
+  /**
+   * Recursively delete a "folder": every object under `<prefix>/` (nested included) plus the
+   * zero-byte marker itself. Sweeps with an EMPTY delimiter so the driver lists keys FLAT — the
+   * default `/` delimiter would roll nested keys up into folder prefixes and the sweep would miss
+   * them, deleting only direct children. Paginates until the disk reports no more, then deletes the
+   * marker explicitly (its key equals the sweep prefix, which `list` filters out). Actions-gated.
+   */
+  async deleteFolder(body: { disk: string; prefix: string }): Promise<void> {
+    this.assertActions();
+    const disk = this.extended(body.disk);
+    const normalized = normalizeFolder(body.prefix);
+    if (normalized === '') throw new DashboardError('folder is required', 400);
+    const sweepPrefix = `${normalized}/`;
+    let cursor: string | undefined;
+    do {
+      const result = await disk.list(sweepPrefix, {
+        delimiter: '',
+        limit: FOLDER_SWEEP_LIMIT,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      if (result.files.length > 0) await disk.deleteMany(result.files.map((entry) => entry.key));
+      cursor = result.cursor;
+    } while (cursor !== undefined);
+    await disk.delete(sweepPrefix);
+  }
+
+  /** Copy a whole "folder" (every object under `<from>/`, nested included) to `<to>/`, same or cross disk. */
+  async copyFolder(body: {
+    disk: string;
+    from: string;
+    to: string;
+    toDisk?: string;
+  }): Promise<void> {
+    await this.transferFolder('copy', body);
+  }
+
+  /** Move a whole "folder" (every object under `<from>/`, nested included) to `<to>/`, same or cross disk. */
+  async moveFolder(body: {
+    disk: string;
+    from: string;
+    to: string;
+    toDisk?: string;
+  }): Promise<void> {
+    await this.transferFolder('move', body);
+  }
+
   private async transfer(
     body: { disk: string; from: string; to: string; toDisk?: string },
     remove: boolean,
@@ -188,27 +255,84 @@ export class DashboardService {
     this.assertActions();
     if (!body.from || !body.to) throw new DashboardError('from and to are required', 400);
     const toDisk = body.toDisk ?? body.disk;
-    const source = this.extended(body.disk);
+    if (toDisk === body.disk && body.from === body.to)
+      throw new DashboardError('source and destination are identical', 400);
+    await this.transferKey(remove ? 'move' : 'copy', body.disk, body.from, toDisk, body.to);
+  }
 
-    if (toDisk === body.disk) {
-      if (body.from === body.to)
-        throw new DashboardError('source and destination are identical', 400);
-      if (remove) await source.move(body.from, body.to);
-      else await source.copy(body.from, body.to);
+  /**
+   * Relocate a single object, same disk or across disks. Same-disk uses the driver's native
+   * `copy`/`move` (server-side, no bytes through the app). Cross-disk has no driver primitive, so the
+   * object is streamed through the app (get→put, capped at {@link MAX_TRANSFER_BYTES}); a `move` then
+   * deletes the source. Callers gate actions.
+   */
+  private async transferKey(
+    op: 'copy' | 'move',
+    fromDisk: string,
+    from: string,
+    toDisk: string,
+    to: string,
+  ): Promise<void> {
+    const source = this.extended(fromDisk);
+    if (toDisk === fromDisk) {
+      if (op === 'move') await source.move(from, to);
+      else await source.copy(from, to);
       return;
     }
-
-    // Cross-disk: drivers can't copy between disks, so stream the bytes through the app (capped).
     const dest = this.manager.storage.disk(toDisk);
-    const stat = await source.stat(body.from);
+    const stat = await source.stat(from);
     if (stat.size > MAX_TRANSFER_BYTES) {
       throw new DashboardError('object too large for cross-disk transfer', 413);
     }
-    const bytes = await source.getBytes(body.from);
-    await dest.put(body.to, bytes, {
+    const bytes = await source.getBytes(from);
+    await dest.put(to, bytes, {
       ...(stat.contentType !== undefined ? { contentType: stat.contentType } : {}),
     });
-    if (remove) await source.deleteMany([body.from]);
+    if (op === 'move') await source.deleteMany([from]);
+  }
+
+  /**
+   * Shared engine for {@link copyFolder}/{@link moveFolder}. Same flat-listing sweep as
+   * {@link deleteFolder}; each key is relocated via {@link transferKey} (so cross-disk works
+   * transparently), preserving its path relative to the source. On the SAME disk, rejects a
+   * destination inside the source (which would recurse forever); across disks that can't happen. The
+   * destination folder marker is written, and for a move the source marker removed, so both listings
+   * stay consistent. Actions-gated.
+   */
+  private async transferFolder(
+    op: 'copy' | 'move',
+    body: { disk: string; from: string; to: string; toDisk?: string },
+  ): Promise<void> {
+    this.assertActions();
+    const source = this.extended(body.disk);
+    const toDisk = body.toDisk ?? body.disk;
+    const dest = this.extended(toDisk);
+    const fromNormalized = normalizeFolder(body.from);
+    const toNormalized = normalizeFolder(body.to);
+    if (fromNormalized === '') throw new DashboardError('source folder is required', 400);
+    if (toNormalized === '') throw new DashboardError('destination folder is required', 400);
+    const fromPrefix = `${fromNormalized}/`;
+    const toPrefix = `${toNormalized}/`;
+    if (toDisk === body.disk && toPrefix.startsWith(fromPrefix)) {
+      throw new DashboardError(`cannot ${op} a folder into itself`, 400);
+    }
+    let cursor: string | undefined;
+    do {
+      const result = await source.list(fromPrefix, {
+        delimiter: '',
+        limit: FOLDER_SWEEP_LIMIT,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      for (const entry of result.files) {
+        const destKey = `${toPrefix}${entry.key.slice(fromPrefix.length)}`;
+        await this.transferKey(op, body.disk, entry.key, toDisk, destKey);
+      }
+      cursor = result.cursor;
+    } while (cursor !== undefined);
+    // The marker's key equals the sweep prefix, so the sweep skipped it: write the destination
+    // marker, and for a move drop the source one. Idempotent if there was no marker.
+    await dest.put(toPrefix, new Uint8Array(0));
+    if (op === 'move') await source.delete(fromPrefix);
   }
 
   private extended(diskName: string): Disk & ExtendedDisk {
