@@ -69,14 +69,36 @@ The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`)
 | `GET` | `/collections?collection&ownerType&ownerId&prefix&cursor&limit` | `MediaStore.list` (see [Collections view](/docs/media/dashboard/collections)) |
 | `POST` | `/copy` · `/move` | disk `copy` / `move` (streamed for cross-disk) — `actions` only |
 | `POST` | `/delete` | disk `deleteMany` — `actions` only |
+| `POST` | `/folder` | create a zero-byte folder marker — `actions` only |
+| `POST` | `/folder/delete` | recursively delete a folder — `actions` only |
+| `POST` | `/folder/copy` · `/folder/move` | recursively copy / move a folder (same or cross disk) — `actions` only |
 
 Uploads go through the core `@adonis-agora/media` TUS / direct routes via `@adonis-agora/media-react`.
 
 ---
 
+## Folder operations
+
+Object stores are flat key spaces with no real directories — a "folder" is just the `/`-delimited prefix that delimiter listing rolls keys up under. The console makes that browsable and editable through four `actions`-gated routes. All take a JSON body with a `disk`; copy/move add `from` / `to` (and an optional `toDisk` to cross disks).
+
+| Route | Body | Behaviour |
+|-------|------|-----------|
+| `POST /folder` | `{ disk, prefix }` | **Create.** Writes a zero-byte marker object at `<prefix>/`, which delimiter listing then surfaces as a navigable, empty folder. The prefix is normalized to exactly one trailing slash (no double-slash keys); an empty prefix is rejected `400`. |
+| `POST /folder/delete` | `{ disk, prefix }` | **Recursive delete.** Sweeps every object under `<prefix>/` — nested included — with an *empty* delimiter so the driver lists keys flat, paginates until the bucket is exhausted, `deleteMany`s each page, then removes the marker itself. |
+| `POST /folder/copy` | `{ disk, from, to, toDisk? }` | **Recursive copy.** Relocates every key under `<from>/` to `<to>/`, preserving each key's path relative to the source, and writes the destination marker. The source is left intact. |
+| `POST /folder/move` | `{ disk, from, to, toDisk? }` | **Recursive move.** Same recursive relocation, then drops the source objects and marker. |
+
+The recursive copy/move share one engine with the single-object [`/copy` · `/move`](#routes): each key transfers **same-disk** via the driver's native server-side `copy` / `move` (no bytes through the app), or **cross-disk** by streaming get→put through the app (drivers can't copy across disks), capped per object at 100 MB. A same-disk move/copy whose destination sits *inside* the source is rejected `400` (it would recurse forever); across disks that can't happen.
+
+<Callout type="warn" title="Folder actions need `actions: true`">
+  Like copy / move / delete, every folder route is gated on `actions: true` and returns `403` when the console is read-only. Recursive delete and move are destructive and irreversible — keep the whole console behind your `middleware` auth guard.
+</Callout>
+
+---
+
 ## Views
 
-- **Library** — pick a disk, walk folders via cursor-paginated `list`, copy / move across buckets, delete.
+- **Library** — pick a disk, walk folders via cursor-paginated `list`, create / copy / move / delete folders and objects across buckets (see [Folder operations](#folder-operations)).
 - **Collections** — the media-library records themselves (owner, collection, conversions), cross-owner and filterable. See [Collections view](/docs/media/dashboard/collections).
 - **Uploads** — live resumable sessions, polled every 2s from the session store.
 - **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.

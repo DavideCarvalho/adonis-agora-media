@@ -102,11 +102,20 @@ const att = Attachment.fromJSON(user.avatarData)!
 await media.attachments.url(att)            // the original
 await media.attachments.url(att, 'thumb')   // a named variant
 
-await media.attachments.signedUrl(att, '30m')          // signed, expiring (s3/gcs)
-await media.attachments.signedUrl(att, '1h', 'thumb')  // signed variant URL
+await media.attachments.signedUrl(att, '30m')                       // signed, expiring (s3/gcs)
+await media.attachments.signedUrl(att, '1h', { variant: 'thumb' })  // signed variant URL
+
+// force a download with a chosen filename (a response header baked into the URL)
+await media.attachments.signedUrl(att, '1h', {
+  contentDisposition: `attachment; filename="${att.fileName}"`,
+})
 ```
 
 Asking for a variant that wasn't generated throws (`Attachment has no variant "<name>"`), so resolve only the variants you created.
+
+<Callout type="info" title="signedUrl options">
+  The third argument to `signedUrl` is an `AttachmentSignedUrlOptions` object. `variant` signs a named variant instead of the original; everything else — `contentType`, `contentDisposition` — is a **response header the presigner bakes into the URL**, applying to whoever follows the link rather than to this call. Use `contentDisposition: 'attachment; filename="…"'` to force a named download.
+</Callout>
 
 ---
 

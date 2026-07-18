@@ -37,6 +37,7 @@ import {
 | `InMemoryDisk` | `Disk` | `Map`-backed disk; exposes `.files` for assertions. |
 | `inMemoryDiskResolver(names)` | `DiskResolver` factory | Builds a resolver over named in-memory disks; returns `{ resolve, disks }`. |
 | `FakeImageProcessor` | `ImageProcessor` | Deterministic, sharp-free; records every `convert` call on `.calls`. |
+| `InMemoryUploadSessionStore` | `UploadSessionStore` | `Map`-backed resumable-upload session store; drives TUS / multipart tests with no database. Non-durable (sessions vanish on restart) and returns defensive copies. |
 
 ---
 

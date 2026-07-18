@@ -112,7 +112,25 @@ If you prefer dependency injection, the same singleton is available through the 
 
 ## Step 3 — Attach a file to a collection
 
-`attach` writes the bytes to a disk and saves a metadata record. You provide the owning entity (`ownerType` + `ownerId`), the `collection`, and the file. `contents` is a `Buffer` or a `Readable` — so in a real upload you hand it the tmp-file stream and the library buffers it for you.
+`attach` writes the bytes to a disk and saves a metadata record. You provide the owning entity (`ownerType` + `ownerId`), the `collection`, and the file. `contents` is a `Buffer` or a `Readable` — so in a real upload you hand it the tmp-file stream.
+
+By default a `Readable` is buffered into memory once so the library can size it and feed any conversions. But when you pass a known `size`, the collection defines **no conversions**, and the disk supports streamed writes (`putStream` — S3, GCS, the local FS driver), `attach` pipes the stream straight to the disk with no in-memory buffer. That's the path you want for large originals: hand it the multipart file's `size` and it never materializes the whole file in memory.
+
+```ts
+await media.library.attach({
+  ownerType: 'Post',
+  ownerId: post.id,
+  collection: 'downloads',       // a collection with no conversions
+  fileName: image.clientName,
+  mimeType: image.type!,
+  size: image.size,              // known byte count → streamed, not buffered
+  contents: createReadStream(image.tmpPath!),
+})
+```
+
+<Callout type="info" title="When streaming kicks in">
+  All three conditions must hold: `contents` is a `Readable` (a `Buffer` is already in memory), `size` is provided (S3's `putStream` cannot write without a content length), and the collection has **no conversions** (those need the buffered bytes to run through the image processor). Otherwise `attach` falls back to buffering — always correct, just not zero-copy. When `size` is omitted, it is read back from the disk after the write.
+</Callout>
 
 Wire a route to a controller that loads the owning `Post`, validates the upload, and streams it into the collection:
 
@@ -170,6 +188,30 @@ A few things happen on `attach`, driven by the collection's config:
   `ownerType` and `ownerId` are just strings the library stores and filters on — `'Post'`, `'User'`, `'org:42'`, whatever scheme you like. The library never loads your models; it only records the reference. `attach`, `list` and `media.library.for(ownerType, ownerId)` all accept `string | number` for `ownerId` and coerce it to a string for you, so a numeric Lucid id (`post.id`) can be passed as-is.
 </Callout>
 
+### Idempotent overwrites with a deterministic `id`
+
+Each `attach` normally mints a fresh UUID for the storage key (`${ownerType}/${ownerId}/${collection}/${id}/${fileName}`). Pass your own `id` instead and the key becomes deterministic — so re-attaching with the *same* `id` overwrites the previous object at the same path rather than orphaning it under a new UUID.
+
+That's exactly what you want inside a retried unit of work — a durable workflow step, a queue job, a webhook handler — where the same logical file may be produced more than once:
+
+```ts
+// A durable step that re-renders and re-attaches the same export. On a retry the id is
+// identical, so the disk overwrites the prior bytes in place — no duplicate object left behind.
+await media.library.attach({
+  ownerType: 'Invoice',
+  ownerId: invoice.id,
+  collection: 'pdf',
+  id: `invoice-${invoice.id}`,   // fixed key → retry-safe overwrite
+  fileName: 'invoice.pdf',
+  mimeType: 'application/pdf',
+  contents: renderedPdf,
+})
+```
+
+<Callout type="info" title="You own uniqueness">
+  The `id` is used verbatim as both the media-record primary key and the storage-key segment. Make it unique for what should be a *distinct* object (and stable for what should overwrite) — the library does not add entropy on top of it.
+</Callout>
+
 ### Bind an owner once with `for()`
 
 When you do several operations for the same entity — say a bulk gallery upload — bind it once so you don't repeat `ownerType` / `ownerId` on every call:
@@ -209,10 +251,21 @@ await media.library.url(m.id, 'thumb')
 
 // a signed, expiring URL (presign-capable disks like s3/gcs)
 await media.library.signedUrl(m.id, '30m')
-await media.library.signedUrl(m.id, '1h', 'thumb')
+
+// third arg is an options object — sign a named conversion instead of the original
+await media.library.signedUrl(m.id, '1h', { conversion: 'thumb' })
+
+// force a download with a chosen filename (a response header baked into the URL)
+await media.library.signedUrl(m.id, '1h', {
+  contentDisposition: 'attachment; filename="report.png"',
+})
 ```
 
 The first time you ask for `url(id, 'thumb')`, the library reads the original off the disk, runs it through the image processor, writes the result next to the original, and records the conversion path so the *next* call is a pure lookup. You can also force a conversion to exist ahead of time with `media.library.ensureConversion(m.id, 'thumb')`.
+
+<Callout type="info" title="signedUrl options">
+  The third argument to `signedUrl` is a `MediaSignedUrlOptions` object. `conversion` picks a variant to sign instead of the original (generated lazily first if absent); everything else — `contentType`, `contentDisposition` — is a **response header the presigner bakes into the URL**, so it applies to whoever follows the link, not to this call. `contentDisposition: 'attachment; filename="…"'` is what turns a link into a named download.
+</Callout>
 
 <Callout type="warn">
   Asking for a conversion that isn't declared on the collection throws `ConversionNotDefinedError`. Asking for any conversion when no `imageProcessor` is configured throws `ImageProcessorMissingError`. See [Collections & Conversions](/docs/media/collections-and-conversions).
