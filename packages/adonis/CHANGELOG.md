@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.4.0
+
+### Minor Changes
+
+- Parity sync from nestjs-media: harden S3 GetObject streams against connection death (no more permanent hang), caller-supplied deterministic `id` on `attach` for idempotent overwrites, lazy `stubsRoot` (importing the package is side-effect-free), and a media-specific Telescope watcher recording richer per-operation entries + claiming its channels.
+
 ## 0.3.2
 
 ### Patch Changes
