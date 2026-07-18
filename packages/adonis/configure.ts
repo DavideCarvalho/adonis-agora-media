@@ -18,10 +18,11 @@ export async function configure(command: Configure) {
     rcFile.addProvider('@adonis-agora/media/media_provider');
   });
 
-  await codemods.makeUsingStub(stubsRoot, 'config/media.stub', {});
-  await codemods.makeUsingStub(stubsRoot, 'database/migrations/create_media_table.stub', {});
+  const stubs = stubsRoot();
+  await codemods.makeUsingStub(stubs, 'config/media.stub', {});
+  await codemods.makeUsingStub(stubs, 'database/migrations/create_media_table.stub', {});
   await codemods.makeUsingStub(
-    stubsRoot,
+    stubs,
     'database/migrations/create_media_upload_sessions_table.stub',
     {},
   );

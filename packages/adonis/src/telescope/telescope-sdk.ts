@@ -124,3 +124,21 @@ export interface TelescopeExtension {
   dashboards?(ctx: ExtensionContext): DashboardSpec[];
   dataProviders?(ctx: ExtensionContext): DataProvider[];
 }
+
+/** A telescope entry a watcher records — the structural slice of `@adonis-agora/telescope`'s `RecordInput`. */
+export interface TelescopeRecordInput {
+  /** The entry `type`/`tag` this entry is filed and navigated under, e.g. `'media'`. */
+  type: string;
+  /** Type-specific structured content. For media: `{ event, ts, traceId?, ...payload }`. */
+  content: unknown;
+}
+
+/**
+ * The recording surface a {@link MediaWatcher}-style watcher is handed on `register`. Mirror of the
+ * `WatcherContext` a `@adonis-agora/telescope` watcher receives — declared structurally here so
+ * `@adonis-agora/telescope` stays an optional, never-imported peer (same reasoning as the rest of
+ * this file). A host wires the watcher to a real telescope store's `record`.
+ */
+export interface WatcherContext {
+  record(entry: TelescopeRecordInput): void;
+}

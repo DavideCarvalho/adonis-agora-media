@@ -4,6 +4,7 @@ import type {
   CopyMoveBody,
   DeleteBody,
   DiskListResponse,
+  FolderBody,
   ObjectDetailResponse,
   ObjectListResponse,
   Topology,
@@ -147,5 +148,21 @@ export class DashboardClient {
 
   remove(body: DeleteBody): Promise<void> {
     return this.post('/delete', body);
+  }
+
+  createFolder(body: FolderBody): Promise<void> {
+    return this.post('/folder', body);
+  }
+
+  deleteFolder(body: FolderBody): Promise<void> {
+    return this.post('/folder/delete', body);
+  }
+
+  copyFolder(body: CopyMoveBody): Promise<void> {
+    return this.post('/folder/copy', body);
+  }
+
+  moveFolder(body: CopyMoveBody): Promise<void> {
+    return this.post('/folder/move', body);
   }
 }

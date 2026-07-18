@@ -62,6 +62,38 @@ describe('MediaLibrary.attach / list / delete', () => {
     expect(disks.fs.files.has(record.path)).toBe(true);
   });
 
+  it('uses a caller-supplied id instead of the generated one, so re-attach overwrites the same key', async () => {
+    const { library, store, disks } = makeLibrary();
+
+    const first = await library.attach({
+      ownerType: 'Post',
+      ownerId: '42',
+      collection: 'gallery',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      contents: Buffer.from('first-bytes'),
+      id: 'insp-1',
+    });
+    // The generated id-N is bypassed entirely — path and record id are the supplied segment.
+    expect(first.id).toBe('insp-1');
+    expect(first.path).toBe('Post/42/gallery/insp-1/photo.png');
+
+    const second = await library.attach({
+      ownerType: 'Post',
+      ownerId: '42',
+      collection: 'gallery',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      contents: Buffer.from('second-bytes'),
+      id: 'insp-1',
+    });
+    // Same deterministic key: the disk holds the latest bytes, not an orphan under a fresh uuid,
+    // and the store still has exactly one row for the owner/collection.
+    expect(second.path).toBe('Post/42/gallery/insp-1/photo.png');
+    expect(disks.fs.files.get(second.path)?.data.toString()).toBe('second-bytes');
+    expect(await store.listByOwner('Post', '42', 'gallery')).toHaveLength(1);
+  });
+
   it('lists an owner records ordered by order, and filters by collection', async () => {
     const { library } = makeLibrary();
     await library.attach({

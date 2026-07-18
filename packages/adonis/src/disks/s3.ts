@@ -29,6 +29,7 @@ import type {
   MultipartUploadDisk,
   SignedUrlOptions,
 } from '../types.js';
+import { hardenBodyStream } from './harden_body_stream.js';
 import { extractListObjectsV2FromXml, isXmlEntityDeserializationError } from './xml_fallback.js';
 
 /**
@@ -181,7 +182,7 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
         new GetObjectCommand({ Bucket: this.bucket, Key: this.key(key) }),
       );
       if (!res.Body) throw new Error(`S3Disk: file not found: ${key}`);
-      return res.Body as Readable;
+      return hardenBodyStream(res.Body as Readable);
     } catch (err) {
       if (isNotFound(err)) throw new Error(`S3Disk: file not found: ${key}`);
       throw err;
