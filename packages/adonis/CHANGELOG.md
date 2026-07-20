@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.5.0
+
+### Minor Changes
+
+- [#6](https://github.com/DavideCarvalho/adonis-media/pull/6) [`256a11e`](https://github.com/DavideCarvalho/adonis-media/commit/256a11e034118435b2c29a1b7ac7c0c6c05ac5b6) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Add the `@adonis-agora/media/single-file` helper (`storeSingleFile` / `removeSingleFile` / `isSingleFileStoreAvailable`) for storing exactly one file per owner through a `single: true` collection, returning the stable public URL (plus an optional `thumb` conversion URL). Lets other packages delegate single-file uploads such as avatars to media without taking a hard dependency on it.
+
 ## 0.4.0
 
 ### Minor Changes
