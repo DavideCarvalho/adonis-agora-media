@@ -3,6 +3,8 @@ import { ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig } from './media_collection.js';
 import { MediaLibrary } from './media_library.js';
+import type { AttachExistingInput } from './media_library.js';
+import type { MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import { ResumableUploadManager } from './resumable_upload.js';
 import type { UploadSessionStore } from './resumable_upload.js';
@@ -127,6 +129,30 @@ export class MediaManager {
   get resumable(): ResumableUploadManager {
     if (!this.#resumable) throw new ResumableUploadsNotConfiguredError();
     return this.#resumable;
+  }
+
+  /**
+   * Finish a resumable (TUS) upload and register the assembled object as a media record, in one
+   * step and without ever reading the uploaded bytes back: `resumable.complete()` returns the final
+   * `{ key, disk, size }`, which {@link MediaLibrary.attachExisting} adopts as-is.
+   *
+   * This lives here because the two layers meet only at the manager — {@link ResumableUploadManager}
+   * knows nothing of the library. It is opt-in: {@link resumable}'s `complete()` stays the raw
+   * primitive for uploads that should NOT become library assets.
+   *
+   * ```ts
+   * await media.completeUploadToLibrary(sessionId, {
+   *   ownerType: 'Post', ownerId: post.id, collection: 'gallery',
+   *   fileName: 'scan.pdf', mimeType: 'application/pdf',
+   * })
+   * ```
+   */
+  async completeUploadToLibrary(
+    sessionId: string,
+    input: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>,
+  ): Promise<MediaRecord> {
+    const { key, disk, size } = await this.resumable.complete(sessionId);
+    return this.library.attachExisting({ ...input, key, disk, size });
   }
 
   /** Whether resumable (TUS) uploads are configured (a session store is present). */

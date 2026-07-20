@@ -6,14 +6,17 @@ import {
   ConversionNotDefinedError,
   ImageProcessorMissingError,
   MediaNotFoundError,
+  MediaObjectMissingError,
   MimeNotAllowedError,
+  UploadNotSupportedError,
 } from './errors.js';
+import { isExtendedDisk } from './extended_disk.js';
 import type { ImageProcessor } from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import type { StorageManager } from './storage_manager.js';
-import type { SignedUrlOptions } from './types.js';
+import type { Disk, SignedUrlOptions } from './types.js';
 
 export interface MediaLibraryOptions {
   storage: StorageManager;
@@ -52,6 +55,42 @@ export interface AttachInput {
   disk?: string;
 }
 
+/**
+ * Input for {@link MediaLibrary.attachExisting} — the same descriptors as {@link AttachInput}, but
+ * pointing at an object that ALREADY lives on the disk (`key`) instead of carrying its `contents`.
+ */
+export interface AttachExistingInput {
+  ownerType: string;
+  /** Owner primary key; a numeric Lucid id is accepted and coerced to a string internally. */
+  ownerId: string | number;
+  collection: string;
+  /**
+   * Object key that already exists on the disk (e.g. what `resumable.complete()` returned). Its
+   * bytes are never read or rewritten — the record simply points at it.
+   */
+  key: string;
+  /** Disk holding {@link key} (else collection disk, else storage default). */
+  disk?: string;
+  fileName: string;
+  mimeType: string;
+  /** Known byte size; when omitted it is read from the disk's metadata (a HEAD, not a download). */
+  size?: number;
+  /** Deterministic id segment, as in {@link AttachInput.id}. Defaults to a generated UUID. */
+  id?: string;
+  name?: string;
+  customProperties?: Record<string, unknown>;
+  /**
+   * Server-side move the object into the library's canonical layout
+   * (`ownerType/ownerId/collection/id/fileName`) instead of registering it where it landed.
+   * Default `false` — registering in place is free, while a move costs a backend copy.
+   *
+   * Requires a disk implementing the {@link ExtendedDisk} surface (its native, server-side
+   * `move`); the bytes are NEVER streamed through the app to emulate one. Throws
+   * {@link UploadNotSupportedError} on a disk without it.
+   */
+  moveIntoLayout?: boolean;
+}
+
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
 export interface MediaSignedUrlOptions extends Omit<SignedUrlOptions, 'expiresIn'> {
   /** Sign this named conversion instead of the original (generated lazily if absent). */
@@ -64,7 +103,34 @@ export interface MediaSignedUrlOptions extends Omit<SignedUrlOptions, 'expiresIn
  */
 export interface OwnerMediaBinding {
   attach(input: Omit<AttachInput, 'ownerType' | 'ownerId'>): Promise<MediaRecord>;
+  attachExisting(input: Omit<AttachExistingInput, 'ownerType' | 'ownerId'>): Promise<MediaRecord>;
   list(collection?: string): Promise<MediaRecord[]>;
+}
+
+/** What {@link MediaLibrary.#prepare} resolves once, for both attach paths. */
+interface AttachContext {
+  config: MediaCollectionConfig;
+  ownerId: string;
+  /** Records a `single: true` collection will replace, captured before the new object lands. */
+  previous: MediaRecord[];
+  disk: string;
+  target: Disk;
+  id: string;
+}
+
+/** Record descriptors {@link MediaLibrary.#commit} persists, once the object is in place. */
+interface CommitInput {
+  ownerType: string;
+  collection: string;
+  fileName: string;
+  mimeType: string;
+  size?: number | undefined;
+  name?: string | undefined;
+  customProperties?: Record<string, unknown> | undefined;
+  /** Final key of the stored object. */
+  path: string;
+  /** Whether this call put the object there — i.e. whether compensation may delete it. */
+  ownsObject: boolean;
 }
 
 export class MediaLibrary {
@@ -94,24 +160,9 @@ export class MediaLibrary {
   }
 
   async attach(input: AttachInput): Promise<MediaRecord> {
-    const config = this.collections.get(input.collection);
-    const ownerId = String(input.ownerId);
-
-    if (config.acceptsMimeTypes && !config.acceptsMimeTypes.includes(input.mimeType)) {
-      throw new MimeNotAllowedError(input.collection, input.mimeType);
-    }
-
-    // A single-file collection replaces whatever is already there — but only once the new media is
-    // written, persisted AND renderable, so anything that fails on the way leaves the old media
-    // intact. Capture the records to replace up front; drop them at the end.
-    const previous = config.single
-      ? await this.store.listByOwner(input.ownerType, ownerId, input.collection)
-      : [];
-
-    const disk = input.disk ?? config.disk ?? this.storage.defaultDisk;
-    const id = input.id ?? this.newId();
-    const path = `${input.ownerType}/${ownerId}/${input.collection}/${id}/${input.fileName}`;
-    const target = this.storage.disk(disk);
+    const context = await this.#prepare(input);
+    const { config, ownerId, disk, id, target } = context;
+    const path = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
     const hasConversions = (config.conversions ?? []).length > 0;
 
     // Stream large uploads straight through (no in-memory buffer) when we can: a Readable with a
@@ -133,8 +184,113 @@ export class MediaLibrary {
       await target.put(path, bytes, { contentType: input.mimeType });
     }
 
+    return this.#commit(context, { ...input, path, ownsObject: true });
+  }
+
+  /**
+   * Register an object that ALREADY exists on the disk as a media record — zero-copy: its bytes are
+   * never read back or rewritten, only its metadata is inspected. The bridge for uploads that land
+   * on the disk on their own (`media.resumable` / TUS, direct-S3), where round-tripping the bytes
+   * through {@link attach} would defeat the point of a resumable upload.
+   *
+   * Everything after storage behaves exactly as {@link attach}: collection resolution,
+   * `acceptsMimeTypes`, atomic `single: true` replace, ordering, eager conversions and diagnostics.
+   *
+   * ```ts
+   * const { key, disk, size } = await media.resumable.complete(sessionId)
+   * await media.library.attachExisting({
+   *   ownerType: 'Post', ownerId: post.id, collection: 'gallery',
+   *   key, disk, size, fileName: 'scan.pdf', mimeType: 'application/pdf',
+   * })
+   * ```
+   *
+   * Unlike {@link attach}, a failure downstream of the object does NOT delete it: the caller wrote
+   * those bytes and may retry with them, so only what this call created is rolled back.
+   */
+  async attachExisting(input: AttachExistingInput): Promise<MediaRecord> {
+    const context = await this.#prepare(input);
+    const { ownerId, disk, id, target } = context;
+
+    if (!(await target.exists(input.key))) {
+      throw new MediaObjectMissingError(disk, input.key);
+    }
+
+    let path = input.key;
+    const layout = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
+    if (input.moveIntoLayout && path !== layout) {
+      // Server-side only. There is deliberately no fallback that reads and re-writes the bytes:
+      // that is precisely the copy this method exists to avoid.
+      if (!isExtendedDisk(target)) throw new UploadNotSupportedError(disk, 'server-side move');
+      await target.move(path, layout);
+      path = layout;
+    }
+
+    return this.#commit(context, { ...input, path, ownsObject: input.moveIntoLayout === true });
+  }
+
+  /** Storage key layout every record written by this library follows. */
+  #layoutPath(
+    ownerType: string,
+    ownerId: string,
+    collection: string,
+    id: string,
+    fileName: string,
+  ): string {
+    return `${ownerType}/${ownerId}/${collection}/${id}/${fileName}`;
+  }
+
+  /**
+   * Everything both attach paths do BEFORE the object exists: resolve the collection, enforce its
+   * MIME whitelist, capture the records a `single: true` collection will replace, and pick the disk
+   * and record id.
+   *
+   * A single-file collection replaces whatever is already there — but only once the new media is
+   * stored, persisted AND renderable, so anything that fails on the way leaves the old media intact.
+   * Hence "capture up front, drop at the end" (see {@link #commit}).
+   */
+  async #prepare(input: {
+    ownerType: string;
+    ownerId: string | number;
+    collection: string;
+    mimeType: string;
+    disk?: string | undefined;
+    id?: string | undefined;
+  }): Promise<AttachContext> {
+    const config = this.collections.get(input.collection);
+    const ownerId = String(input.ownerId);
+
+    if (config.acceptsMimeTypes && !config.acceptsMimeTypes.includes(input.mimeType)) {
+      throw new MimeNotAllowedError(input.collection, input.mimeType);
+    }
+
+    const previous = config.single
+      ? await this.store.listByOwner(input.ownerType, ownerId, input.collection)
+      : [];
+    const disk = input.disk ?? config.disk ?? this.storage.defaultDisk;
+
+    return {
+      config,
+      ownerId,
+      previous,
+      disk,
+      target: this.storage.disk(disk),
+      id: input.id ?? this.newId(),
+    };
+  }
+
+  /**
+   * Everything both attach paths do AFTER the object is in place: persist the record, generate eager
+   * conversions, drop what a `single: true` collection replaced, and emit `attach`. Compensates on
+   * failure — dropping the object itself only when `ownsObject` says this call put it there.
+   */
+  async #commit(context: AttachContext, input: CommitInput): Promise<MediaRecord> {
+    const { config, ownerId, previous, disk, id, target } = context;
+    const { path } = input;
+
     let saved: MediaRecord;
     try {
+      // `getMetaData` is a HEAD-shaped metadata read, never a body download — the zero-copy
+      // guarantee of `attachExisting` holds even when the caller omits `size`.
       const size = input.size ?? (await target.getMetaData(path)).contentLength;
       // A single-file collection holds exactly one item, so its order resets to 0 on replace.
       const order = config.single
@@ -162,7 +318,7 @@ export class MediaLibrary {
     } catch (error) {
       // Compensation (disk + store aren't a single transaction): the bytes landed but the record
       // didn't persist — best-effort remove the orphaned object before rethrowing.
-      await this.#safeDelete(disk, path);
+      if (input.ownsObject) await this.#safeDelete(disk, path);
       throw error;
     }
 
@@ -176,7 +332,7 @@ export class MediaLibrary {
       } catch (error) {
         // The new media can't be rendered, so roll it back whole — bytes, any conversions already
         // written, and the row — and leave what it was replacing untouched.
-        await this.#safeDelete(disk, path);
+        if (input.ownsObject) await this.#safeDelete(disk, path);
         for (const variant of Object.values(current.conversions)) {
           await this.#safeDelete(variant.disk, variant.path);
         }
@@ -185,8 +341,27 @@ export class MediaLibrary {
       }
     }
 
-    // The new media is committed and renderable; only now is it safe to drop what it replaced.
-    for (const record of previous) await this.#deleteRecord(record);
+    // The new media is committed and renderable; only now is it safe to drop what it replaced. A
+    // replaced record can overlap the new one — the store row when the caller reused `id`, the disk
+    // object when the same key is re-registered — and cleaning up an overlap would destroy the media
+    // just committed, so each half is dropped only where it is genuinely superseded.
+    for (const record of previous) {
+      const sharesObject = record.disk === disk && record.path === path;
+      const sharesRow = record.id === id;
+      if (sharesObject && sharesRow) continue;
+      if (sharesObject) {
+        await this.store.delete(record.id);
+        continue;
+      }
+      if (sharesRow) {
+        await this.#safeDelete(record.disk, record.path);
+        for (const variant of Object.values(record.conversions)) {
+          await this.#safeDelete(variant.disk, variant.path);
+        }
+        continue;
+      }
+      await this.#deleteRecord(record);
+    }
 
     this.emit('attach', {
       id: saved.id,
@@ -250,6 +425,7 @@ export class MediaLibrary {
     const ownerId_ = String(ownerId);
     return {
       attach: (input) => this.attach({ ...input, ownerType, ownerId: ownerId_ }),
+      attachExisting: (input) => this.attachExisting({ ...input, ownerType, ownerId: ownerId_ }),
       list: (collection) => this.list(ownerType, ownerId_, collection),
     };
   }

@@ -14,6 +14,16 @@ export class MediaNotFoundError extends Error {
   }
 }
 
+export class MediaObjectMissingError extends Error {
+  readonly code = 'E_MEDIA_OBJECT_MISSING';
+  constructor(disk: string, key: string) {
+    super(
+      `No object at key "${key}" on disk "${disk}". \`attachExisting\` registers an object that is already stored — upload it first (e.g. finish the resumable session), or use \`attach\` to write the bytes.`,
+    );
+    this.name = 'MediaObjectMissingError';
+  }
+}
+
 export class ConversionNotDefinedError extends Error {
   readonly code = 'E_MEDIA_CONVERSION_NOT_DEFINED';
   constructor(collection: string, conversion: string) {
