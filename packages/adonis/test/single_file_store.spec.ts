@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
-import {
-  removeSingleFileWith,
-  storeSingleFileWith,
-} from '../src/single_file_store.js';
+import { removeSingleFileWith, storeSingleFileWith } from '../src/single_file_store.js';
 import { FakeImageProcessor } from '../src/testing/fake_image_processor.js';
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
