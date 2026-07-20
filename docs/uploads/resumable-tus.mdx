@@ -130,6 +130,53 @@ const { key, disk, size } = await media.resumable.complete(session.id)
 </Step>
 </Steps>
 
+---
+
+## Turning a finished upload into a media record
+
+`complete()` hands back a raw object on a disk. To make it a library asset, do **not** read the bytes
+back into `library.attach()` — that buffers the whole file and rewrites the object, exactly what a
+resumable upload exists to avoid. Register the object where it already is:
+
+```ts
+const record = await media.completeUploadToLibrary(session.id, {
+  ownerType: 'Patient',
+  ownerId: patient.id,
+  collection: 'exams',
+  fileName: 'exam.pdf',
+  mimeType: 'application/pdf',
+})
+```
+
+That is `resumable.complete()` followed by `library.attachExisting({ ...input, key, disk, size })`.
+It is opt-in: `resumable.complete()` stays the raw primitive for blobs that should not become
+library assets.
+
+`library.attachExisting()` is the underlying primitive and works for **any** object already on a
+disk (a direct-S3 upload, a file written by a job, an import):
+
+```ts
+await media.library.attachExisting({
+  ownerType: 'Patient',
+  ownerId: patient.id,
+  collection: 'exams',
+  key: 'uploads/exam-1.pdf',   // already stored — never read, never rewritten
+  disk: 's3',                  // else the collection's disk, else the default
+  fileName: 'exam.pdf',
+  mimeType: 'application/pdf',
+  size: 1_048_576,             // optional — read from the object's metadata when omitted
+})
+```
+
+Everything after storage matches `attach()`: `acceptsMimeTypes`, `single: true` atomic replace,
+ordering, eager conversions and `agora:media:attach` diagnostics. Missing key →
+`MediaObjectMissingError`. Pass `moveIntoLayout: true` to relocate the object into the library's
+`ownerType/ownerId/collection/id/fileName` layout — this uses the disk's **native server-side move**
+(`disks.s3()`; see [S3 disk](/docs/media/storage/s3-disk)) and throws on a disk without one, rather
+than streaming the bytes through the app to fake it. Registering in place is the default.
+
+---
+
 `media.resumable.list(filter?)` returns in-progress sessions (optionally filtered by `disk` / `keyPrefix`) for an "uploads in progress" view — the [Dashboard](/docs/media/dashboard) uses it. Sessions emit `agora:media:upload.*` diagnostics events, captured by [Telescope](/docs/media/integrations/telescope).
 
 ---

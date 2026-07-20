@@ -52,6 +52,7 @@ export { MediaLibrary } from './media_library.js';
 export type {
   MediaLibraryOptions,
   AttachInput,
+  AttachExistingInput,
   OwnerMediaBinding,
   MediaSignedUrlOptions,
 } from './media_library.js';
@@ -119,6 +120,7 @@ export type {
 export {
   MimeNotAllowedError,
   MediaNotFoundError,
+  MediaObjectMissingError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
   VariantNotFoundError,
