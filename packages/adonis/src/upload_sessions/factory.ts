@@ -63,8 +63,12 @@ export const uploadSessions = {
 
   /** Persist resumable sessions in SQL via `@adonisjs/lucid`. */
   lucid(config: LucidUploadSessionStoreConfig = {}): UploadSessionStoreFactory {
-    return async () => {
-      const db = (await import('@adonisjs/lucid/services/db')).default;
+    return async (ctx) => {
+      // Resolve by the STRING alias rather than importing `@adonisjs/lucid/services/db`, which
+      // resolves the `Database` CLASS and makes it the container token. See the equivalent comment
+      // in `../stores/factory.ts` for why a class token breaks when two copies of `@adonisjs/lucid`
+      // coexist in the host app's tree.
+      const db = await ctx.app.container.make('lucid.db');
       const { LucidUploadSessionStore } = await import('./lucid.js');
       return new LucidUploadSessionStore(db, {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
