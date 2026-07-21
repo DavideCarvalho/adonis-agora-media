@@ -36,7 +36,12 @@ export default defineConfig({
         lucid: uploadSessions.lucid(), // durable, multi-process sessions
       },
       sessionTtlSeconds: 24 * 60 * 60, // TUS expiration; omit for never-expiring sessions
-      routes: { enabled: true, prefix: '/media/uploads/tus', maxSize: 5 * 1024 ** 3 },
+      routes: {
+        enabled: true,
+        prefix: '/media/uploads/tus',
+        maxSize: 5 * 1024 ** 3,
+        collection: 'exams', // enforce this collection's acceptsMimeTypes up front
+      },
     },
   },
 })
@@ -52,6 +57,38 @@ export default defineConfig({
 | `routes.prefix` | `string` | `/media/uploads/tus` | Path prefix for the TUS routes. |
 | `routes.disk` | `string` | media default disk | Disk resumable uploads land on. |
 | `routes.maxSize` | `number` | — | Reject creations whose `Upload-Length` exceeds this. |
+| `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates the upload (see below). Omit to accept any type. |
+
+### Rejecting the wrong file type early
+
+`acceptsMimeTypes` belongs to a **collection**, and a collection is only known at `attach` time — so without help, TUS accepts any binary and the user discovers they sent the wrong file *after* uploading all 20 MB of it. In a protocol that exists for large files, that is the worst possible moment to say no.
+
+Set `routes.collection` and the handler enforces that collection's whitelist at the two earliest points the protocol allows:
+
+| Point | What is checked | On failure |
+|---|---|---|
+| `POST` (create) | the `filetype` the client declared in `Upload-Metadata` | `415 Unsupported Media Type` — **before a single byte is uploaded**; no session is created |
+| first `PATCH` | the real magic-byte signature of the leading bytes, via the same detector `attach` uses | `415` — the session **and any partial object are discarded**, so a client that lied in `filetype` pays for one chunk, not the whole file |
+
+Later chunks are not sniffed: a signature lives at the head of a file or nowhere.
+
+The collection config stays the **single source of truth** — you name the collection, never the MIME list, so the TUS gate and the attach-time check cannot drift apart.
+
+<Callout type="warn" title="This is bandwidth economy, not the security boundary">
+  The TUS checks see only the first chunk and are skipped entirely when no `collection` is configured. The storage invariant is still guaranteed by `attach` / `attachExisting`, which re-validate the assembled object — **that** remains the final barrier. Keep attaching through the library; the TUS gate is there to fail fast, not to replace it.
+</Callout>
+
+Building the handler yourself (outside the provider's routes) works the same way — pass the registry, not a list:
+
+```ts
+new TusUploadHandler({
+  manager: media.resumable,
+  disk: media.storage.defaultDisk,
+  basePath: '/media/uploads/tus',
+  collection: 'exams',
+  collections: media.collections,
+})
+```
 
 <Callout type="warn">
   Naming a `store` with no matching factory throws `UploadSessionStoreNotConfiguredError` — a silent non-durable fallback would lose in-flight uploads. Only the zero-config path (no `store` named) resolves to the in-memory store, which is single-process and non-durable: fine for a single node, not for a cluster. For durable sessions select `lucid` and run `node ace migration:run`.

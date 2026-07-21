@@ -77,6 +77,14 @@ export interface MediaResumableConfig {
     disk?: string;
     /** Reject creations whose `Upload-Length` exceeds this many bytes. */
     maxSize?: number;
+    /**
+     * Collection these uploads are destined for. Set it to have the TUS endpoint enforce that
+     * collection's `acceptsMimeTypes` up front — at `POST` from the declared `filetype`, and on the
+     * first `PATCH` from the real file signature — instead of only discovering the wrong type at
+     * attach time, after the whole file was uploaded. The collection config remains the single
+     * source of truth; nothing is restated here. Omit to accept any type (size limits still apply).
+     */
+    collection?: string;
   };
 }
 

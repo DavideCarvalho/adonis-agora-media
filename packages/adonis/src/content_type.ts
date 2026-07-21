@@ -65,3 +65,68 @@ export function detectMimeType(head: Uint8Array): string | undefined {
   }
   return undefined;
 }
+
+/** Every MIME type {@link detectMimeType} can PROVE from a signature. */
+const DETECTABLE_MIME_TYPES: ReadonlySet<string> = new Set(SIGNATURES.map((s) => s.mimeType));
+
+/** Can {@link detectMimeType} ever return this type — i.e. is it in the embedded table? */
+export function isDetectableMimeType(mimeType: string): boolean {
+  return DETECTABLE_MIME_TYPES.has(mimeType);
+}
+
+/**
+ * Is every type in this whitelist signature-detectable — a *closed* whitelist?
+ *
+ * The distinction is what makes "unrecognised signature" actionable. Under a closed whitelist
+ * (`['application/pdf']`, `['image/png', 'image/jpeg']`) unrecognised content cannot be any accepted
+ * type, so it is provably wrong. Under an open one (anything containing `image/svg+xml`, `text/csv`,
+ * `text/plain`, an office format…) unrecognised is the NORMAL case for a legitimate file, so there
+ * is no evidence either way. An empty list is not closed: it whitelists nothing to reason from.
+ */
+export function isClosedSignatureWhitelist(accepted: readonly string[]): boolean {
+  return accepted.length > 0 && accepted.every((type) => isDetectableMimeType(type));
+}
+
+/**
+ * The outcome of checking real bytes against a collection's `acceptsMimeTypes`. Returned rather
+ * than thrown so every caller (the two attach paths, the TUS handler) maps it onto its own failure
+ * mode — an exception in the library, an HTTP status in the handler — off one shared decision.
+ */
+export type ContentVerdict =
+  | { outcome: 'accepted' }
+  /** A signature matched, and it contradicts the type the caller declared. */
+  | { outcome: 'mismatch'; detected: string }
+  /** A signature matched, and the collection does not accept that type. */
+  | { outcome: 'not-accepted'; detected: string }
+  /** No signature matched, under a closed whitelist ⇒ the content is none of the accepted types. */
+  | { outcome: 'unrecognized' };
+
+/**
+ * Decide whether the leading bytes of a file are acceptable for a collection, given its
+ * `acceptsMimeTypes` and (optionally) the type the caller declared.
+ *
+ * - a signature matches and agrees with the declared type (or none was declared and the type is
+ *   whitelisted) ⇒ `accepted`.
+ * - a signature matches and contradicts the declared type ⇒ `mismatch`, whether or not the detected
+ *   type is itself whitelisted: a record whose `mimeType` misdescribes its bytes poisons every
+ *   downstream consumer (conversions, `Content-Type` on delivery).
+ * - a signature matches, nothing was declared, and the type is not whitelisted ⇒ `not-accepted`.
+ * - no signature matches ⇒ `unrecognized` under a closed whitelist (see
+ *   {@link isClosedSignatureWhitelist}), otherwise `accepted` — "unknown" is not "invalid" when a
+ *   legitimate accepted type could have no signature at all.
+ */
+export function verifyContentAgainstWhitelist(
+  head: Uint8Array,
+  accepted: readonly string[],
+  declared?: string,
+): ContentVerdict {
+  const detected = detectMimeType(head);
+  if (detected === undefined) {
+    return isClosedSignatureWhitelist(accepted)
+      ? { outcome: 'unrecognized' }
+      : { outcome: 'accepted' };
+  }
+  if (declared !== undefined && detected !== declared) return { outcome: 'mismatch', detected };
+  if (!accepted.includes(detected)) return { outcome: 'not-accepted', detected };
+  return { outcome: 'accepted' };
+}

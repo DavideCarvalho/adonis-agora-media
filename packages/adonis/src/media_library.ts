@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { SIGNATURE_HEAD_BYTES, detectMimeType } from './content_type.js';
+import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_type.js';
 import { asBuffer, peekContents, peekStream, toBytes } from './contents.js';
 import {
   DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
@@ -10,6 +10,7 @@ import {
 } from './delivery.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
 import {
+  ContentSignatureUnrecognizedError,
   ContentTypeMismatchError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
@@ -158,7 +159,12 @@ interface CommitInput {
 export class MediaLibrary {
   private readonly storage: StorageManager;
   private readonly store: MediaStore;
-  private readonly collections: MediaCollectionRegistry;
+  /**
+   * Registered collection configs. Public because `acceptsMimeTypes` must have exactly one source
+   * of truth: the TUS handler enforces the same whitelist at upload time by reading it from here,
+   * rather than the app restating the list next to its routes.
+   */
+  readonly collections: MediaCollectionRegistry;
   private readonly imageProcessor: ImageProcessor | undefined;
   private readonly emitDiagnostics: boolean;
   private readonly newId: () => string;
@@ -287,15 +293,18 @@ export class MediaLibrary {
    * The declared type is written by the app — routinely a hardcoded constant — so checking it alone
    * (as `#prepare` does, cheaply and first) whitelists nothing about the content itself.
    *
-   * Three outcomes, given the leading bytes:
-   * - no signature matches → *unknown*, not invalid. Many legitimate types (SVG, CSV, text, office
-   *   formats) have none, so rejecting here would break them; the declared type stands, already
-   *   validated by `#prepare`.
+   * Outcomes, given the leading bytes (the decision itself lives in
+   * {@link verifyContentAgainstWhitelist}, shared with the TUS handler):
    * - a signature matches and agrees with the declared type → accept.
    * - a signature matches and the collection does not accept it, or it contradicts the declared
    *   type → reject with {@link ContentTypeMismatchError}. A PNG announced as `application/pdf` is
    *   a lie whether or not PNG is on the list, and a record whose `mimeType` misdescribes its bytes
    *   poisons every downstream consumer (conversions, `Content-Type` on delivery).
+   * - no signature matches, and every accepted type IS signature-detectable (a closed whitelist) →
+   *   reject with {@link ContentSignatureUnrecognizedError}: the content is provably none of them.
+   * - no signature matches, and some accepted type has no signature (SVG, CSV, text, office
+   *   formats) → *unknown*, not invalid. Rejecting would break those legitimate types, so the
+   *   declared type stands, already validated by `#prepare`.
    */
   #assertContentMatches(
     accepted: readonly string[],
@@ -303,9 +312,12 @@ export class MediaLibrary {
     declared: string,
     head: Uint8Array,
   ): void {
-    const detected = detectMimeType(head);
-    if (detected === undefined || detected === declared) return;
-    throw new ContentTypeMismatchError(collection, declared, detected, accepted);
+    const verdict = verifyContentAgainstWhitelist(head, accepted, declared);
+    if (verdict.outcome === 'accepted') return;
+    if (verdict.outcome === 'unrecognized') {
+      throw new ContentSignatureUnrecognizedError(collection, declared, accepted);
+    }
+    throw new ContentTypeMismatchError(collection, declared, verdict.detected, accepted);
   }
 
   /** Storage key layout every record written by this library follows. */

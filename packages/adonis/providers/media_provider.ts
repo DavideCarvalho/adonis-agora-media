@@ -2,6 +2,8 @@ import type { HttpContext } from '@adonisjs/core/http';
 import router from '@adonisjs/core/services/router';
 import type { ApplicationService } from '@adonisjs/core/types';
 import type { MediaConfig } from '../src/define_config.js';
+import { createDriveBackedResolver } from '../src/disks/drive.js';
+import type { DriveServiceModule } from '../src/disks/drive.js';
 import { resolveConfiguredDisks } from '../src/disks/factory.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
@@ -11,13 +13,7 @@ import type { StoreContext } from '../src/stores/factory.js';
 import { TusUploadHandler } from '../src/tus.js';
 import type { TusRequest } from '../src/tus.js';
 import type { MultipartPart } from '../src/types.js';
-import type { Disk, DiskResolver } from '../src/types.js';
 import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
-
-/** The minimal Drive manager surface we use: `use(name)` returns a disk. */
-interface DriveManagerLike {
-  use(name?: string): Disk;
-}
 
 /**
  * Wires `@adonis-agora/media` into the AdonisJS application: binds a singleton {@link MediaManager}
@@ -62,19 +58,19 @@ export default class MediaProvider {
       // actually configured.
       const configuredDisks = await resolveConfiguredDisks(config.disks);
 
-      // Resolve disks from Drive without a hard dependency: import its service lazily. The Drive
-      // disk satisfies our structural `Disk` (getBytes/put/getUrl/...); cast via `unknown` because
-      // Drive's full surface is wider than the subset we use.
-      const drive = (await import('@adonisjs/drive/services/main'))
-        .default as unknown as DriveManagerLike;
+      // Resolve disks from Drive without a hard dependency: import its service lazily. We keep the
+      // module NAMESPACE, never a value read out of it — Drive assigns its manager inside
+      // `app.booted(...)`, which resolves immediately while the app is still booting, so the export
+      // is `undefined` at this point and only the live binding sees the later assignment. The
+      // resolver reads it at the first real disk use and memoizes it (see `createDriveBackedResolver`).
+      const driveService = (await import(
+        '@adonisjs/drive/services/main'
+      )) as unknown as DriveServiceModule;
       const defaultDisk = config.disk ?? (await this.#resolveDefaultDiskName());
 
       // A disk named in `config.disks` wins over a Drive disk of the same name; otherwise fall
       // through to Drive so existing Drive disks keep working unchanged.
-      const resolve: DiskResolver = (name) => {
-        const key = name ?? defaultDisk;
-        return configuredDisks[key] ?? drive.use(name);
-      };
+      const resolve = createDriveBackedResolver({ driveService, configuredDisks, defaultDisk });
 
       return new MediaManager({
         defaultDisk,
@@ -254,6 +250,9 @@ export default class MediaProvider {
    * - `HEAD    /:id`   → report `Upload-Offset` (resume point)
    * - `PATCH   /:id`   → append bytes at `Upload-Offset`; auto-completes at the declared length
    * - `DELETE  /:id`   → terminate the upload
+   *
+   * Set `uploads.resumable.routes.collection` to have the handler enforce that collection's
+   * `acceptsMimeTypes` at create time and on the first chunk (`415`), instead of only at attach.
    */
   #mountTusRoutes(config: MediaConfig) {
     const resumable = config.uploads?.resumable;
@@ -262,6 +261,7 @@ export default class MediaProvider {
     const prefix = (resumable.routes.prefix ?? '/media/uploads/tus').replace(/\/+$/, '');
     const routeDisk = resumable.routes.disk;
     const maxSize = resumable.routes.maxSize;
+    const collection = resumable.routes.collection;
 
     // Build the TUS handler once, on first request, from the resolved MediaManager singleton.
     let handler: TusUploadHandler | undefined;
@@ -272,6 +272,10 @@ export default class MediaProvider {
           manager: media.resumable,
           disk: routeDisk ?? media.storage.defaultDisk,
           basePath: prefix,
+          // The collection's `acceptsMimeTypes` is read from the manager's registry, never restated
+          // here, so the TUS gate and the attach-time barrier can never disagree.
+          collections: media.collections,
+          ...(collection !== undefined ? { collection } : {}),
           ...(maxSize !== undefined ? { maxSize } : {}),
         });
       }

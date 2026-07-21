@@ -1,7 +1,16 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import { SIGNATURE_HEAD_BYTES, detectMimeType } from '../src/content_type.js';
-import { ContentTypeMismatchError, MimeNotAllowedError } from '../src/errors.js';
+import {
+  SIGNATURE_HEAD_BYTES,
+  detectMimeType,
+  isClosedSignatureWhitelist,
+  isDetectableMimeType,
+} from '../src/content_type.js';
+import {
+  ContentSignatureUnrecognizedError,
+  ContentTypeMismatchError,
+  MimeNotAllowedError,
+} from '../src/errors.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
 import { InMemoryDisk, inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
@@ -331,5 +340,122 @@ describe('MediaLibrary.attachExisting — real content validation', () => {
     const record = await adopt(manager, 'incoming/rows.csv', 'text/csv');
 
     expect(record.mimeType).toBe('text/csv');
+  });
+});
+
+describe('closed vs open signature whitelists', () => {
+  it('knows which types the signature table can prove', () => {
+    expect(isDetectableMimeType('application/pdf')).toBe(true);
+    expect(isDetectableMimeType('image/png')).toBe(true);
+    expect(isDetectableMimeType('image/svg+xml')).toBe(false);
+    expect(isDetectableMimeType('text/plain')).toBe(false);
+  });
+
+  it('is closed only when EVERY accepted type is detectable', () => {
+    expect(isClosedSignatureWhitelist(['application/pdf'])).toBe(true);
+    expect(isClosedSignatureWhitelist(['image/png', 'image/jpeg'])).toBe(true);
+    expect(isClosedSignatureWhitelist(['application/pdf', 'image/svg+xml'])).toBe(false);
+    expect(isClosedSignatureWhitelist(['text/csv'])).toBe(false);
+    // An empty list whitelists nothing to reason from, so it proves nothing either.
+    expect(isClosedSignatureWhitelist([])).toBe(false);
+  });
+});
+
+/**
+ * The refinement over "unrecognised ⇒ accept". Under a whitelist whose every type IS detectable,
+ * content matching no signature cannot be any accepted type — so the library rejects it instead of
+ * leaving each consuming app to reimplement the same `detectMimeType(...) === undefined` check.
+ */
+describe('unrecognised signature under a closed whitelist', () => {
+  const txt = Buffer.from('a plain text file pretending to be a PDF\n', 'utf8');
+
+  it('attach rejects unrecognised content when every accepted type is detectable', async () => {
+    const { manager, disks } = makeManager([
+      { name: 'exams', acceptsMimeTypes: ['application/pdf'] },
+    ]);
+
+    await expect(
+      manager.library.attach({
+        ownerType: 'Patient',
+        ownerId: 7,
+        collection: 'exams',
+        fileName: 'scan.pdf',
+        mimeType: 'application/pdf',
+        contents: txt,
+      }),
+    ).rejects.toBeInstanceOf(ContentSignatureUnrecognizedError);
+    // Rejected before the object landed.
+    expect(disks.fs?.files.size).toBe(0);
+  });
+
+  it('reports a distinct code, separate from a positive mismatch', async () => {
+    const { manager } = makeManager([{ name: 'exams', acceptsMimeTypes: ['application/pdf'] }]);
+
+    await expect(
+      manager.library.attach({
+        ownerType: 'Patient',
+        ownerId: 7,
+        collection: 'exams',
+        fileName: 'scan.pdf',
+        mimeType: 'application/pdf',
+        contents: txt,
+      }),
+    ).rejects.toMatchObject({
+      code: 'E_MEDIA_CONTENT_SIGNATURE_UNRECOGNIZED',
+      collection: 'exams',
+      declaredMimeType: 'application/pdf',
+    });
+  });
+
+  it('attachExisting rejects it too — the app no longer needs its own check', async () => {
+    const { manager, disks } = makeManager([
+      { name: 'exams', acceptsMimeTypes: ['application/pdf'] },
+    ]);
+    await disks.fs?.put('incoming/note.pdf', txt);
+
+    await expect(
+      manager.library.attachExisting({
+        ownerType: 'Patient',
+        ownerId: 7,
+        collection: 'exams',
+        key: 'incoming/note.pdf',
+        fileName: 'note.pdf',
+        mimeType: 'application/pdf',
+      }),
+    ).rejects.toBeInstanceOf(ContentSignatureUnrecognizedError);
+    // The object was never ours to delete.
+    expect(disks.fs?.files.has('incoming/note.pdf')).toBe(true);
+  });
+
+  it('still accepts unrecognised content when ONE accepted type has no signature', async () => {
+    const { manager } = makeManager([
+      { name: 'mixed', acceptsMimeTypes: ['application/pdf', 'image/svg+xml'] },
+    ]);
+
+    const record = await manager.library.attach({
+      ownerType: 'Patient',
+      ownerId: 7,
+      collection: 'mixed',
+      fileName: 'logo.svg',
+      mimeType: 'image/svg+xml',
+      contents: samples.svg,
+    });
+
+    expect(record.mimeType).toBe('image/svg+xml');
+  });
+
+  it('never sniffs a collection with no acceptsMimeTypes, closed or not', async () => {
+    const { manager } = makeManager([{ name: 'anything' }]);
+
+    const record = await manager.library.attach({
+      ownerType: 'Patient',
+      ownerId: 7,
+      collection: 'anything',
+      fileName: 'note.pdf',
+      mimeType: 'application/pdf',
+      contents: txt,
+    });
+
+    expect(record.mimeType).toBe('application/pdf');
   });
 });

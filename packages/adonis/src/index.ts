@@ -62,7 +62,22 @@ export type {
 } from './delivery.js';
 
 // Real-content validation (magic-byte signatures behind `acceptsMimeTypes`)
-export { detectMimeType, SIGNATURE_HEAD_BYTES } from './content_type.js';
+export {
+  detectMimeType,
+  isDetectableMimeType,
+  isClosedSignatureWhitelist,
+  verifyContentAgainstWhitelist,
+  SIGNATURE_HEAD_BYTES,
+} from './content_type.js';
+export type { ContentVerdict } from './content_type.js';
+
+// Drive-backed disk resolution (the provider's resolver; exported for wiring media outside AdonisJS)
+export { createDriveBackedResolver } from './disks/drive.js';
+export type {
+  DriveManagerLike,
+  DriveServiceModule,
+  DriveBackedResolverOptions,
+} from './disks/drive.js';
 
 export { isMultipartCapable } from './multipart.js';
 export { isExtendedDisk } from './extended_disk.js';
@@ -139,6 +154,8 @@ export type {
 export {
   MimeNotAllowedError,
   ContentTypeMismatchError,
+  ContentSignatureUnrecognizedError,
+  DriveNotReadyError,
   MediaNotFoundError,
   MediaObjectMissingError,
   ConversionNotDefinedError,
