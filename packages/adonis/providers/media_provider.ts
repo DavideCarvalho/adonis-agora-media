@@ -1,6 +1,5 @@
 import type { HttpContext } from '@adonisjs/core/http';
-import router from '@adonisjs/core/services/router';
-import type { ApplicationService } from '@adonisjs/core/types';
+import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MediaConfig } from '../src/define_config.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
 import type { DriveServiceModule } from '../src/disks/drive.js';
@@ -8,6 +7,7 @@ import { resolveConfiguredDisks } from '../src/disks/factory.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
+import { setBootedApp } from '../src/services/booted_app.js';
 import { resolveStore } from '../src/stores/factory.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import { TusUploadHandler } from '../src/tus.js';
@@ -31,6 +31,12 @@ export default class MediaProvider {
   constructor(protected app: ApplicationService) {}
 
   register() {
+    // Hand the booted app to the internal singleton so it never has to `import` an
+    // `@adonisjs/core` copy that may not be the one `bin/server` booted (see
+    // `../src/services/booted_app.js`) — mirrors the fix already applied to the `@adonisjs/lucid`
+    // `Database` token (`'lucid.db'` string alias) for the same class of dual-package hazard.
+    setBootedApp(this.app);
+
     this.app.container.singleton(MediaManager, async () => {
       const config = this.app.config.get<MediaConfig>('media', {});
 
@@ -107,6 +113,36 @@ export default class MediaProvider {
   }
 
   /**
+   * Mount the media routes once the app has booted (see the comment inside for why). No-ops when
+   * neither the TUS resumable routes nor the direct-upload routes are enabled in config.
+   */
+  async boot() {
+    // Route registration can't happen synchronously in `boot()`: at this point in the AdonisJS
+    // lifecycle the HTTP server/router binding may not be resolvable yet (bindings from other
+    // providers' `boot()` methods can still be pending), and — critically — the *documented*
+    // `@adonisjs/core/services/router` singleton is only assigned once the app's "booted" hooks run
+    // (`await app.booted(async () => { router = ... })` inside that service module itself), which
+    // fire strictly AFTER every provider's own `boot()`. A provider that imports that singleton and
+    // calls `router.get(...)` directly inside `boot()` crashes every entrypoint (serve/ace/tests)
+    // that registers it, because `router` is still `undefined` at that point — the same hazard this
+    // provider now avoids for `MediaManager` itself (see `../src/services/booted_app.js`).
+    //
+    // Deferring to `app.booted(...)` runs our route registration as another "booted" hook — the
+    // same mechanism the router service uses to become available in the first place — which is
+    // guaranteed to fire BEFORE the HTTP server's own `boot()` commits the router (the last point at
+    // which routes can still be added; see `Server#boot()` in `@adonisjs/http-server`, which runs
+    // inside `app.start()`, strictly after all "booted" hooks). Resolving `router` fresh from the
+    // container here (rather than depending on that service singleton) is also the same pattern
+    // `@adonisjs/core`'s own `AppServiceProvider` and `@adonis-agora/durable`'s `DashboardProvider`
+    // use internally, and is immune to the dual-package hazard for the same reason `booted_app.ts`
+    // is: it comes from `this.app` (captured at registration), never from a module-level import.
+    await this.app.booted(async () => {
+      const router = await this.app.container.make('router');
+      this.#registerRoutes(router);
+    });
+  }
+
+  /**
    * Mount the optional direct-S3 upload routes when `uploads.routes.enabled` is set. These are plain
    * AdonisJS routes (NOT controllers): each resolves the {@link MediaManager} singleton lazily and
    * delegates to its upload methods. The object key is taken from the request body/query — resolve
@@ -120,9 +156,9 @@ export default class MediaProvider {
    * - `DELETE /direct/:uploadId`                   → abort the upload
    * - `PUT    /proxy`                              → stream bytes through the app (proxy mode)
    */
-  boot() {
+  #registerRoutes(router: HttpRouterService) {
     const config = this.app.config.get<MediaConfig>('media', {});
-    this.#mountTusRoutes(config);
+    this.#mountTusRoutes(router, config);
 
     const routes = config.uploads?.routes;
     if (!routes?.enabled) return;
@@ -254,7 +290,7 @@ export default class MediaProvider {
    * Set `uploads.resumable.routes.collection` to have the handler enforce that collection's
    * `acceptsMimeTypes` at create time and on the first chunk (`415`), instead of only at attach.
    */
-  #mountTusRoutes(config: MediaConfig) {
+  #mountTusRoutes(router: HttpRouterService, config: MediaConfig) {
     const resumable = config.uploads?.resumable;
     if (!resumable?.routes?.enabled) return;
 

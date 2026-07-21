@@ -1,5 +1,5 @@
-import app from '@adonisjs/core/services/app';
 import { MediaManager } from './media_manager.js';
+import { getBootedApp } from './services/booted_app.js';
 
 /**
  * Store a single file for an owner and return stable public URLs. This is a thin, generic seam over
@@ -79,9 +79,13 @@ export async function removeSingleFileWith(
  * Store a single file for an owner via the app-bound {@link MediaManager}. Resolves the manager from
  * the container, then delegates to {@link storeSingleFileWith}. The `collection` must be configured
  * `single: true` in `config/media.ts` for prior files to be replaced.
+ *
+ * The container is read from the provider-captured booted app ({@link getBootedApp}) rather than
+ * `@adonisjs/core/services/app` — see `./services/booted_app.js` for why that import is unreliable
+ * under a duplicated `@adonisjs/core` tree (pnpm dual-package hazard).
  */
 export async function storeSingleFile(input: StoreSingleFileInput): Promise<StoredSingleFile> {
-  const manager = await app.container.make(MediaManager);
+  const manager = await getBootedApp().container.make(MediaManager);
   return storeSingleFileWith(manager, input);
 }
 
@@ -90,7 +94,7 @@ export async function storeSingleFile(input: StoreSingleFileInput): Promise<Stor
  * manager from the container, then delegates to {@link removeSingleFileWith}.
  */
 export async function removeSingleFile(input: RemoveSingleFileInput): Promise<void> {
-  const manager = await app.container.make(MediaManager);
+  const manager = await getBootedApp().container.make(MediaManager);
   return removeSingleFileWith(manager, input);
 }
 
@@ -99,5 +103,5 @@ export async function removeSingleFile(input: RemoveSingleFileInput): Promise<vo
  * container. Callers use this to feature-detect media before routing a store through it.
  */
 export async function isSingleFileStoreAvailable(): Promise<boolean> {
-  return app.container.hasBinding(MediaManager);
+  return getBootedApp().container.hasBinding(MediaManager);
 }
