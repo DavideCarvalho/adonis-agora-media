@@ -1,5 +1,12 @@
 # @adonis-agora/media-dashboard
 
+## 3.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`afdc1f4`](https://github.com/DavideCarvalho/adonis-media/commit/afdc1f4ec0b46d5b8ed29e3e586e443dd28d940d)]:
+  - @adonis-agora/media@0.7.0
+
 ## 2.0.0
 
 ### Patch Changes
