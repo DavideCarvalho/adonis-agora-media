@@ -55,8 +55,21 @@ export const stores = {
 
   /** Persist media records in SQL via `@adonisjs/lucid`. */
   lucid(config: LucidStoreConfig = {}): StoreFactory {
-    return async () => {
-      const db = (await import('@adonisjs/lucid/services/db')).default;
+    return async (ctx) => {
+      // Resolve the Lucid `Database` by its STRING alias, never by importing
+      // `@adonisjs/lucid/services/db` (which resolves the `Database` CLASS and calls
+      // `container.make(Database)` with it). Lucid's provider keys its binding on the class object
+      // — `container.singleton(Database, ...)` — so a class token only matches when the consumer
+      // and the booting provider loaded the SAME physical copy of the package. In a workspace
+      // where two copies coexist (different version pins, or the same version resolved under
+      // different peer sets, which pnpm materializes as separate directories), the tokens differ,
+      // the binding is not found, and the container tries to CONSTRUCT `Database` — which has no
+      // `@inject()` — failing with `Cannot construct "[class Database]" class`.
+      //
+      // `'lucid.db'` is a string, so it cannot be duplicated: whichever copy boots registers the
+      // alias, and any copy resolves it. This makes the media library immune to the dual-package
+      // hazard instead of depending on the host app's dependency tree being perfectly deduplicated.
+      const db = await ctx.app.container.make('lucid.db');
       const { LucidMediaStore } = await import('./lucid.js');
       return new LucidMediaStore(db, {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
