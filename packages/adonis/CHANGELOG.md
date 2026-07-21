@@ -1,5 +1,22 @@
 # @adonis-agora/media
 
+## 0.8.0
+
+### Minor Changes
+
+- [#12](https://github.com/DavideCarvalho/adonis-media/pull/12) [`92006a0`](https://github.com/DavideCarvalho/adonis-media/commit/92006a032290c6d7e61d4b34184553127992ea5c) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Collection-aware TUS validation, a stricter closed-whitelist rule, and a fix for a non-deterministic Drive resolution race
+
+  **Fix: the Drive manager was captured before it existed.** The provider read `(await import('@adonisjs/drive/services/main')).default` once, while building the `MediaManager` singleton. Drive's service module only assigns that manager inside `await app.booted(...)`, which resolves immediately when the app has not booted yet — so the value captured was `undefined`, permanently, and every media call died with `Cannot read properties of undefined (reading 'use')`. It depended on whether the import won the race against boot, which made it non-deterministic: one run 500s, the identical rerun passes. The Drive manager is now resolved **lazily, at the first disk resolution that actually needs it**, and memoized, so it is still resolved exactly once — just not too early. An app whose disks all come from `config.disks` never touches Drive at all, and resolving genuinely before boot now throws `DriveNotReadyError` (`E_MEDIA_DRIVE_NOT_READY`) instead of a bare `TypeError`. The resolver is exported as `createDriveBackedResolver` for wiring media outside AdonisJS.
+
+  **`TusUploadHandler` can enforce a collection's `acceptsMimeTypes`.** `acceptsMimeTypes` belongs to a collection and used to apply only at `attach`, while TUS knew nothing about collections and accepted any binary (only `maxSize`) — so a user uploaded a whole 20 MB file over a resumable protocol and learned it was the wrong type at finalize. Set `uploads.resumable.routes.collection` (or pass `collection` + `collections` to the handler) and the whitelist is enforced at the two earliest points the protocol allows:
+
+  - **`POST`** — the `filetype` the client declares in `Upload-Metadata`, rejected with `415` before a single byte is uploaded, with no session created.
+  - **first `PATCH`** — the real magic-byte signature of the leading bytes, using the existing detector. Catches a client that lied in `filetype`; the session and any partial object are aborted, so the liar pays for one chunk instead of the whole file. Later chunks are not sniffed.
+
+  You name the collection, never the MIME list: the collection config stays the single source of truth, so the upload gate and the attach-time check cannot drift. This is bandwidth economy and fast feedback, **not** the security boundary — `attach` / `attachExisting` re-validate the assembled object and remain the final barrier. `MediaManager.collections` now exposes the registry, and `resumable.status()` additionally returns the declared `contentType`.
+
+  **Unrecognised signatures are now rejected under a closed whitelist.** Treating "no signature matched" as "no evidence" is right for SVG/CSV/text, but it leaked work to apps: a collection accepting only `application/pdf` still let a `.txt` through `attach`/`attachExisting`, so the consuming app had to reimplement `detectMimeType(...) === undefined` by hand. Now, if **every** type in `acceptsMimeTypes` is signature-detectable, unrecognisable content cannot be any of them and is rejected with the new `ContentSignatureUnrecognizedError` (`E_MEDIA_CONTENT_SIGNATURE_UNRECOGNIZED`), distinct from `ContentTypeMismatchError`. If **any** accepted type has no signature (`image/svg+xml`, `text/csv`, `text/plain`, office formats), the previous permissive behaviour is unchanged. Applies to `attach`, `attachExisting` and the TUS first-chunk check alike; `isDetectableMimeType`, `isClosedSignatureWhitelist` and `verifyContentAgainstWhitelist` are exported so the same reasoning is available outside the library.
+
 ## 0.7.0
 
 ### Minor Changes
