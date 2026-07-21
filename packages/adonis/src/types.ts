@@ -25,6 +25,13 @@ export interface Disk {
   getUrl(key: string): Promise<string>;
   getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string>;
   getMetaData(key: string): Promise<DiskMetaData>;
+  /**
+   * Whether the object is readable without credentials. Every `@adonisjs/drive` disk exposes it, but
+   * it stays OPTIONAL here so the minimal structural contract (and the in-memory test disk) need not
+   * implement it. Read only by `delivery.mode: 'auto'`, which falls back to `signed` when a disk
+   * cannot answer — see {@link resolveDeliveryMode}.
+   */
+  getVisibility?(key: string): Promise<'public' | 'private'>;
 }
 
 export interface DiskWriteOptions {

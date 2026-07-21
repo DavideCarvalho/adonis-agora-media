@@ -11,7 +11,7 @@ you reuse your existing `local` / `s3` / `gcs` disks — this package never reim
 
 | Package | Role |
 |---|---|
-| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, provider + `defineConfig`, testing kit |
+| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, provider + `defineConfig`, testing kit |
 | [`@adonis-agora/media-react`](./packages/react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
 | [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA + AdonisJS provider): browse buckets, watch resumable uploads, copy/move/delete objects |
 
@@ -19,7 +19,7 @@ The core package uses **subpath exports** (the Agora idiom), so heavy backends s
 
 | Subpath | What |
 |---|---|
-| `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, SPIs, errors |
+| `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, `MediaDeliveryHandler`, SPIs, errors |
 | `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |

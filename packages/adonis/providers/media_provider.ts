@@ -100,6 +100,12 @@ export default class MediaProvider {
         ...(resumable?.sessionTtlSeconds !== undefined
           ? { resumableSessionTtlSeconds: resumable.sessionTtlSeconds }
           : {}),
+        // Delivery is config only — no route is mounted for it, deliberately: serving a record is
+        // an authorization decision, so the app owns the route (see `MediaDeliveryHandler`).
+        ...(config.delivery?.mode !== undefined ? { deliveryMode: config.delivery.mode } : {}),
+        ...(config.delivery?.signedTtlSeconds !== undefined
+          ? { deliverySignedTtlSeconds: config.delivery.signedTtlSeconds }
+          : {}),
       });
     });
   }

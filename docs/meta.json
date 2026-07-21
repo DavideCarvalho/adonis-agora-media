@@ -8,6 +8,7 @@
     "attachments",
     "uploads",
     "storage",
+    "delivery",
     "react",
     "dashboard",
     "stores-and-processors",
@@ -16,6 +17,6 @@
     "roadmap"
   ],
   "root": true,
-  "description": "A media library for AdonisJS — collections, image conversions and column attachments on top of @adonisjs/drive.",
+  "description": "A media library for AdonisJS \u2014 collections, image conversions and column attachments on top of @adonisjs/drive.",
   "icon": "Image"
 }

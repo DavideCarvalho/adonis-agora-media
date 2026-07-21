@@ -53,6 +53,35 @@ await media.library.attach({
 
 The check is an exact string match against the `mimeType` you pass — there's no wildcard expansion, so list each type you accept (`'image/png'`, `'image/jpeg'`, `'image/webp'`, …).
 
+### The content is checked too, not just the declared type
+
+The `mimeType` above is written by **your** app — very often a hardcoded constant, or a `Content-Type` header the client chose. Checking only that whitelists nothing about the bytes themselves: a user renames `payload.png` to `report.pdf`, your controller declares `'application/pdf'`, and the whitelist waves it through.
+
+So whenever a collection declares `acceptsMimeTypes`, the library also reads the file's **magic-byte signature** and validates the real content:
+
+| The signature says… | Result |
+|---|---|
+| the same type you declared | accepted |
+| a different type | **rejected** — `ContentTypeMismatchError` (code `E_MEDIA_CONTENT_TYPE_MISMATCH`) |
+| nothing recognisable | falls back to the declared type (already whitelisted) |
+
+```ts
+// collection 'exams' accepts only application/pdf; `contents` is really a PNG
+await media.library.attach({
+  ownerType: 'Patient', ownerId: '7', collection: 'exams',
+  fileName: 'scan.pdf', mimeType: 'application/pdf', contents,
+})
+// → throws ContentTypeMismatchError:
+//   File contents are actually "image/png" (detected from the file signature), not the
+//   declared "application/pdf". Collection "exams" accepts [application/pdf].
+```
+
+The embedded signature table covers **PNG, JPEG, GIF, WEBP and PDF** — no extra dependency. Formats with no fixed signature (SVG, CSV, plain text, most office formats) are *unknown*, not invalid: rejecting them would break legitimate uploads, so the declared type stands. You can call the detector yourself with `detectMimeType(head)`.
+
+<Callout type="info" title="It never reads the whole file">
+  Only the first `SIGNATURE_HEAD_BYTES` (16) are inspected. For `attach` the head is peeked and then **replayed** in front of the rest, so a `Readable` payload stays streaming; for [`attachExisting`](/docs/media/uploads/resumable-tus) it is a short read against the disk that is torn down immediately — adopting a 2 GiB scan in place never downloads it.
+</Callout>
+
 ### Single-file collections
 
 A `single: true` collection holds exactly one file per owner. On `attach`, the library first lists the owner's existing media in that collection and **deletes** it (original + every conversion), then writes the new file. This is the natural shape for an avatar, a cover image, or a logo:

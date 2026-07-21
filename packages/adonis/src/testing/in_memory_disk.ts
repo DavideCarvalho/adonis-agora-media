@@ -7,6 +7,9 @@ import type {
   SignedUrlOptions,
 } from '../types.js';
 
+/** Visibility an {@link InMemoryDisk} reports — or `'unknown'` for a disk with no such signal. */
+export type DiskVisibility = 'public' | 'private' | 'unknown';
+
 interface StoredFile {
   data: Buffer;
   contentType?: string | undefined;
@@ -33,10 +36,21 @@ export class InMemoryDisk implements Disk {
   /** Options from the most recent `getSignedUrl` call, so tests can assert the contract. */
   lastSignedUrlOptions: SignedUrlOptions | undefined;
 
+  /**
+   * Reports the object visibility `delivery.mode: 'auto'` branches on. Defined as an own property
+   * rather than a prototype method so `'unknown'` genuinely REMOVES it — that is the "disk that
+   * cannot answer" case, which `resolveDeliveryMode` detects by probing for the method.
+   */
+  readonly getVisibility?: (key: string) => Promise<'public' | 'private'>;
+
   constructor(
     /** Used to render `getUrl`/`getSignedUrl`. */
     private readonly baseUrl = 'memory://disk',
-  ) {}
+    /** What `getVisibility` reports; `'unknown'` omits the method entirely. */
+    visibility: DiskVisibility = 'private',
+  ) {
+    if (visibility !== 'unknown') this.getVisibility = async () => visibility;
+  }
 
   async put(key: string, contents: Uint8Array, options?: DiskWriteOptions): Promise<void> {
     this.files.set(key, {
@@ -109,12 +123,16 @@ export class InMemoryDisk implements Disk {
  * const storage = new StorageManager({ default: 'fs', resolve })
  * ```
  */
-export function inMemoryDiskResolver(names: string[] = ['default']): {
+export function inMemoryDiskResolver(
+  names: string[] = ['default'],
+  /** Visibility every disk reports; `'unknown'` builds disks with no `getVisibility` at all. */
+  visibility: DiskVisibility = 'private',
+): {
   resolve: DiskResolver;
   disks: Record<string, InMemoryDisk>;
 } {
   const disks: Record<string, InMemoryDisk> = {};
-  for (const name of names) disks[name] = new InMemoryDisk(`memory://${name}`);
+  for (const name of names) disks[name] = new InMemoryDisk(`memory://${name}`, visibility);
   const fallback = names[0] ?? 'default';
   const resolve: DiskResolver = (name) => {
     const key = name ?? fallback;
