@@ -28,6 +28,48 @@ export class ContentTypeMismatchError extends Error {
   }
 }
 
+/**
+ * The content carries no recognisable signature, under a collection whose `acceptsMimeTypes` are
+ * ALL signature-detectable. Distinct from {@link ContentTypeMismatchError}, which reports bytes that
+ * were positively identified as some other type: here nothing was identified at all, and that is
+ * itself the proof — if every accepted type is one the signature table can recognise, content it
+ * cannot recognise is none of them.
+ *
+ * A collection that accepts even one signature-less type (`image/svg+xml`, `text/csv`,
+ * `text/plain`, office formats…) is NOT closed, and unrecognised content there stays accepted.
+ */
+export class ContentSignatureUnrecognizedError extends Error {
+  readonly code = 'E_MEDIA_CONTENT_SIGNATURE_UNRECOGNIZED';
+  constructor(
+    readonly collection: string,
+    readonly declaredMimeType: string | undefined,
+    readonly accepted: readonly string[],
+  ) {
+    super(
+      `File contents carry no recognisable signature${
+        declaredMimeType ? ` for the declared "${declaredMimeType}"` : ''
+      }. Collection "${collection}" accepts only signature-detectable types [${accepted.join(', ')}], so content that matches none of their signatures cannot be any of them.`,
+    );
+    this.name = 'ContentSignatureUnrecognizedError';
+  }
+}
+
+/**
+ * A media disk was resolved before `@adonisjs/drive` finished booting, so its disk manager does not
+ * exist yet. Drive's service module assigns the manager inside `app.booted(...)`; reading it any
+ * earlier yields `undefined`. The media provider resolves it lazily, at first real disk use, so in
+ * practice this only fires when media is called from outside a booted application.
+ */
+export class DriveNotReadyError extends Error {
+  readonly code = 'E_MEDIA_DRIVE_NOT_READY';
+  constructor(disk: string) {
+    super(
+      `Cannot resolve disk "${disk}": the \`@adonisjs/drive\` disk manager is not available yet because the application has not finished booting. Resolve media disks after boot (e.g. inside a request or a \`booted\` hook), or declare the disk in \`disks\` in config/media.ts so it does not go through Drive at all.`,
+    );
+    this.name = 'DriveNotReadyError';
+  }
+}
+
 export class MediaNotFoundError extends Error {
   readonly code = 'E_MEDIA_RECORD_NOT_FOUND';
   constructor(id: string) {

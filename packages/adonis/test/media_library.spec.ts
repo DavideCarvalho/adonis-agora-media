@@ -36,7 +36,15 @@ function makeLibrary(opts: Partial<ConstructorParameters<typeof MediaLibrary>[0]
   return { library, store, disks };
 }
 
-const png = Buffer.from('fake-png-bytes');
+/**
+ * A real PNG magic-byte header (plus filler). It has to be real: a collection whose
+ * `acceptsMimeTypes` are all signature-detectable rejects content carrying no recognisable
+ * signature, so `Buffer.from('fake-png-bytes')` is — correctly — not a PNG.
+ */
+const png = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('fake-png-bytes'),
+]);
 
 describe('MediaLibrary.attach / list / delete', () => {
   it('attaches a file, persists the record, and stores bytes on the disk', async () => {

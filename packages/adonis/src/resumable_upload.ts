@@ -196,12 +196,24 @@ export class ResumableUploadManager {
     return { offset: session.offset };
   }
 
-  /** Current offset, declared size, and expiry for a session (drives the TUS `HEAD` response). */
-  async status(
-    id: string,
-  ): Promise<{ offset: number; size: number | undefined; expiresAt: Date | undefined }> {
+  /**
+   * Current offset, declared size, declared content type, and expiry for a session (drives the TUS
+   * `HEAD` response). `contentType` is what the client DECLARED at creation (TUS `Upload-Metadata`'s
+   * `filetype`) — nothing here proves it; the TUS handler checks it against the real bytes.
+   */
+  async status(id: string): Promise<{
+    offset: number;
+    size: number | undefined;
+    contentType: string | undefined;
+    expiresAt: Date | undefined;
+  }> {
     const session = await this.require(id);
-    return { offset: session.offset, size: session.size, expiresAt: session.expiresAt };
+    return {
+      offset: session.offset,
+      size: session.size,
+      contentType: session.contentType,
+      expiresAt: session.expiresAt,
+    };
   }
 
   /** Assemble all parts into the final object, clean up, and return the final key/disk/size. */

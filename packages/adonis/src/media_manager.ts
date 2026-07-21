@@ -2,7 +2,7 @@ import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode } from './delivery.js';
 import { ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
-import type { MediaCollectionConfig } from './media_collection.js';
+import type { MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import { MediaLibrary } from './media_library.js';
 import type { AttachExistingInput } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
@@ -162,6 +162,15 @@ export class MediaManager {
   ): Promise<MediaRecord> {
     const { key, disk, size } = await this.resumable.complete(sessionId);
     return this.library.attachExisting({ ...input, key, disk, size });
+  }
+
+  /**
+   * The registered collection configs — the single source of truth for `acceptsMimeTypes`. Exposed
+   * so the upload edge (`TusUploadHandler`) can enforce the very same whitelist the library will
+   * enforce at attach time, without the app restating it.
+   */
+  get collections(): MediaCollectionRegistry {
+    return this.library.collections;
   }
 
   /** Whether resumable (TUS) uploads are configured (a session store is present). */

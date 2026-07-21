@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_type.js';
 import {
   UploadOffsetConflictError,
   UploadSessionExpiredError,
   UploadSessionNotFoundError,
 } from './errors.js';
+import type { MediaCollectionRegistry } from './media_collection.js';
 import type { CreateUploadInput, ResumableUploadManager } from './resumable_upload.js';
 
 /** The TUS protocol version this server implements. */
@@ -29,6 +31,17 @@ export interface TusUploadHandlerOptions {
   manager: ResumableUploadManager;
   /** Disk uploads land on. */
   disk: string;
+  /**
+   * Collection this endpoint uploads into. When set (together with {@link collections}), its
+   * `acceptsMimeTypes` is enforced at `POST` and on the first `PATCH` — see the class docs. The
+   * collection config stays the single source of truth: nothing here restates the MIME list.
+   */
+  collection?: string;
+  /**
+   * The collection registry to read {@link collection} from — `media.collections` in an app. Passed
+   * rather than the resolved list precisely so the app cannot drift from `config/media.ts`.
+   */
+  collections?: MediaCollectionRegistry;
   /** Base path the upload resources are exposed at, for the `Location` header. Default `/uploads`. */
   basePath?: string;
   /** Reject creations whose `Upload-Length` exceeds this. */
@@ -61,10 +74,30 @@ export function parseTusMetadata(header?: string): Record<string, string> {
  * - `PATCH` — append at `Upload-Offset` with `Content-Type: application/offset+octet-stream`;
  *   auto-completes at the declared length.
  * - `DELETE` — terminate (abort) an in-flight upload.
+ *
+ * ## Collection-aware MIME validation (optional)
+ *
+ * Given a `collection` + `collections` registry, the handler enforces that collection's
+ * `acceptsMimeTypes` at the two earliest moments the protocol allows, so a client learns it sent the
+ * wrong file *before* spending the bandwidth a resumable upload exists to protect:
+ *
+ * 1. **`POST`** — the declared `filetype` in `Upload-Metadata`, if present, must be whitelisted.
+ *    Rejected with `415 Unsupported Media Type`, before a single byte is uploaded.
+ * 2. **first `PATCH`** — the real magic-byte signature of the leading bytes is checked with
+ *    {@link verifyContentAgainstWhitelist}. This catches a client that lied in `filetype`. Also
+ *    `415`, and the session plus any partial object are aborted so nothing is left behind.
+ *
+ * This is **bandwidth economy and fast feedback, not the security boundary**. The storage invariant
+ * is still guaranteed by `MediaLibrary.attach` / `attachExisting`, which re-validate the assembled
+ * object at attach time and remain the final barrier — the TUS checks only see the first chunk, and
+ * an endpoint configured without a `collection` performs no MIME validation at all.
  */
 export class TusUploadHandler {
   private readonly manager: ResumableUploadManager;
   private readonly disk: string;
+  private readonly collection: string | undefined;
+  /** Resolved from the collection registry at construction; `undefined` ⇒ no MIME gate here. */
+  private readonly accepts: readonly string[] | undefined;
   private readonly basePath: string;
   private readonly maxSize: number | undefined;
   private readonly keyFor: (f: string, t: string, m: Record<string, string>) => string;
@@ -73,6 +106,11 @@ export class TusUploadHandler {
   constructor(options: TusUploadHandlerOptions) {
     this.manager = options.manager;
     this.disk = options.disk;
+    this.collection = options.collection;
+    this.accepts =
+      options.collection !== undefined && options.collections !== undefined
+        ? options.collections.get(options.collection).acceptsMimeTypes
+        : undefined;
     this.basePath = (options.basePath ?? '/uploads').replace(/\/+$/, '');
     this.maxSize = options.maxSize;
     this.keyFor = options.keyFor ?? ((filename, token) => `uploads/${token}/${filename}`);
@@ -99,6 +137,15 @@ export class TusUploadHandler {
           return { status: 413, headers: base, body: 'Upload exceeds maximum size' };
         }
         const metadata = parseTusMetadata(req.headers['upload-metadata']);
+        // Cheapest possible rejection: the client already told us what it is about to send, so a
+        // wrong `filetype` costs zero bytes. Absent metadata just defers the call to the first PATCH.
+        if (this.accepts && metadata.filetype && !this.accepts.includes(metadata.filetype)) {
+          return {
+            status: 415,
+            headers: base,
+            body: `Content type "${metadata.filetype}" is not accepted by collection "${this.collection}" (accepts: ${this.accepts.join(', ')})`,
+          };
+        }
         const filename = metadata.filename ?? 'upload';
         const token = this.newId();
         const input: CreateUploadInput = {
@@ -139,12 +186,17 @@ export class TusUploadHandler {
           return { status: 415, headers: base, body: 'Unsupported Media Type' };
         }
         const offset = Number(req.headers['upload-offset']);
+        const body = req.body ?? new Uint8Array();
         try {
-          const result = await this.manager.writeChunk(
+          const rejection = await this.#rejectMistypedFirstChunk(
             req.uploadId ?? '',
             offset,
-            req.body ?? new Uint8Array(),
+            body,
+            base,
           );
+          if (rejection) return rejection;
+
+          const result = await this.manager.writeChunk(req.uploadId ?? '', offset, body);
           const status = await this.manager.status(req.uploadId ?? '');
           if (status.size != null && result.offset >= status.size) {
             await this.manager.complete(req.uploadId ?? '');
@@ -167,6 +219,43 @@ export class TusUploadHandler {
       default:
         return { status: 405, headers: base };
     }
+  }
+
+  /**
+   * Sniff the FIRST chunk against the collection's `acceptsMimeTypes` and, on a contradiction, throw
+   * the whole upload away: the session and any partial object are aborted, so a liar pays for one
+   * chunk instead of the whole file and leaves nothing behind.
+   *
+   * Only the first chunk (`offset === 0`) is inspected, and only its leading
+   * {@link SIGNATURE_HEAD_BYTES} — a signature lives at the head of the file or nowhere. Returns
+   * `undefined` when the upload may proceed.
+   */
+  async #rejectMistypedFirstChunk(
+    id: string,
+    offset: number,
+    body: Uint8Array,
+    base: Record<string, string>,
+  ): Promise<TusResponse | undefined> {
+    if (this.accepts === undefined || offset !== 0 || body.byteLength === 0) return undefined;
+
+    const status = await this.manager.status(id);
+    const verdict = verifyContentAgainstWhitelist(
+      body.subarray(0, SIGNATURE_HEAD_BYTES),
+      this.accepts,
+      status.contentType,
+    );
+    if (verdict.outcome === 'accepted') return undefined;
+
+    await this.manager.abort(id);
+    const detail =
+      verdict.outcome === 'unrecognized'
+        ? 'its contents match no accepted signature'
+        : `its contents are actually "${verdict.detected}"`;
+    return {
+      status: 415,
+      headers: base,
+      body: `Upload rejected: ${detail}, which collection "${this.collection}" does not accept (accepts: ${this.accepts.join(', ')}). The upload has been discarded.`,
+    };
   }
 
   /** Map storage errors onto TUS status codes (409 conflict, 410 expired, 404 unknown). */
