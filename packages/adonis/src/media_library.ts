@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { asBuffer, toBytes } from './contents.js';
+import { SIGNATURE_HEAD_BYTES, detectMimeType } from './content_type.js';
+import { asBuffer, peekContents, peekStream, toBytes } from './contents.js';
+import {
+  DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+  type DeliveryMode,
+  type DeliveryResult,
+  resolveDeliveryMode,
+} from './delivery.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
 import {
+  ContentTypeMismatchError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
   MediaNotFoundError,
@@ -30,6 +38,10 @@ export interface MediaLibraryOptions {
   idGenerator?: () => string;
   /** Injectable for deterministic tests. Defaults to `() => new Date()`. */
   clock?: () => Date;
+  /** Default read strategy for {@link MediaLibrary.deliver} (`delivery.mode`). Default `auto`. */
+  deliveryMode?: DeliveryMode;
+  /** Signed-URL lifetime when delivery resolves to `signed`. Default 300s. */
+  deliverySignedTtlSeconds?: number;
 }
 
 export interface AttachInput {
@@ -91,6 +103,16 @@ export interface AttachExistingInput {
   moveIntoLayout?: boolean;
 }
 
+/** Options for {@link MediaLibrary.deliver}. */
+export interface DeliverOptions {
+  /** Deliver this named conversion instead of the original (generated lazily if absent). */
+  conversion?: string | undefined;
+  /** Override the configured `delivery.mode` for this call. */
+  mode?: DeliveryMode | undefined;
+  /** Override the configured signed-URL lifetime, when the resolved mode is `signed`. */
+  signedTtlSeconds?: number | undefined;
+}
+
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
 export interface MediaSignedUrlOptions extends Omit<SignedUrlOptions, 'expiresIn'> {
   /** Sign this named conversion instead of the original (generated lazily if absent). */
@@ -141,6 +163,8 @@ export class MediaLibrary {
   private readonly emitDiagnostics: boolean;
   private readonly newId: () => string;
   private readonly now: () => Date;
+  private readonly deliveryMode: DeliveryMode;
+  private readonly deliverySignedTtlSeconds: number;
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -150,6 +174,9 @@ export class MediaLibrary {
     this.emitDiagnostics = options.emitDiagnostics ?? true;
     this.newId = options.idGenerator ?? (() => randomUUID());
     this.now = options.clock ?? (() => new Date());
+    this.deliveryMode = options.deliveryMode ?? 'auto';
+    this.deliverySignedTtlSeconds =
+      options.deliverySignedTtlSeconds ?? DEFAULT_DELIVERY_SIGNED_TTL_SECONDS;
   }
 
   private emit<E extends 'attach' | 'delete' | 'conversion'>(
@@ -165,22 +192,36 @@ export class MediaLibrary {
     const path = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
     const hasConversions = (config.conversions ?? []).length > 0;
 
+    // Prove the bytes are what the caller claims BEFORE writing them. Peeking replays the head, so
+    // the payload below is still whole — and a `Readable` is still a stream.
+    let contents = input.contents;
+    if (config.acceptsMimeTypes) {
+      const peeked = await peekContents(input.contents, SIGNATURE_HEAD_BYTES);
+      contents = peeked.contents;
+      this.#assertContentMatches(
+        config.acceptsMimeTypes,
+        input.collection,
+        input.mimeType,
+        peeked.head,
+      );
+    }
+
     // Stream large uploads straight through (no in-memory buffer) when we can: a Readable with a
     // known size, no conversions to generate off the buffered bytes, and a disk that supports it.
     const canStream =
-      !Buffer.isBuffer(input.contents) &&
+      !Buffer.isBuffer(contents) &&
       input.size !== undefined &&
       !hasConversions &&
       typeof target.putStream === 'function';
     if (canStream) {
       // `input.size` is forwarded, not dropped: it is the very thing that makes this path
       // eligible (see `canStream`), and S3's putStream cannot write without it.
-      await target.putStream?.(path, input.contents as Readable, {
+      await target.putStream?.(path, contents as Readable, {
         contentType: input.mimeType,
         contentLength: input.size as number,
       });
     } else {
-      const bytes = await toBytes(input.contents);
+      const bytes = await toBytes(contents);
       await target.put(path, bytes, { contentType: input.mimeType });
     }
 
@@ -215,6 +256,19 @@ export class MediaLibrary {
       throw new MediaObjectMissingError(disk, input.key);
     }
 
+    // Validate the REAL content of an object we never wrote. `peekStream` tears the stream down
+    // after the signature, so this stays a short head read — never the download `attachExisting`
+    // exists to avoid.
+    if (context.config.acceptsMimeTypes) {
+      const head = await peekStream(await target.getStream(input.key), SIGNATURE_HEAD_BYTES);
+      this.#assertContentMatches(
+        context.config.acceptsMimeTypes,
+        input.collection,
+        input.mimeType,
+        head,
+      );
+    }
+
     let path = input.key;
     const layout = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
     if (input.moveIntoLayout && path !== layout) {
@@ -226,6 +280,32 @@ export class MediaLibrary {
     }
 
     return this.#commit(context, { ...input, path, ownsObject: input.moveIntoLayout === true });
+  }
+
+  /**
+   * Enforce `acceptsMimeTypes` against what the bytes ACTUALLY are, not what the caller declared.
+   * The declared type is written by the app — routinely a hardcoded constant — so checking it alone
+   * (as `#prepare` does, cheaply and first) whitelists nothing about the content itself.
+   *
+   * Three outcomes, given the leading bytes:
+   * - no signature matches → *unknown*, not invalid. Many legitimate types (SVG, CSV, text, office
+   *   formats) have none, so rejecting here would break them; the declared type stands, already
+   *   validated by `#prepare`.
+   * - a signature matches and agrees with the declared type → accept.
+   * - a signature matches and the collection does not accept it, or it contradicts the declared
+   *   type → reject with {@link ContentTypeMismatchError}. A PNG announced as `application/pdf` is
+   *   a lie whether or not PNG is on the list, and a record whose `mimeType` misdescribes its bytes
+   *   poisons every downstream consumer (conversions, `Content-Type` on delivery).
+   */
+  #assertContentMatches(
+    accepted: readonly string[],
+    collection: string,
+    declared: string,
+    head: Uint8Array,
+  ): void {
+    const detected = detectMimeType(head);
+    if (detected === undefined || detected === declared) return;
+    throw new ContentTypeMismatchError(collection, declared, detected, accepted);
   }
 
   /** Storage key layout every record written by this library follows. */
@@ -241,8 +321,11 @@ export class MediaLibrary {
 
   /**
    * Everything both attach paths do BEFORE the object exists: resolve the collection, enforce its
-   * MIME whitelist, capture the records a `single: true` collection will replace, and pick the disk
-   * and record id.
+   * MIME whitelist against the DECLARED type, capture the records a `single: true` collection will
+   * replace, and pick the disk and record id.
+   *
+   * The declared-type check is only the cheap first gate — it rejects without touching a byte. Each
+   * attach path then proves the content itself with {@link #assertContentMatches}.
    *
    * A single-file collection replaces whatever is already there — but only once the new media is
    * stored, persisted AND renderable, so anything that fails on the way leaves the old media intact.
@@ -460,19 +543,78 @@ export class MediaLibrary {
   }
 
   /**
-   * Public URL for a media record or one of its conversions. When a conversion is
-   * requested and not yet generated, it is produced lazily (and cached) first.
+   * Resolve a media id (optionally a named conversion of it) to the concrete object on a disk that
+   * every read path — {@link url}, {@link signedUrl}, {@link deliver} — then acts on. Requesting a
+   * conversion that has not been generated produces it lazily first.
    */
-  async url(id: string, conversion?: string): Promise<string> {
+  async #resolveTarget(
+    id: string,
+    conversion?: string | undefined,
+  ): Promise<{ record: MediaRecord; disk: string; path: string; fileName: string }> {
     if (conversion) {
       const record = await this.ensureConversion(id, conversion);
       const variant = record.conversions[conversion];
       if (!variant) throw new MediaNotFoundError(`${id}#${conversion}`);
-      return this.storage.disk(variant.disk).getUrl(variant.path);
+      return {
+        record,
+        disk: variant.disk,
+        path: variant.path,
+        // The conversion has its own format (and so its own extension); the record's `fileName`
+        // names the original.
+        fileName: variant.path.slice(variant.path.lastIndexOf('/') + 1),
+      };
     }
     const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
-    return this.storage.disk(record.disk).getUrl(record.path);
+    return { record, disk: record.disk, path: record.path, fileName: record.fileName };
+  }
+
+  /**
+   * Public URL for a media record or one of its conversions. When a conversion is
+   * requested and not yet generated, it is produced lazily (and cached) first.
+   */
+  async url(id: string, conversion?: string): Promise<string> {
+    const target = await this.#resolveTarget(id, conversion);
+    return this.storage.disk(target.disk).getUrl(target.path);
+  }
+
+  /**
+   * Resolve how a media record should reach the client, per the configured `delivery.mode` — the
+   * read-side counterpart to `uploads.mode`. Returns either a URL to redirect to (`public`/`signed`)
+   * or a {@link Readable} to pipe (`proxy`), so an app on a private bucket with no
+   * internet-reachable storage stops hand-rolling a streaming route.
+   *
+   * Like every other library method this answers "how", NOT "who": authorize the caller first. See
+   * {@link MediaDeliveryHandler} for mounting this as a route.
+   *
+   * ```ts
+   * const result = await media.library.deliver(id)
+   * if (result.kind === 'redirect') return response.redirect(result.url)
+   * response.header('content-type', result.mimeType)
+   * return response.stream(result.stream)
+   * ```
+   */
+  async deliver(id: string, options: DeliverOptions = {}): Promise<DeliveryResult> {
+    const target = await this.#resolveTarget(id, options.conversion);
+    const disk = this.storage.disk(target.disk);
+    const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, target.path);
+
+    if (mode === 'public') return { kind: 'redirect', url: await disk.getUrl(target.path) };
+    if (mode === 'signed') {
+      const expiresIn = options.signedTtlSeconds ?? this.deliverySignedTtlSeconds;
+      return { kind: 'redirect', url: await disk.getSignedUrl(target.path, { expiresIn }) };
+    }
+
+    // Prefer the disk's own metadata over the record's: for a conversion the record describes the
+    // ORIGINAL (a `thumb` of a PNG may well be a WEBP), and its `size` is the original's too.
+    const metadata = await disk.getMetaData(target.path);
+    return {
+      kind: 'stream',
+      stream: await disk.getStream(target.path),
+      mimeType: metadata.contentType ?? target.record.mimeType,
+      size: metadata.contentLength,
+      fileName: target.fileName,
+    };
   }
 
   /**
@@ -490,15 +632,8 @@ export class MediaLibrary {
     const { conversion, ...responseOptions } = options;
     const signOptions: SignedUrlOptions = { expiresIn, ...responseOptions };
 
-    if (conversion) {
-      const record = await this.ensureConversion(id, conversion);
-      const variant = record.conversions[conversion];
-      if (!variant) throw new MediaNotFoundError(`${id}#${conversion}`);
-      return this.storage.disk(variant.disk).getSignedUrl(variant.path, signOptions);
-    }
-    const record = await this.store.find(id);
-    if (!record) throw new MediaNotFoundError(id);
-    return this.storage.disk(record.disk).getSignedUrl(record.path, signOptions);
+    const target = await this.#resolveTarget(id, conversion);
+    return this.storage.disk(target.disk).getSignedUrl(target.path, signOptions);
   }
 }
 

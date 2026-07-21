@@ -1,0 +1,94 @@
+---
+title: Delivery
+description: A configurable read strategy — public URL, signed URL, or streaming the bytes through your app — plus the framework-agnostic MediaDeliveryHandler you mount behind your own auth.
+icon: Download
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The library has had a configurable strategy for **writes** since 0.4 ([`uploads.mode`](/docs/media/uploads/upload-modes)). `delivery` is its mirror image for **reads**.
+
+Without it, every app re-derives the same decision by hand: call `url()` on a public bucket, `signedUrl()` on a private one — and when the storage isn't reachable from the internet at all (a bucket on a private network, MinIO on an internal host), hand-roll a route that opens a stream and pipes it. That route is the same in every app, so it belongs here.
+
+```ts title="config/media.ts"
+export default defineConfig({
+  delivery: {
+    mode: 'auto',          // 'auto' (default) | 'public' | 'signed' | 'proxy'
+    signedTtlSeconds: 300, // lifetime of the signed URL when mode resolves to 'signed'
+  },
+})
+```
+
+| Mode | What you get back | Use when |
+|---|---|---|
+| `public` | `{ kind: 'redirect', url }` — the disk's stable public URL | the bucket (or CDN in front of it) serves objects to anyone |
+| `signed` | `{ kind: 'redirect', url }` — a time-limited signed URL | the bucket is private but reachable from the client |
+| `proxy` | `{ kind: 'stream', stream, mimeType, size, fileName }` | the storage is **not** internet-reachable, or every read must pass your app |
+| `auto` | whichever of `public` / `signed` fits the disk | you want the sensible default |
+
+### How `auto` decides
+
+It asks the disk: `getVisibility(key)` — public ⇒ `public`, private ⇒ `signed`. Every `@adonisjs/drive` disk implements it, and the bundled [`disks.s3()`](/docs/media/storage/s3-disk) answers from its declarative `visibility` option (default `private`, never an ACL round-trip).
+
+A disk that can't answer leaves visibility genuinely unknown, and `auto` then resolves to **`signed`** — the safe read of "unknown", and one that works on a public object too. `auto` deliberately does *not* infer visibility from `getUrl` being callable: a URL can always be *synthesised* for a private object, so that inference would hand out links that 403.
+
+<Callout type="warn" title="auto never picks proxy">
+  Proxying is a deployment decision (your app pays the bandwidth), not something to fall into by accident. Set `mode: 'proxy'` explicitly.
+</Callout>
+
+---
+
+## Mounting a route
+
+`MediaDeliveryHandler` is framework-agnostic, exactly like [`TusUploadHandler`](/docs/media/uploads/resumable-tus): **you** mount the route, with your own middleware, and delegate the "how do these bytes reach the client" question to it.
+
+```ts title="start/routes.ts"
+import { MediaDeliveryHandler, MediaManager } from '@adonis-agora/media'
+
+const media = await app.container.make(MediaManager)
+const delivery = new MediaDeliveryHandler({ library: media })
+
+router
+  .get('/media/:id', async ({ params, request, response, auth }) => {
+    await authorizeMediaAccess(auth.user, params.id) // ← your rule, see below
+
+    const result = await delivery.handle({
+      mediaId: params.id,
+      conversion: request.input('conversion'),
+    })
+
+    if (result.kind === 'redirect') return response.redirect(result.url)
+
+    response.header('content-type', result.mimeType)
+    if (result.size !== undefined) response.header('content-length', String(result.size))
+    response.header('content-disposition', `inline; filename="${result.fileName}"`)
+    return response.stream(result.stream)
+  })
+  .use(middleware.auth())
+```
+
+<Callout type="error" title="The handler performs NO authorization">
+  It resolves a media id to bytes or a URL, and nothing else — the same split `TusUploadHandler` draws. Who may read a given record is a question only your app can answer, so guard the route (middleware, an ownership check, a signed media token) **before** calling `handle`. Mounted unguarded, it publishes every record to anyone who can guess an id.
+
+  This is also why the provider mounts no delivery route of its own, unlike the opt-in upload routes: there is no safe default.
+</Callout>
+
+The handler's own `mode` / `signedTtlSeconds` override the configured ones, so one app can serve avatars as public URLs and exam PDFs through a proxy route.
+
+---
+
+## Without a route
+
+`library.deliver()` returns the same union, for jobs, console commands, or a controller you'd rather write yourself:
+
+```ts
+const result = await media.library.deliver(id, { conversion: 'thumb', mode: 'signed' })
+```
+
+| Option | Type | What it does |
+|---|---|---|
+| `conversion` | `string` | Deliver a named conversion instead of the original (generated lazily if absent). |
+| `mode` | `DeliveryMode` | Override the configured mode for this call. |
+| `signedTtlSeconds` | `number` | Override the signed-URL lifetime for this call. |
+
+In `proxy` mode the `mimeType` and `size` come from the **disk's** metadata rather than the record's, because a conversion has its own format and length — a `thumb` of a PNG may well be a WEBP.

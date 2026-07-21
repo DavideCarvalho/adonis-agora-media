@@ -34,6 +34,14 @@ export default defineConfig({
     },
   ],
 
+  // How stored media is served back — the read-side counterpart to 'uploads.mode'.
+  // 'public' redirects to the disk's raw URL, 'signed' to a time-limited signed URL, and 'proxy'
+  // streams the bytes through the app (for a private bucket the internet cannot reach). The default
+  // 'auto' asks the disk for the object's visibility: public => 'public', otherwise => 'signed'.
+  // No route is mounted for this: serving a record is an authorization decision, so mount your own
+  // route with your own middleware and delegate to MediaDeliveryHandler (or library.deliver).
+  // delivery: { mode: 'proxy', signedTtlSeconds: 300 },
+
   // Resumable (TUS) uploads — opt-in. Mounts the TUS protocol under 'routes.prefix' and persists
   // upload sessions so a dropped connection resumes. Select 'lucid' and run 'node ace migration:run'
   // for durable, multi-process sessions; the default in-memory store is single-process only.

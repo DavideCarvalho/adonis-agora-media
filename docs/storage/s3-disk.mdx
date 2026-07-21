@@ -58,6 +58,7 @@ export default defineConfig({
 | `forcePathStyle` | `boolean` | `false` | Path-style addressing (`endpoint/bucket/key`) — required by most S3-compatible services. |
 | `keyPrefix` | `string` | — | Prefix prepended to every key (e.g. `uploads`). |
 | `publicBaseUrl` | `string` | — | Base URL for stable public URLs (a CDN or the bucket website), used by `getUrl`. |
+| `visibility` | `'public' \| 'private'` | `private` | Whether objects are readable without credentials. Declarative — never applied as an ACL, never probed. Read by [`delivery.mode: 'auto'`](/docs/media/delivery). |
 
 Each `disks.s3(...)` returns a **lazy thunk**. Calling it in the config file costs nothing; `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` are imported only when the provider builds the selected disk at boot — so you can list an S3 disk in the map even where the AWS SDK isn't installed, as long as you don't select it.
 
@@ -82,6 +83,7 @@ Like any Drive disk, `S3Disk` satisfies the structural [`Disk`](/docs/media/stor
 
 - `put` / `putStream` / `getBytes` / `getStream` / `exists` / `delete` / `getMetaData`
 - `getUrl(key)` — a stable public URL from `publicBaseUrl` (or a synthesised virtual-hosted / path-style URL).
+- `getVisibility(key)` — the configured `visibility`, verbatim. S3 can't be asked cheaply (a `GetObjectAcl` per read isn't free, and object ACLs say nothing about a bucket policy), so it reports what the disk was told. Read only by [`delivery.mode: 'auto'`](/docs/media/delivery).
 - `getSignedUrl(key, { expiresIn })` — a time-limited **signed read** URL via the request presigner. `expiresIn` accepts Drive's human duration strings (`'30m'`, `'1h'`, `'45s'`, `'2d'`) or a number of seconds; the default is 30 minutes.
 
 So `media.library.url(id)` and `media.library.signedUrl(id, '1h')` resolve through the S3 disk with no extra wiring.

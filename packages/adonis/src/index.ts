@@ -4,6 +4,7 @@ export type {
   MediaConfig,
   MediaUploadsConfig,
   MediaResumableConfig,
+  MediaDeliveryConfig,
   StoreContext,
   StoreFactory,
   LucidStoreConfig,
@@ -46,6 +47,23 @@ export type {
 } from './resumable_upload.js';
 export { TusUploadHandler, parseTusMetadata, TUS_VERSION } from './tus.js';
 export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js';
+// Configurable delivery (the read-side counterpart to the upload modes)
+export {
+  MediaDeliveryHandler,
+  resolveDeliveryMode,
+  DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+} from './delivery.js';
+export type {
+  DeliveryMode,
+  ResolvedDeliveryMode,
+  DeliveryResult,
+  DeliveryRequest,
+  MediaDeliveryHandlerOptions,
+} from './delivery.js';
+
+// Real-content validation (magic-byte signatures behind `acceptsMimeTypes`)
+export { detectMimeType, SIGNATURE_HEAD_BYTES } from './content_type.js';
+
 export { isMultipartCapable } from './multipart.js';
 export { isExtendedDisk } from './extended_disk.js';
 export { MediaLibrary } from './media_library.js';
@@ -55,6 +73,7 @@ export type {
   AttachExistingInput,
   OwnerMediaBinding,
   MediaSignedUrlOptions,
+  DeliverOptions,
 } from './media_library.js';
 export {
   Attachment,
@@ -119,6 +138,7 @@ export type {
 // Errors
 export {
   MimeNotAllowedError,
+  ContentTypeMismatchError,
   MediaNotFoundError,
   MediaObjectMissingError,
   ConversionNotDefinedError,

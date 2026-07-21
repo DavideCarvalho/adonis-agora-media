@@ -216,6 +216,19 @@ describe('S3Disk (mocked S3 client)', () => {
       expect(url).toContain('X-Amz-Signature=');
     });
   });
+
+  describe('getVisibility', () => {
+    it('defaults to private — the safe assumption for a bucket policy it cannot see', async () => {
+      const d = new S3Disk({ client, bucket: 'b' });
+      expect(await d.getVisibility('a/b.png')).toBe('private');
+    });
+
+    it('reports the configured visibility without calling S3', async () => {
+      const d = new S3Disk({ client, bucket: 'b', visibility: 'public' });
+      expect(await d.getVisibility('a/b.png')).toBe('public');
+      expect(mock.calls()).toHaveLength(0);
+    });
+  });
 });
 
 describe('disks.s3 factory', () => {

@@ -52,6 +52,13 @@ export interface S3DiskOptions {
   endpoint?: string;
   /** Emit path-style URLs (`endpoint/bucket/key`) instead of virtual-hosted-style. */
   forcePathStyle?: boolean;
+  /**
+   * Whether objects on this disk are readable without credentials. Declarative — it is NOT applied
+   * as an ACL on write and never probes S3; it simply answers {@link S3Disk.getVisibility}, which is
+   * what `delivery.mode: 'auto'` reads to choose between a public and a signed URL. Default
+   * `private`, the safe assumption for a bucket whose policy this disk cannot see.
+   */
+  visibility?: 'public' | 'private';
 }
 
 /** Default presigned-URL lifetime when a caller passes no `expiresIn` (30 minutes). */
@@ -102,6 +109,7 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
   private readonly region: string | undefined;
   private readonly endpoint: string | undefined;
   private readonly forcePathStyle: boolean;
+  private readonly visibility: 'public' | 'private';
 
   constructor(options: S3DiskOptions) {
     this.client = options.client;
@@ -111,6 +119,7 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     this.region = options.region;
     this.endpoint = options.endpoint;
     this.forcePathStyle = options.forcePathStyle ?? false;
+    this.visibility = options.visibility ?? 'private';
     this.capabilities = {
       presign: true,
       multipart: true,
@@ -216,6 +225,15 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     }
     const region = this.region ?? 'us-east-1';
     return `https://${this.bucket}.s3.${region}.amazonaws.com/${objectKey}`;
+  }
+
+  /**
+   * The configured visibility, verbatim — S3 cannot be asked cheaply (a `GetObjectAcl` per read is
+   * not free, and object ACLs say nothing about a bucket policy anyway), so this reports what the
+   * disk was told rather than guessing.
+   */
+  async getVisibility(_key: string): Promise<'public' | 'private'> {
+    return this.visibility;
   }
 
   async getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string> {

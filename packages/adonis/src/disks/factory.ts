@@ -33,6 +33,11 @@ export interface S3DiskConfig {
   keyPrefix?: string;
   /** Base URL for stable public URLs (a CDN or the bucket website), used by `getUrl`. */
   publicBaseUrl?: string;
+  /**
+   * Whether objects on this disk are readable without credentials. Declarative, and read only by
+   * `delivery.mode: 'auto'` (public ⇒ a plain URL, private ⇒ a signed one). Default `private`.
+   */
+  visibility?: 'public' | 'private';
 }
 
 /**
@@ -73,6 +78,7 @@ export const disks = {
         ...(config.region !== undefined ? { region: config.region } : {}),
         ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
         ...(config.forcePathStyle !== undefined ? { forcePathStyle: config.forcePathStyle } : {}),
+        ...(config.visibility !== undefined ? { visibility: config.visibility } : {}),
       });
     };
   },

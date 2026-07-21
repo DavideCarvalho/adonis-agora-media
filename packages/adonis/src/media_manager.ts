@@ -1,4 +1,5 @@
 import { AttachmentManager } from './attachment.js';
+import type { DeliveryMode } from './delivery.js';
 import { ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig } from './media_collection.js';
@@ -45,6 +46,10 @@ export interface MediaManagerOptions {
   resumableTmpPrefix?: string;
   /** Resumable session lifetime in seconds (TUS `expiration`). Omit for never-expiring sessions. */
   resumableSessionTtlSeconds?: number;
+  /** Default read strategy (`auto`/`public`/`signed`/`proxy`) for `library.deliver`. Default `auto`. */
+  deliveryMode?: DeliveryMode;
+  /** Signed-URL lifetime in seconds when delivery resolves to `signed`. Default 300. */
+  deliverySignedTtlSeconds?: number;
 }
 
 /**
@@ -82,6 +87,10 @@ export class MediaManager {
       ...(options.imageProcessor !== undefined ? { imageProcessor: options.imageProcessor } : {}),
       ...(options.emitDiagnostics !== undefined
         ? { emitDiagnostics: options.emitDiagnostics }
+        : {}),
+      ...(options.deliveryMode !== undefined ? { deliveryMode: options.deliveryMode } : {}),
+      ...(options.deliverySignedTtlSeconds !== undefined
+        ? { deliverySignedTtlSeconds: options.deliverySignedTtlSeconds }
         : {}),
     });
     this.attachments = new AttachmentManager({

@@ -6,6 +6,28 @@ export class MimeNotAllowedError extends Error {
   }
 }
 
+/**
+ * The bytes are not what the caller said they were. Raised when a collection declares
+ * `acceptsMimeTypes` and the file's magic-byte signature identifies a type that either the
+ * collection does not accept or that contradicts the declared `mimeType` — the case
+ * {@link MimeNotAllowedError} cannot catch, because the declared type is written by the app (often
+ * hardcoded) rather than proven by the content.
+ */
+export class ContentTypeMismatchError extends Error {
+  readonly code = 'E_MEDIA_CONTENT_TYPE_MISMATCH';
+  constructor(
+    readonly collection: string,
+    readonly declaredMimeType: string,
+    readonly detectedMimeType: string,
+    accepted: readonly string[],
+  ) {
+    super(
+      `File contents are actually "${detectedMimeType}" (detected from the file signature), not the declared "${declaredMimeType}". Collection "${collection}" accepts [${accepted.join(', ')}].`,
+    );
+    this.name = 'ContentTypeMismatchError';
+  }
+}
+
 export class MediaNotFoundError extends Error {
   readonly code = 'E_MEDIA_RECORD_NOT_FOUND';
   constructor(id: string) {

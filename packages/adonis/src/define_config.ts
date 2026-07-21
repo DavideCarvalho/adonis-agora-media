@@ -1,3 +1,4 @@
+import type { DeliveryMode } from './delivery.js';
 import { disks } from './disks/factory.js';
 import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
 import type { ImageProcessor } from './image_processor.js';
@@ -80,6 +81,25 @@ export interface MediaResumableConfig {
 }
 
 /**
+ * How stored media reaches the client — the READ counterpart to {@link MediaUploadsConfig.mode}.
+ *
+ * The library resolves this into either a URL to redirect to or a stream to pipe
+ * ({@link MediaLibrary.deliver} / `MediaDeliveryHandler`); it never mounts a route of its own,
+ * because serving a record is an authorization decision only the app can make.
+ */
+export interface MediaDeliveryConfig {
+  /**
+   * `public` = the disk's stable public URL; `signed` = a time-limited signed URL; `proxy` = stream
+   * the bytes through the app, so the storage need not be reachable from the internet at all.
+   * `auto` asks the disk for the object's visibility — public ⇒ `public`, otherwise (including a
+   * disk that cannot answer) ⇒ `signed`. Default `auto`.
+   */
+  mode?: DeliveryMode;
+  /** Lifetime of the signed URL when delivery resolves to `signed`. Default 300. */
+  signedTtlSeconds?: number;
+}
+
+/**
  * Shape of `config/media.ts`. Storage is delegated to `@adonisjs/drive` — the `disk` is the name of a
  * disk in your `config/drive.ts`; omit it to use Drive's default disk. Pick a `store` by name from the
  * `stores` map (built with the {@link stores} factory so each peer is imported lazily). Conversions need
@@ -135,6 +155,8 @@ export interface MediaConfig {
   emitDiagnostics?: boolean;
   /** Direct-S3 upload settings (default mode, part size, presign TTL, optional HTTP routes). */
   uploads?: MediaUploadsConfig;
+  /** How stored media is served back (`auto`/`public`/`signed`/`proxy` + signed-URL TTL). */
+  delivery?: MediaDeliveryConfig;
 }
 
 /** Identity helper giving `config/media.ts` full type-checking. */
@@ -152,6 +174,7 @@ export type {
   S3DiskConfig,
   S3Credentials,
   UploadMode,
+  DeliveryMode,
   UploadSessionStoreContext,
   UploadSessionStoreFactory,
   LucidUploadSessionStoreConfig,
