@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
 import { removeSingleFileWith, storeSingleFileWith } from '../src/single_file_store.js';
@@ -130,5 +130,71 @@ describe('removeSingleFileWith', () => {
         collection: 'avatar',
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+// The app-bound `storeSingleFile` / `removeSingleFile` / `isSingleFileStoreAvailable` resolve the
+// container through the provider-captured booted app (`services/booted_app.js`) rather than
+// `@adonisjs/core/services/app`, so they're immune to the pnpm dual-package hazard that once took
+// down production TUS uploads via the analogous `@adonisjs/lucid` `Database` class token. Each test
+// resets modules so the module-level `bootedApp` starts empty and is set up fresh.
+describe('app-bound single-file store (booted_app wiring)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('throws the booted_app error when the provider never registered', async () => {
+    const { storeSingleFile } = await import('../src/single_file_store.js');
+    await expect(
+      storeSingleFile({
+        ownerType: 'AuthAccount',
+        ownerId: 'acc-1',
+        collection: 'avatar',
+        fileName: 'me.png',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toThrow(/MediaProvider registered/);
+  });
+
+  it('resolves MediaManager through the app captured by setBootedApp, not a fresh core import', async () => {
+    // `vi.resetModules()` gives this test its OWN copy of every module under `../src/` — including
+    // `MediaManager` itself — so it must be re-imported here too, rather than reusing the one
+    // statically imported at the top of this file (a different class identity after the reset).
+    const { MediaManager: FreshMediaManager } = await import('../src/media_manager.js');
+    const { resolve, disks } = inMemoryDiskResolver(['fs']);
+    const manager = new FreshMediaManager({
+      defaultDisk: 'fs',
+      resolve,
+      store: new InMemoryMediaStore(),
+      collections: [{ name: 'avatar', single: true }],
+      emitDiagnostics: false,
+    });
+    const make = vi.fn().mockResolvedValue(manager);
+    const { setBootedApp } = await import('../src/services/booted_app.js');
+    setBootedApp({ container: { make } } as never);
+    const { storeSingleFile, removeSingleFile, isSingleFileStoreAvailable } = await import(
+      '../src/single_file_store.js'
+    );
+
+    const { url } = await storeSingleFile({
+      ownerType: 'AuthAccount',
+      ownerId: 'acc-1',
+      collection: 'avatar',
+      fileName: 'me.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+    expect(url).toContain('AuthAccount/acc-1/avatar/');
+    expect(disks.fs.files.has(url.replace('memory://fs/', ''))).toBe(true);
+    expect(make).toHaveBeenCalledWith(FreshMediaManager);
+
+    await removeSingleFile({ ownerType: 'AuthAccount', ownerId: 'acc-1', collection: 'avatar' });
+    expect(disks.fs.files.size).toBe(0);
+
+    const hasBinding = vi.fn().mockReturnValue(true);
+    setBootedApp({ container: { make, hasBinding } } as never);
+    await expect(isSingleFileStoreAvailable()).resolves.toBe(true);
+    expect(hasBinding).toHaveBeenCalledWith(FreshMediaManager);
   });
 });

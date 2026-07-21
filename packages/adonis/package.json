@@ -79,6 +79,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
     "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations && cp stubs/config/media.stub dist/stubs/config/media.stub && cp -r stubs/database/migrations/. dist/stubs/database/migrations/",
+    "prepack": "pnpm run build",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
