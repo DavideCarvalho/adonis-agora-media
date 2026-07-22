@@ -240,5 +240,37 @@ describe('S3Disk — ExtendedDisk surface', () => {
       ]);
       expect(result.cursor).toBeUndefined();
     });
+
+    it('keeps the fallback fetch on the INTERNAL endpoint even when a publicEndpoint is set', async () => {
+      // The fallback is a SERVER-side fetch: signing it for the public endpoint would route
+      // server traffic through the public edge (or break entirely when the server cannot reach it).
+      mock
+        .on(ListObjectsV2Command)
+        .rejects(new Error('EntityReplacer: Invalid character in entity name'));
+      const fetchMock = vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: async () => '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>',
+          }) as unknown as Response,
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await new S3Disk({
+        client,
+        bucket: 'b',
+        endpoint: 'http://minio.internal:9000',
+        publicEndpoint: 'https://files.example.com',
+        forcePathStyle: true,
+      }).list('sub/');
+
+      const requested = new URL(String(fetchMock.mock.calls[0]?.[0]));
+      expect(requested.host).toBe('minio.internal:9000');
+      expect(requested.pathname).toBe('/b');
+      expect(requested.searchParams.get('list-type')).toBe('2');
+      expect(requested.searchParams.get('prefix')).toBe('sub/');
+    });
   });
 });

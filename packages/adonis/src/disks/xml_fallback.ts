@@ -3,12 +3,12 @@
  * `fast-xml-parser` v5 (CVE remediation), whose stricter mode rejects valid numeric character
  * references (`&#xD;`, …) that S3 legitimately emits inside keys — surfacing as a deserialization
  * error on `ListObjectsV2`. This module provides a fallback for {@link S3Disk.list}: re-issue the
- * request as a signed raw GET (presigned with `@aws-sdk/s3-request-presigner`, an existing optional
+ * request as a signed raw GET (presigned with the hand-rolled SigV4 signer in `sigv4.ts`, no extra
  * peer) and hand-parse the XML, bypassing `fast-xml-parser` entirely.
  *
  * NOTE: this fallback does NOT depend on `fast-xml-parser` — it exists precisely to work around it —
- * and introduces NO new peer: the signing reuses the presigner already bundled with the S3 disk, so
- * only regex XML parsing lives here.
+ * and introduces NO new peer: the signing reuses the SigV4 presigner already bundled with the S3
+ * disk, so only regex XML parsing lives here.
  */
 
 const ENTITY_NAME_REGEX = /Invalid character.*entity name/i;

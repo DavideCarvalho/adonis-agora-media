@@ -27,6 +27,13 @@ export interface S3DiskConfig {
   credentials?: S3Credentials;
   /** Custom endpoint for S3-compatible services (MinIO, R2, DigitalOcean Spaces, …). */
   endpoint?: string;
+  /**
+   * Endpoint presigned URLs are signed against, when it differs from `endpoint`. Presigned URLs are
+   * consumed by the BROWSER (direct-upload part `PUT`s, signed `GET`s) and SigV4 bakes the host into
+   * the signature — so when `endpoint` is an internal FQDN the internet cannot resolve (MinIO on a
+   * private network), set the public one here. Server-side operations keep using `endpoint`.
+   */
+  publicEndpoint?: string;
   /** Use path-style addressing (`endpoint/bucket/key`) — required by most S3-compatible services. */
   forcePathStyle?: boolean;
   /** Prefix prepended to every key (e.g. `uploads`). */
@@ -55,11 +62,12 @@ export interface S3DiskConfig {
  * ```
  *
  * Each factory returns a {@link DiskFactory} — a lazy thunk. Calling it in the config file costs
- * nothing; `@aws-sdk/client-s3` (and `@aws-sdk/s3-request-presigner`) are only imported when the
- * provider builds the selected disk at boot, keeping the AWS SDK an optional peer.
+ * nothing; `@aws-sdk/client-s3` is only imported when the provider builds the selected disk at
+ * boot, keeping the AWS SDK an optional peer. (Presigning needs no SDK at all — it is hand-rolled
+ * SigV4, see `sigv4.ts`.)
  */
 export const disks = {
-  /** S3 (or S3-compatible) disk — needs the optional `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` peers. */
+  /** S3 (or S3-compatible) disk — needs the optional `@aws-sdk/client-s3` peer. */
   s3(config: S3DiskConfig): DiskFactory {
     return async () => {
       const { S3Client } = await import('@aws-sdk/client-s3');
@@ -77,6 +85,7 @@ export const disks = {
         ...(config.publicBaseUrl !== undefined ? { publicBaseUrl: config.publicBaseUrl } : {}),
         ...(config.region !== undefined ? { region: config.region } : {}),
         ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
+        ...(config.publicEndpoint !== undefined ? { publicEndpoint: config.publicEndpoint } : {}),
         ...(config.forcePathStyle !== undefined ? { forcePathStyle: config.forcePathStyle } : {}),
         ...(config.visibility !== undefined ? { visibility: config.visibility } : {}),
       });

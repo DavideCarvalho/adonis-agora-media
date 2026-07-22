@@ -217,6 +217,67 @@ describe('S3Disk (mocked S3 client)', () => {
     });
   });
 
+  describe('hand-rolled SigV4 presigning', () => {
+    it('presigns without ever calling the SDK middleware (pure local crypto)', async () => {
+      const d = new S3Disk({ client, bucket: 'b' });
+      await d.getSignedUrl('a/b.png');
+      await d.presignUploadPart('big.mp4', 'mp-1', 3, 900);
+      expect(mock.calls()).toHaveLength(0);
+    });
+
+    it('presignUploadPart signs a PUT with uploadId/partNumber for the virtual-hosted AWS host', async () => {
+      const d = new S3Disk({ client, bucket: 'b', keyPrefix: 'media' });
+      const url = new URL(await d.presignUploadPart('videos/v.mp4', 'mp-1', 3, 900));
+      expect(url.host).toBe('b.s3.us-east-1.amazonaws.com');
+      expect(url.pathname).toBe('/media/videos/v.mp4');
+      expect(url.searchParams.get('uploadId')).toBe('mp-1');
+      expect(url.searchParams.get('partNumber')).toBe('3');
+      expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+      expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('host');
+      expect(url.searchParams.get('X-Amz-Credential')).toBe(
+        `test/${url.searchParams.get('X-Amz-Date')?.slice(0, 8)}/us-east-1/s3/aws4_request`,
+      );
+      expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('signs browser-facing URLs against publicEndpoint, leaving the internal endpoint to the client', async () => {
+      const d = new S3Disk({
+        client,
+        bucket: 'b',
+        endpoint: 'http://minio.internal:9000',
+        publicEndpoint: 'https://files.example.com',
+        forcePathStyle: true,
+      });
+      // The presigned part PUT and the signed GET are consumed by the browser: public host.
+      expect(await d.presignUploadPart('v.mp4', 'mp-1', 1, 60)).toMatch(
+        /^https:\/\/files\.example\.com\/b\/v\.mp4\?/,
+      );
+      expect(await d.getSignedUrl('v.mp4')).toMatch(/^https:\/\/files\.example\.com\/b\/v\.mp4\?/);
+    });
+
+    it('uses path-style URLs against a custom endpoint when forcePathStyle is set', async () => {
+      const d = new S3Disk({
+        client,
+        bucket: 'b',
+        endpoint: 'http://localhost:9000',
+        forcePathStyle: true,
+      });
+      const url = new URL(await d.presignUploadPart('k.bin', 'mp-1', 1, 60));
+      expect(url.protocol).toBe('http:');
+      expect(url.host).toBe('localhost:9000');
+      expect(url.pathname).toBe('/b/k.bin');
+    });
+
+    it('signs the STS session token into the URL when the client carries one', async () => {
+      const tokenClient = new S3Client({
+        region: 'us-east-1',
+        credentials: { accessKeyId: 'a', secretAccessKey: 's', sessionToken: 'tok' },
+      });
+      const d = new S3Disk({ client: tokenClient, bucket: 'b' });
+      expect(await d.getSignedUrl('a.png')).toContain('X-Amz-Security-Token=tok');
+    });
+  });
+
   describe('getVisibility', () => {
     it('defaults to private — the safe assumption for a bucket policy it cannot see', async () => {
       const d = new S3Disk({ client, bucket: 'b' });
