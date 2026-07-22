@@ -12,25 +12,35 @@ import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
 import {
   ContentSignatureUnrecognizedError,
   ContentTypeMismatchError,
+  ConversionArtifactMissingError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
+  TransformNotReadyError,
+  TransformerNotDefinedError,
+  TransformerOutputError,
   UploadNotSupportedError,
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
 import type { ImageProcessor } from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
-import type { MediaRecord } from './media_record.js';
+import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import type { StorageManager } from './storage_manager.js';
+import type {
+  TransformResult,
+  Transformer,
+  TransformerContext,
+  TransformerWriteOptions,
+} from './transformer.js';
 import type { Disk, SignedUrlOptions } from './types.js';
 
 export interface MediaLibraryOptions {
   storage: StorageManager;
   store: MediaStore;
-  collections?: MediaCollectionConfig[];
+  collections?: readonly MediaCollectionConfig[];
   /** Engine for image conversions. Required only if collections define conversions. */
   imageProcessor?: ImageProcessor;
   /** Emit `agora:media:*` diagnostics events (default true). */
@@ -157,7 +167,13 @@ interface CommitInput {
 }
 
 export class MediaLibrary {
-  private readonly storage: StorageManager;
+  /**
+   * The storage façade the library resolves disks through. Public (read-only) so delivery
+   * composition — {@link HlsDeliveryHandler} serving individual package artifacts, custom handlers
+   * doing the same — can reach the disk of a record it already holds without re-plumbing a
+   * resolver. Writes still belong to the library's own methods.
+   */
+  readonly storage: StorageManager;
   private readonly store: MediaStore;
   /**
    * Registered collection configs. Public because `acceptsMimeTypes` must have exactly one source
@@ -417,19 +433,28 @@ export class MediaLibrary {
       throw error;
     }
 
-    // Eager presets are generated synchronously on attach; lazy ones on first `url()`. This runs
-    // BEFORE `previous` is dropped: a preset that throws must not leave the owner with nothing.
-    const eager = (config.conversions ?? []).filter((p) => p.eager);
+    // Eager presets are generated synchronously on attach; lazy ones on first `url()`. Eager
+    // transformers run right after them — the hook that makes "TUS drops the bytes, transformers
+    // derive from them" automatic, since `attachExisting` (and so `completeUploadToLibrary`)
+    // funnels through this same commit. Both run BEFORE `previous` is dropped: a derivation that
+    // throws must not leave the owner with nothing.
+    const eagerPresets = (config.conversions ?? []).filter((p) => p.eager);
+    const eagerTransformers = (config.transformers ?? []).filter((t) => t.eager === true);
     let current = saved;
-    if (eager.length > 0) {
+    if (eagerPresets.length > 0 || eagerTransformers.length > 0) {
       try {
-        for (const preset of eager) current = await this.ensureConversion(saved.id, preset.name);
+        for (const preset of eagerPresets) {
+          current = await this.ensureConversion(saved.id, preset.name);
+        }
+        for (const transformer of eagerTransformers) {
+          current = await this.#runTransformer(current, transformer);
+        }
       } catch (error) {
         // The new media can't be rendered, so roll it back whole — bytes, any conversions already
         // written, and the row — and leave what it was replacing untouched.
         if (input.ownsObject) await this.#safeDelete(disk, path);
         for (const variant of Object.values(current.conversions)) {
-          await this.#safeDelete(variant.disk, variant.path);
+          await this.#deleteConversionArtifacts(variant, { safe: true });
         }
         await this.store.delete(saved.id);
         throw error;
@@ -451,7 +476,7 @@ export class MediaLibrary {
       if (sharesRow) {
         await this.#safeDelete(record.disk, record.path);
         for (const variant of Object.values(record.conversions)) {
-          await this.#safeDelete(variant.disk, variant.path);
+          await this.#deleteConversionArtifacts(variant, { safe: true });
         }
         continue;
       }
@@ -478,10 +503,16 @@ export class MediaLibrary {
     if (!record) throw new MediaNotFoundError(id);
     if (record.conversions[conversionName]) return record;
 
-    const preset = (this.collections.get(record.collection).conversions ?? []).find(
-      (p) => p.name === conversionName,
-    );
-    if (!preset) throw new ConversionNotDefinedError(record.collection, conversionName);
+    const config = this.collections.get(record.collection);
+    const preset = (config.conversions ?? []).find((p) => p.name === conversionName);
+    if (!preset) {
+      // The name belongs to a transformer, not a preset: it IS defined, just not generated — and a
+      // read path never generates a transform (assumed heavy). Point the caller at `transform()`.
+      if ((config.transformers ?? []).some((t) => t.name === conversionName)) {
+        throw new TransformNotReadyError(id, conversionName);
+      }
+      throw new ConversionNotDefinedError(record.collection, conversionName);
+    }
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
 
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
@@ -501,6 +532,142 @@ export class MediaLibrary {
       updatedAt: this.now(),
     });
     this.emit('conversion', { id, conversion: conversionName, path: conversionPath });
+    return updated;
+  }
+
+  /**
+   * Run a named {@link Transformer} of the record's collection and persist its output as
+   * `record.conversions[name]`. **Idempotent**: an already-generated conversion returns the record
+   * untouched, so a retried job skips straight through — the library assumes no queue system, it
+   * only guarantees this call is safe to repeat.
+   *
+   * ```ts
+   * // app job (the app owns the queue, retries and any locking):
+   * await media.library.transform(payload.mediaId, 'hls')
+   * ```
+   *
+   * Deliberately explicit: unlike image presets, a transformer conversion is never generated
+   * lazily inside `url()`/`deliver()` — reads on a missing one throw {@link TransformNotReadyError}
+   * instead of stalling a request behind a remux. Transformers marked `eager: true` are the
+   * exception and run inside attach (see {@link Transformer}).
+   *
+   * Two concurrent calls for the same media+name both run and the second save wins; the artifacts
+   * are deterministic per key, so the result is identical — wasteful, not corrupting. Serialize
+   * with your own lock if the double work matters.
+   *
+   * A mid-flight failure sweeps whatever artifacts were already written (best-effort) and
+   * re-throws, so no conversion entry is ever persisted for a half-written package.
+   */
+  async transform(id: string, transformerName: string): Promise<MediaRecord> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (record.conversions[transformerName]) return record;
+
+    const config = this.collections.get(record.collection);
+    const transformer = (config.transformers ?? []).find((t) => t.name === transformerName);
+    if (!transformer) throw new TransformerNotDefinedError(record.collection, transformerName);
+
+    return this.#runTransformer(record, transformer);
+  }
+
+  /**
+   * Execute one transformer against one record: build the sandboxed {@link TransformerContext},
+   * validate the {@link TransformResult} contract, persist the conversion entry, emit
+   * `conversion`. The context's `write` is the only artifact path — it pins every write under the
+   * conversion prefix and records it, which is what makes the output deletable and servable
+   * without trusting the transformer's bookkeeping.
+   */
+  async #runTransformer(record: MediaRecord, transformer: Transformer): Promise<MediaRecord> {
+    const diskName = record.disk;
+    const disk = this.storage.disk(diskName);
+    const dir = record.path.slice(0, record.path.lastIndexOf('/'));
+    const outputPrefix = `${dir}/conversions/${transformer.name}/`;
+    const written: string[] = [];
+
+    const write = async (
+      relativePath: string,
+      contents: Uint8Array | Readable,
+      options: TransformerWriteOptions = {},
+    ): Promise<void> => {
+      const relative = assertSafeArtifactPath(transformer.name, relativePath);
+      const key = `${outputPrefix}${relative}`;
+      const writeOptions = {
+        ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
+      };
+      if (contents instanceof Uint8Array) {
+        await disk.put(key, contents, writeOptions);
+      } else if (options.contentLength !== undefined && typeof disk.putStream === 'function') {
+        // A sized stream goes straight through — a segment file never has to fit in memory twice.
+        await disk.putStream(key, contents, {
+          ...writeOptions,
+          contentLength: options.contentLength,
+        });
+      } else {
+        await disk.put(key, await toBytes(contents), writeOptions);
+      }
+      if (!written.includes(relative)) written.push(relative);
+    };
+
+    const context: TransformerContext = {
+      record,
+      disk,
+      diskName,
+      storage: this.storage,
+      getBytes: () => disk.getBytes(record.path),
+      getStream: () => disk.getStream(record.path),
+      outputPrefix,
+      write,
+    };
+
+    let result: TransformResult;
+    try {
+      result = await transformer.transform(context);
+      if (result.entry !== undefined && !written.includes(result.entry)) {
+        throw new TransformerOutputError(
+          transformer.name,
+          `entry "${result.entry}" was never written through context.write`,
+        );
+      }
+      if (result.entry === undefined && written.length > 0) {
+        throw new TransformerOutputError(
+          transformer.name,
+          `it wrote ${written.length} artifact(s) but declared no entry`,
+        );
+      }
+    } catch (error) {
+      // Sweep the partial output (best-effort) so a retry starts clean and a failed transform
+      // never leaks storage; the conversion entry was never persisted, so `transform()` will
+      // simply run again.
+      for (const relative of written) {
+        await this.#safeDelete(diskName, `${outputPrefix}${relative}`);
+      }
+      throw error;
+    }
+
+    const conversion: MediaConversion =
+      result.entry !== undefined
+        ? {
+            path: `${outputPrefix}${result.entry}`,
+            disk: diskName,
+            prefix: outputPrefix,
+            files: [...written],
+            ...(result.meta !== undefined ? { meta: result.meta } : {}),
+          }
+        : { ...(result.meta !== undefined ? { meta: result.meta } : {}) };
+
+    // Re-read before saving: the transform may have taken minutes, and `save` persists the whole
+    // record — merging over a fresh row keeps conversions generated meanwhile.
+    const fresh = (await this.store.find(record.id)) ?? record;
+    const updated = await this.store.save({
+      ...fresh,
+      conversions: { ...fresh.conversions, [transformer.name]: conversion },
+      updatedAt: this.now(),
+    });
+    this.emit('conversion', {
+      id: record.id,
+      conversion: transformer.name,
+      path: conversion.path ?? '',
+    });
     return updated;
   }
 
@@ -535,7 +702,7 @@ export class MediaLibrary {
   async #deleteRecord(record: MediaRecord): Promise<void> {
     await this.storage.disk(record.disk).delete(record.path);
     for (const conversion of Object.values(record.conversions)) {
-      await this.storage.disk(conversion.disk).delete(conversion.path);
+      await this.#deleteConversionArtifacts(conversion, { safe: false });
     }
     await this.store.delete(record.id);
     this.emit('delete', {
@@ -555,6 +722,48 @@ export class MediaLibrary {
   }
 
   /**
+   * Delete every storage key a conversion entry owns: the single artifact of an image conversion,
+   * every listed file of a multi-artifact (transformer) conversion, nothing for a metadata-only
+   * one. Batched through `deleteMany` on capable disks — an HLS package is hundreds of segments,
+   * and one batched call beats hundreds of round-trips. `safe: true` swallows failures
+   * (compensation paths must never mask the original error).
+   */
+  async #deleteConversionArtifacts(
+    variant: MediaConversion,
+    options: { safe: boolean },
+  ): Promise<void> {
+    let diskName: string;
+    let keys: string[];
+    if (variant.prefix !== undefined && variant.files !== undefined && variant.disk !== undefined) {
+      diskName = variant.disk;
+      keys = variant.files.map((file) => `${variant.prefix}${file}`);
+    } else if (variant.path !== undefined && variant.disk !== undefined) {
+      diskName = variant.disk;
+      keys = [variant.path];
+    } else {
+      return; // metadata-only conversion: nothing on any disk
+    }
+
+    const disk = this.storage.disk(diskName);
+    if (isExtendedDisk(disk)) {
+      try {
+        await disk.deleteMany(keys);
+        return;
+      } catch (error) {
+        if (!options.safe) throw error;
+        return;
+      }
+    }
+    for (const key of keys) {
+      if (options.safe) {
+        await this.#safeDelete(diskName, key);
+      } else {
+        await disk.delete(key);
+      }
+    }
+  }
+
+  /**
    * Resolve a media id (optionally a named conversion of it) to the concrete object on a disk that
    * every read path — {@link url}, {@link signedUrl}, {@link deliver} — then acts on. Requesting a
    * conversion that has not been generated produces it lazily first.
@@ -567,6 +776,10 @@ export class MediaLibrary {
       const record = await this.ensureConversion(id, conversion);
       const variant = record.conversions[conversion];
       if (!variant) throw new MediaNotFoundError(`${id}#${conversion}`);
+      // A metadata-only transform (a probe) HAS a conversion entry but no file behind it.
+      if (variant.path === undefined || variant.disk === undefined) {
+        throw new ConversionArtifactMissingError(id, conversion);
+      }
       return {
         record,
         disk: variant.disk,
@@ -652,4 +865,28 @@ export class MediaLibrary {
 function stripExtension(fileName: string): string {
   const dot = fileName.lastIndexOf('.');
   return dot > 0 ? fileName.slice(0, dot) : fileName;
+}
+
+/**
+ * Validate an artifact path a transformer hands to `context.write`: relative, normalized, and
+ * incapable of escaping the conversion prefix. Throws {@link TransformerOutputError} — a traversal
+ * attempt is a transformer bug (or a transformer echoing hostile input), never something to
+ * silently normalize into place.
+ */
+function assertSafeArtifactPath(transformer: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, '/');
+  if (normalized === '' || normalized.startsWith('/') || normalized.endsWith('/')) {
+    throw new TransformerOutputError(
+      transformer,
+      `artifact path "${relativePath}" must be a relative file path`,
+    );
+  }
+  const segments = normalized.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new TransformerOutputError(
+      transformer,
+      `artifact path "${relativePath}" must not contain empty, "." or ".." segments`,
+    );
+  }
+  return normalized;
 }

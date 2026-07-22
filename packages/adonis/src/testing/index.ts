@@ -3,3 +3,5 @@ export { InMemoryUploadSessionStore } from './in_memory_upload_session_store.js'
 export { InMemoryDisk, inMemoryDiskResolver } from './in_memory_disk.js';
 export type { DiskVisibility } from './in_memory_disk.js';
 export { FakeImageProcessor } from './fake_image_processor.js';
+export { FakeTransformer } from './fake_transformer.js';
+export type { FakeTransformerOptions } from './fake_transformer.js';
