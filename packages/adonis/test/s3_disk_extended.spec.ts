@@ -253,7 +253,8 @@ describe('S3Disk — ExtendedDisk surface', () => {
             ok: true,
             status: 200,
             statusText: 'OK',
-            text: async () => '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>',
+            text: async () =>
+              '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>',
           }) as unknown as Response,
       );
       vi.stubGlobal('fetch', fetchMock);

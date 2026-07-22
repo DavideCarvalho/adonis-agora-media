@@ -149,6 +149,63 @@ export class UploadSessionExpiredError extends Error {
   }
 }
 
+/**
+ * A part size the S3 multipart API cannot honour: below the 5 MiB minimum (every part but the last
+ * must reach it, or `CompleteMultipartUpload` fails with `EntityTooSmall` AFTER the client uploaded
+ * everything), or small enough that the file would need more than the 10,000 parts S3 allows.
+ * Raised at `initiate`, where it costs nothing — the alternative is discovering it at complete,
+ * when the whole file has already crossed the wire.
+ */
+export class UploadPartSizeError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_PART_SIZE';
+  constructor(detail: string) {
+    super(`Invalid multipart part size: ${detail}`);
+    this.name = 'UploadPartSizeError';
+  }
+}
+
+/** A confirmed part number outside `1..totalParts` for the session — a client slicing with the wrong part size. */
+export class UploadPartOutOfRangeError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_PART_OUT_OF_RANGE';
+  constructor(
+    readonly partNumber: number,
+    readonly totalParts: number,
+  ) {
+    super(
+      `Part number ${partNumber} is outside this upload's range (1..${totalParts}). The client must slice the file with the partSize the session was created with.`,
+    );
+    this.name = 'UploadPartOutOfRangeError';
+  }
+}
+
+/**
+ * `complete()` was asked to assemble an upload whose parts are not all accounted for (neither
+ * confirmed to the session nor supplied in the call). Failing fast here names the EXACT missing
+ * part numbers; letting S3 discover it returns an opaque `InvalidPart` after a round-trip.
+ */
+export class UploadPartsIncompleteError extends Error {
+  readonly code = 'E_MEDIA_UPLOAD_PARTS_INCOMPLETE';
+  constructor(
+    readonly sessionId: string,
+    readonly missingParts: readonly number[],
+  ) {
+    super(
+      `Cannot complete upload session ${sessionId}: no ETag for part(s) ${missingParts.join(', ')}. Upload and confirm them (or pass them to complete()) first — status() lists what is pending.`,
+    );
+    this.name = 'UploadPartsIncompleteError';
+  }
+}
+
+export class DirectUploadsNotConfiguredError extends Error {
+  readonly code = 'E_MEDIA_DIRECT_NOT_CONFIGURED';
+  constructor() {
+    super(
+      "Session-backed direct uploads are not configured. Set `uploads.direct` in config/media.ts (e.g. `direct: { store: 'lucid', stores: { lucid: uploadSessions.lucid() } }`) to enable the direct upload session store.",
+    );
+    this.name = 'DirectUploadsNotConfiguredError';
+  }
+}
+
 export class ResumableUploadsNotConfiguredError extends Error {
   readonly code = 'E_MEDIA_RESUMABLE_NOT_CONFIGURED';
   constructor() {

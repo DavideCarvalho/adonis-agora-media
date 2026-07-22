@@ -4,6 +4,7 @@ export type {
   MediaConfig,
   MediaUploadsConfig,
   MediaResumableConfig,
+  MediaDirectUploadConfig,
   MediaDeliveryConfig,
   StoreContext,
   StoreFactory,
@@ -35,6 +36,32 @@ export type {
 } from './upload_manager.js';
 export { resolveUploadMode } from './upload_mode.js';
 export type { ResolvedUploadMode, UploadModeLevels } from './upload_mode.js';
+
+// Session-backed direct uploads (browser→S3 multipart with a persisted, resumable session)
+export {
+  DirectUploadManager,
+  DEFAULT_DIRECT_PART_SIZE,
+  MIN_DIRECT_PART_SIZE,
+  MAX_DIRECT_PARTS,
+} from './direct_upload.js';
+export type {
+  DirectUploadManagerOptions,
+  DirectUploadInitiateInput,
+  DirectUploadCreatedSession,
+  DirectUploadStatus,
+  DirectUploadPartUrl,
+} from './direct_upload.js';
+export { DirectUploadHandler } from './direct_upload_handler.js';
+export type {
+  DirectUploadHandlerOptions,
+  DirectUploadRequest,
+  DirectUploadResponse,
+} from './direct_upload_handler.js';
+
+// Hand-rolled SigV4 query presigner (what the S3 disk signs part/GET URLs with; exported for
+// wiring presigned URLs outside the bundled disk)
+export { presignS3Url } from './disks/sigv4.js';
+export type { PresignS3UrlInput, SigV4Credentials } from './disks/sigv4.js';
 
 // Resumable (TUS) uploads
 export { ResumableUploadManager } from './resumable_upload.js';
@@ -168,6 +195,10 @@ export {
   UploadSessionExpiredError,
   UploadSessionStoreNotConfiguredError,
   ResumableUploadsNotConfiguredError,
+  DirectUploadsNotConfiguredError,
+  UploadPartSizeError,
+  UploadPartOutOfRangeError,
+  UploadPartsIncompleteError,
 } from './errors.js';
 
 // `node ace configure` reaches the hook through this entry point, not through the package's

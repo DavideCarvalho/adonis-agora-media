@@ -55,15 +55,17 @@ describe('presignS3Url — SigV4 query-string authentication', () => {
     });
 
     expect(url).toBe(
-      'http://minio.internal:9000/videos/uploads/abc/original.mp4' +
-        '?X-Amz-Algorithm=AWS4-HMAC-SHA256' +
-        '&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request' +
-        '&X-Amz-Date=20130524T000000Z' +
-        '&X-Amz-Expires=3600' +
-        '&X-Amz-SignedHeaders=host' +
-        '&partNumber=7' +
-        '&uploadId=mp-1' +
+      [
+        'http://minio.internal:9000/videos/uploads/abc/original.mp4',
+        '?X-Amz-Algorithm=AWS4-HMAC-SHA256',
+        '&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request',
+        '&X-Amz-Date=20130524T000000Z',
+        '&X-Amz-Expires=3600',
+        '&X-Amz-SignedHeaders=host',
+        '&partNumber=7',
+        '&uploadId=mp-1',
         `&X-Amz-Signature=${expectedPartSignature}`,
+      ].join(''),
     );
   });
 

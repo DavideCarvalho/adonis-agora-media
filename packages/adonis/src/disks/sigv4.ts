@@ -130,12 +130,7 @@ export function presignS3Url(input: PresignS3UrlInput): string {
     'UNSIGNED-PAYLOAD',
   ].join('\n');
 
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    scope,
-    sha256Hex(canonicalRequest),
-  ].join('\n');
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
 
   const signingKey = hmac(
     hmac(hmac(hmac(`AWS4${input.credentials.secretAccessKey}`, dateStamp), input.region), service),
