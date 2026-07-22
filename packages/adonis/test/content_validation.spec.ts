@@ -32,6 +32,55 @@ const samples = {
     Buffer.alloc(64, 4),
   ]),
   pdf: Buffer.concat([Buffer.from('%PDF-1.7\n', 'latin1'), Buffer.alloc(64, 5)]),
+  /** ISO-BMFF: box size (varies per file!), `ftyp`, major brand, minor version, compatible brands. */
+  mp4: Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x18]), // ftyp box size = 24
+    Buffer.from('ftypisom', 'latin1'),
+    Buffer.from([0x00, 0x00, 0x02, 0x00]), // minor version
+    Buffer.from('isomiso2', 'latin1'), // compatible brands
+    Buffer.alloc(64, 6),
+  ]),
+  mov: Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x14]), // ftyp box size = 20
+    Buffer.from('ftypqt  ', 'latin1'),
+    Buffer.from([0x20, 0x05, 0x03, 0x00]), // minor version
+    Buffer.from('qt  ', 'latin1'),
+    Buffer.alloc(64, 6),
+  ]),
+  /** EBML header as ffmpeg/libwebm write it: magic, sizes, versions, then DocType. */
+  webm: Buffer.concat([
+    Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f]), // EBML magic + header size vint
+    Buffer.from([0x42, 0x86, 0x81, 0x01]), // EBMLVersion = 1
+    Buffer.from([0x42, 0xf7, 0x81, 0x01]), // EBMLReadVersion = 1
+    Buffer.from([0x42, 0xf2, 0x81, 0x04]), // EBMLMaxIDLength = 4
+    Buffer.from([0x42, 0xf3, 0x81, 0x08]), // EBMLMaxSizeLength = 8
+    Buffer.from([0x42, 0x82, 0x84]), // DocType, 4 bytes
+    Buffer.from('webm', 'latin1'),
+    Buffer.alloc(64, 7),
+  ]),
+  mkv: Buffer.concat([
+    Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0xa3]),
+    Buffer.from([0x42, 0x86, 0x81, 0x01]),
+    Buffer.from([0x42, 0xf7, 0x81, 0x01]),
+    Buffer.from([0x42, 0xf2, 0x81, 0x04]),
+    Buffer.from([0x42, 0xf3, 0x81, 0x08]),
+    Buffer.from([0x42, 0x82, 0x88]), // DocType, 8 bytes
+    Buffer.from('matroska', 'latin1'),
+    Buffer.alloc(64, 7),
+  ]),
+  avi: Buffer.concat([
+    Buffer.from('RIFF', 'latin1'),
+    Buffer.from([0x24, 0x58, 0x01, 0x00]), // chunk size
+    Buffer.from('AVI LIST', 'latin1'),
+    Buffer.alloc(64, 8),
+  ]),
+  /** Two 188-byte transport-stream packets, each opening with the 0x47 sync byte. */
+  mpegts: (() => {
+    const ts = Buffer.alloc(376, 0xff);
+    ts[0] = 0x47;
+    ts[188] = 0x47;
+    return ts;
+  })(),
   /** No signature in the table — an SVG is a real, legitimate example. */
   svg: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8'),
   csv: Buffer.from('id,name\n1,ana\n', 'utf8'),
@@ -58,12 +107,85 @@ describe('detectMimeType', () => {
     expect(detectMimeType(samples.gif89a)).toBe('image/gif');
     expect(detectMimeType(samples.webp)).toBe('image/webp');
     expect(detectMimeType(samples.pdf)).toBe('application/pdf');
+    expect(detectMimeType(samples.mp4)).toBe('video/mp4');
+    expect(detectMimeType(samples.mov)).toBe('video/quicktime');
+    expect(detectMimeType(samples.webm)).toBe('video/webm');
+    expect(detectMimeType(samples.mkv)).toBe('video/x-matroska');
+    expect(detectMimeType(samples.avi)).toBe('video/x-msvideo');
+    expect(detectMimeType(samples.mpegts)).toBe('video/mp2t');
   });
 
   it('needs no more than SIGNATURE_HEAD_BYTES to decide', () => {
-    for (const sample of [samples.png, samples.jpeg, samples.webp, samples.pdf]) {
+    for (const sample of Object.values(samples)) {
       expect(detectMimeType(sample.subarray(0, SIGNATURE_HEAD_BYTES))).toBe(detectMimeType(sample));
     }
+  });
+
+  it('detects ftyp regardless of the box size in the first four bytes', () => {
+    const withBoxSize = (size: readonly number[]) =>
+      Buffer.concat([Buffer.from(size), Buffer.from('ftypmp42mp42isom', 'latin1')]);
+
+    // Real sizes vary with the compatible-brands list; 1 is the ISO-BMFF "largesize follows" marker.
+    expect(detectMimeType(withBoxSize([0x00, 0x00, 0x00, 0x14]))).toBe('video/mp4');
+    expect(detectMimeType(withBoxSize([0x00, 0x00, 0x00, 0x20]))).toBe('video/mp4');
+    expect(detectMimeType(withBoxSize([0x00, 0x00, 0x00, 0x01]))).toBe('video/mp4');
+  });
+
+  it('detects every claimed mp4 major brand, and refuses to guess an unknown one', () => {
+    const brands = ['isom', 'iso2', 'iso5', 'mp41', 'mp42', 'avc1', 'av01', 'dash'];
+    for (const brand of brands) {
+      const head = Buffer.from(`\0\0\0\x18ftyp${brand}`, 'latin1');
+      expect(detectMimeType(head)).toBe('video/mp4');
+    }
+    // 3GPP and Apple audio are ftyp files too, but NOT video/mp4 — claiming them would turn a
+    // legitimate declared type into a false mismatch. They stay unrecognised.
+    expect(detectMimeType(Buffer.from('\0\0\0\x18ftyp3gp4', 'latin1'))).toBeUndefined();
+    expect(detectMimeType(Buffer.from('\0\0\0\x18ftypM4A ', 'latin1'))).toBeUndefined();
+  });
+
+  it('discriminates webm from matroska by DocType, wherever the muxer put it', () => {
+    // Same content, one extra EBML sub-element before DocType — the offset shifts, detection holds.
+    const shifted = Buffer.concat([
+      Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0xa7]),
+      Buffer.from([0x42, 0x86, 0x81, 0x01]),
+      Buffer.from([0x42, 0xf7, 0x81, 0x01]),
+      Buffer.from([0x42, 0xf2, 0x81, 0x04]),
+      Buffer.from([0x42, 0xf3, 0x81, 0x08]),
+      Buffer.from([0x42, 0x87, 0x81, 0x04]), // DocTypeVersion first, unlike ffmpeg's order
+      Buffer.from([0x42, 0x82, 0x84]),
+      Buffer.from('webm', 'latin1'),
+    ]);
+    expect(detectMimeType(shifted)).toBe('video/webm');
+  });
+
+  it('leaves an EBML container with an unknown DocType unrecognised', () => {
+    const ebmlOnly = Buffer.concat([
+      Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f]),
+      Buffer.from([0x42, 0x82, 0x83]),
+      Buffer.from('foo', 'latin1'),
+    ]);
+    expect(detectMimeType(ebmlOnly)).toBeUndefined();
+  });
+
+  it('requires the MPEG-TS sync byte on BOTH of the first two packets', () => {
+    // A lone 0x47 is one ASCII 'G' — far too weak on its own.
+    expect(
+      detectMimeType(Buffer.from('G is for gnu, not for transport stream', 'utf8')),
+    ).toBeUndefined();
+    const brokenSecondPacket = Buffer.from(samples.mpegts);
+    brokenSecondPacket[188] = 0x00;
+    expect(detectMimeType(brokenSecondPacket)).toBeUndefined();
+    // A single-packet file (exactly 188 bytes) has no second sync byte to prove itself with.
+    expect(detectMimeType(samples.mpegts.subarray(0, 188))).toBeUndefined();
+  });
+
+  it('does not mistake a RIFF container of another form type for AVI', () => {
+    const wav = Buffer.concat([
+      Buffer.from('RIFF', 'latin1'),
+      Buffer.from([0x20, 0x00, 0x00, 0x00]),
+      Buffer.from('WAVE', 'latin1'),
+    ]);
+    expect(detectMimeType(wav)).toBeUndefined();
   });
 
   it('returns undefined for content with no known signature', () => {
@@ -306,7 +428,7 @@ describe('MediaLibrary.attachExisting — real content validation', () => {
    */
   it('reads only the signature head, never the whole object', async () => {
     const { manager, disk } = makeCountingManager(collections);
-    const big = Buffer.concat([samples.pdf, Buffer.alloc(100_000, 7)]);
+    const big = Buffer.concat([samples.pdf, Buffer.alloc(200_000, 7)]);
     await disk.put('incoming/big.pdf', big);
     const getBytes = vi.spyOn(disk, 'getBytes');
 
@@ -347,6 +469,12 @@ describe('closed vs open signature whitelists', () => {
   it('knows which types the signature table can prove', () => {
     expect(isDetectableMimeType('application/pdf')).toBe(true);
     expect(isDetectableMimeType('image/png')).toBe(true);
+    expect(isDetectableMimeType('video/mp4')).toBe(true);
+    expect(isDetectableMimeType('video/quicktime')).toBe(true);
+    expect(isDetectableMimeType('video/webm')).toBe(true);
+    expect(isDetectableMimeType('video/x-matroska')).toBe(true);
+    expect(isDetectableMimeType('video/x-msvideo')).toBe(true);
+    expect(isDetectableMimeType('video/mp2t')).toBe(true);
     expect(isDetectableMimeType('image/svg+xml')).toBe(false);
     expect(isDetectableMimeType('text/plain')).toBe(false);
   });
@@ -354,10 +482,123 @@ describe('closed vs open signature whitelists', () => {
   it('is closed only when EVERY accepted type is detectable', () => {
     expect(isClosedSignatureWhitelist(['application/pdf'])).toBe(true);
     expect(isClosedSignatureWhitelist(['image/png', 'image/jpeg'])).toBe(true);
+    // Video collections used to be open (no video was detectable); they are closed now.
+    expect(isClosedSignatureWhitelist(['video/mp4'])).toBe(true);
+    expect(isClosedSignatureWhitelist(['video/mp4', 'video/webm', 'video/quicktime'])).toBe(true);
     expect(isClosedSignatureWhitelist(['application/pdf', 'image/svg+xml'])).toBe(false);
     expect(isClosedSignatureWhitelist(['text/csv'])).toBe(false);
     // An empty list whitelists nothing to reason from, so it proves nothing either.
     expect(isClosedSignatureWhitelist([])).toBe(false);
+  });
+});
+
+/**
+ * The product scenario the video signatures exist for: a collection accepting only `video/mp4`.
+ * Before, no video was detectable, so the whitelist was OPEN and anything unrecognisable sailed
+ * through as "video/mp4". Now the whitelist is closed and disguised content is rejected.
+ */
+describe('video collections under the signature table', () => {
+  const collections: MediaCollectionConfig[] = [
+    { name: 'original', acceptsMimeTypes: ['video/mp4'] },
+  ];
+
+  const attach = (manager: MediaManager, contents: Buffer, fileName = 'clip.mp4') =>
+    manager.library.attach({
+      ownerType: 'Lesson',
+      ownerId: 1,
+      collection: 'original',
+      fileName,
+      mimeType: 'video/mp4',
+      contents,
+    });
+
+  it('accepts a real MP4', async () => {
+    const { manager, disks } = makeManager(collections);
+    const record = await attach(manager, samples.mp4);
+    expect(record.mimeType).toBe('video/mp4');
+    expect(disks.fs?.files.get(record.path)?.data).toEqual(samples.mp4);
+  });
+
+  it('rejects a PNG disguised as an MP4 with a ContentTypeMismatchError', async () => {
+    const { manager, disks } = makeManager(collections);
+
+    await expect(attach(manager, samples.png)).rejects.toMatchObject({
+      code: 'E_MEDIA_CONTENT_TYPE_MISMATCH',
+      declaredMimeType: 'video/mp4',
+      detectedMimeType: 'image/png',
+      collection: 'original',
+    });
+    expect(disks.fs?.files.size).toBe(0);
+  });
+
+  it('rejects a QuickTime movie declared as MP4 — same ftyp box, different brand', async () => {
+    const { manager } = makeManager(collections);
+
+    await expect(attach(manager, samples.mov)).rejects.toMatchObject({
+      code: 'E_MEDIA_CONTENT_TYPE_MISMATCH',
+      detectedMimeType: 'video/quicktime',
+    });
+  });
+
+  it('rejects unrecognisable bytes: the whitelist is closed now', async () => {
+    const { manager } = makeManager(collections);
+    const txt = Buffer.from('definitely not a video\n'.repeat(16), 'utf8');
+
+    await expect(attach(manager, txt)).rejects.toBeInstanceOf(ContentSignatureUnrecognizedError);
+  });
+
+  it('tells a WebM from a Matroska file, catching a mislabeled .mkv', async () => {
+    const { manager } = makeManager([{ name: 'clips', acceptsMimeTypes: ['video/webm'] }]);
+
+    const webm = await manager.library.attach({
+      ownerType: 'Lesson',
+      ownerId: 1,
+      collection: 'clips',
+      fileName: 'clip.webm',
+      mimeType: 'video/webm',
+      contents: samples.webm,
+    });
+    expect(webm.mimeType).toBe('video/webm');
+
+    await expect(
+      manager.library.attach({
+        ownerType: 'Lesson',
+        ownerId: 1,
+        collection: 'clips',
+        fileName: 'clip.webm',
+        mimeType: 'video/webm',
+        contents: samples.mkv,
+      }),
+    ).rejects.toMatchObject({
+      code: 'E_MEDIA_CONTENT_TYPE_MISMATCH',
+      detectedMimeType: 'video/x-matroska',
+    });
+  });
+
+  it('attachExisting proves a disk object really is the video it claims to be', async () => {
+    const { manager, disks } = makeManager(collections);
+    await disks.fs?.put('tus/finished-upload', samples.mp4);
+    await disks.fs?.put('tus/disguised-upload', samples.png);
+
+    const adopt = (key: string) =>
+      manager.library.attachExisting({
+        ownerType: 'Lesson',
+        ownerId: 1,
+        collection: 'original',
+        key,
+        fileName: 'clip.mp4',
+        mimeType: 'video/mp4',
+      });
+
+    const record = await adopt('tus/finished-upload');
+    expect(record.mimeType).toBe('video/mp4');
+
+    await expect(adopt('tus/disguised-upload')).rejects.toMatchObject({
+      code: 'E_MEDIA_CONTENT_TYPE_MISMATCH',
+      detectedMimeType: 'image/png',
+    });
+    // The object was never ours to delete.
+    expect(disks.fs?.files.has('tus/disguised-upload')).toBe(true);
   });
 });
 
