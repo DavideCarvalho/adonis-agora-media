@@ -92,3 +92,9 @@ const result = await media.library.deliver(id, { conversion: 'thumb', mode: 'sig
 | `signedTtlSeconds` | `number` | Override the signed-URL lifetime for this call. |
 
 In `proxy` mode the `mimeType` and `size` come from the **disk's** metadata rather than the record's, because a conversion has its own format and length — a `thumb` of a PNG may well be a WEBP.
+
+---
+
+## HLS packages
+
+A transformer-generated HLS conversion is not one file but a package of playlists and segments, and its playlists must be **rewritten** per request — `deliver(id, { conversion: 'hls' })` would hand you the raw master playlist with storage-relative references. Serve those through the dedicated [`HlsDeliveryHandler`](/docs/media/transformers#serving-hls), which follows this page's philosophy exactly: you mount one route, your auth guards it, the handler answers "how".

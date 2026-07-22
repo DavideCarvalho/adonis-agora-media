@@ -1,0 +1,248 @@
+---
+title: Transformers & HLS
+description: Pluggable content transformations — turn a stored media into derived artifacts (an HLS package, an extracted audio track) or pure metadata (a probe), persisted as named conversions. Ships with a mediabunny-backed HLS transformer and a metadata probe, plus an HLS-aware delivery handler.
+icon: Film
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **transformer** turns the content of a stored media into something derived: many files (an HLS package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurhash). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
+
+Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships two — [`transformers.hls()`](#the-hls-transformer) and [`transformers.probe()`](#the-metadata-probe) — and the contract is deliberately small so you can write your own.
+
+---
+
+## Declaring transformers
+
+Transformers are declared per collection, next to conversions:
+
+```ts title="config/media.ts"
+import { defineConfig, transformers } from '@adonis-agora/media'
+
+export default defineConfig({
+  collections: [
+    {
+      name: 'videos',
+      acceptsMimeTypes: ['video/mp4'],
+      transformers: [
+        transformers.hls({ targetDuration: 4 }),
+        transformers.probe({ eager: true }),
+      ],
+    },
+  ],
+})
+```
+
+Preset names and transformer names share the `record.conversions` namespace, so within a collection each name may appear once — a collision throws `TransformerConflictError` at boot.
+
+Constructing a transformer in config **never loads its engine**: the optional `mediabunny` peer is imported inside the first `transform()` call, the same laziness `processors.sharp()` and `disks.s3()` follow. Install the peer only if you use the built-ins:
+
+```bash
+pnpm add mediabunny
+```
+
+### Typed conversion names
+
+`defineConfig` preserves names as literal types, and two utility types extract them:
+
+```ts
+import type { InferConversions, InferTransformers } from '@adonis-agora/media'
+
+type AppTransformer = InferTransformers<typeof config> // 'hls' | 'probe'
+type AppConversion = InferConversions<typeof config>   // presets + transformers
+```
+
+Use them to type job payloads and route params against the config instead of restating strings.
+
+## Running a transform
+
+Transformations are assumed **heavy** (the flagship case is a video remux), so by default nothing runs on attach. The app triggers generation explicitly — from a job, on whatever queue system it already has:
+
+```ts title="app/jobs/transcode_video_job.ts"
+import media from '@adonis-agora/media/services/main'
+
+export default class TranscodeVideo extends Job<{ mediaId: string }> {
+  async execute() {
+    await media.library.transform(this.payload.mediaId, 'hls')
+  }
+}
+```
+
+`transform(id, name)` is **idempotent**: if the conversion already exists it returns the record untouched, so a retried job skips straight through. A mid-flight failure sweeps whatever artifacts were already written and re-throws — no conversion entry is ever persisted for a half-written package, and the retry starts clean. Two concurrent calls both run and produce identical output (the artifact keys are deterministic); serialize with your own lock if the double work matters.
+
+<Callout type="info" title="Reads never generate a transform">
+  `url()` / `deliver()` on a transformer conversion that hasn't been generated throw `TransformNotReadyError` instead of stalling a request behind a remux. Image presets keep their lazy-on-first-read behaviour; the split is deliberate.
+</Callout>
+
+### Eager transformers
+
+A transformer with `eager: true` runs synchronously inside `attach` **and** `attachExisting` — which is what `completeUploadToLibrary` (the TUS finalize) funnels through, so "TUS drops the bytes wherever you want, transformers derive from them afterwards" needs no extra wiring. An eager failure rolls the new media back whole and keeps whatever a `single: true` collection was replacing, exactly like eager image conversions.
+
+Reserve `eager` for cheap transforms (a probe on small files). A remux inside an HTTP upload request is a bad time.
+
+## What gets persisted
+
+A transformer's output lands on `record.conversions[name]`:
+
+```ts
+// multi-artifact (HLS)
+{
+  path: 'Course/1/videos/<id>/conversions/hls/index.m3u8', // entry artifact
+  disk: 'fs',
+  prefix: 'Course/1/videos/<id>/conversions/hls/',
+  files: ['index.m3u8', 'playlist-1.m3u8', 'segment-1-0.ts', ...], // authority for serving + deletion
+  meta: { durationSeconds: 41.6, width: 1920, height: 1080, videoCodec: 'avc1.64001f', audioCodec: 'mp4a.40.2', segmentCount: 11, playlistCount: 2, targetDuration: 4 },
+}
+
+// metadata-only (probe)
+{ meta: { durationSeconds: 41.6, hasVideo: true, ... } }
+```
+
+Deleting the media deletes every listed artifact (batched via `deleteMany` on capable disks — an HLS package is hundreds of segments). `url()`/`signedUrl()`/`deliver()` on the conversion resolve the entry artifact; a metadata-only conversion has none and throws `ConversionArtifactMissingError` — read the record instead.
+
+---
+
+## The HLS transformer
+
+`transformers.hls()` converts a stored video into an HLS package — MPEG-TS segments and media playlists behind one master playlist — using [mediabunny](https://mediabunny.dev): pure TypeScript, **no ffmpeg binary**, so it runs in production containers where system ffmpeg doesn't exist.
+
+| Option | Default | What it does |
+|---|---|---|
+| `name` | `'hls'` | Conversion name on the record. |
+| `targetDuration` | `4` | Target (max) segment duration, seconds. |
+| `eager` | `false` | Run inside attach (think twice — see above). |
+| `webcodecs` | — | Inject a WebCodecs implementation (see below). |
+| `engine` | mediabunny | Replace the remux engine (mainly for tests). |
+
+### Remux-only, and why
+
+The engine **stream-copies** the source's tracks into segments without re-encoding. Encoding requires WebCodecs, which Node does not expose — so by default:
+
+- a source whose codecs MPEG-TS can carry (h264/aac — what phones and browsers produce) remuxes fast, with **no quality loss**;
+- a source it cannot carry (vp9, av1…) fails with `HlsSourceUnsupportedError`, listing each track's codec and reason. This is definitive for the file: retrying cannot fix it;
+- the package has a **single variant** at the original resolution — no 360p/480p/720p ladder, because a ladder requires encoding.
+
+The engine also handles the trap the naive implementation falls into: AAC audio with priming (an mp4 edit list) starts at a **negative** timestamp, and a conversion trimmed at t=0 kicks that track off the stream-copy fast path — impossible without an encoder. The conversion is trimmed at the source's real first timestamp instead, shifting all tracks equally (A/V sync unchanged) and keeping every track copyable.
+
+### Injecting WebCodecs
+
+Node has no built-in WebCodecs, but NAPI-based implementations exist (e.g. `@napi-rs/webcodecs`, prebuilt — no system binary). Injecting one enables the engine's **re-encode fallback**: a track that cannot be stream-copied gets re-encoded instead of failing.
+
+```ts
+transformers.hls({ webcodecs: () => import('@napi-rs/webcodecs') })
+```
+
+The provided classes are installed onto `globalThis` (only the missing ones — a native implementation is never overwritten), because that is where the WebCodecs spec says the API lives. `resolveWebCodecsSupport(provider?)` reports `'native' | 'injected' | 'absent'` if you want to branch. Multi-quality renditions on top of an injected encoder are the documented evolution (mediabunny supports fan-out video options), not something the transformer fakes today — see the [Roadmap](/docs/media/roadmap).
+
+---
+
+## The metadata probe
+
+`transformers.probe()` reads a media file's technical metadata — duration, resolution, codecs, sample rate, channel count — and persists it as `record.conversions.probe.meta`, writing **no artifact**. It is the reference metadata-only transformer, and it replaces the hand-rolled "download the file, open it, read the duration" service every media app grows eventually:
+
+```ts
+await media.library.transform(id, 'probe')
+const record = await media.library.find(id)
+record.conversions.probe?.meta
+// { format: 'MP4', mimeType: 'video/mp4; codecs="avc1.42c00d, mp4a.40.2"',
+//   durationSeconds: 41.6, width: 1920, height: 1080, hasVideo: true, hasAudio: true, ... }
+```
+
+---
+
+## Serving HLS
+
+An HLS package cannot be served like a single file: playlists are stored with references **relative to the storage layout**, and every player request must receive them rewritten to URLs it can fetch. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
+
+```ts title="start/routes.ts"
+import { HlsDeliveryHandler, MediaManager } from '@adonis-agora/media'
+
+const media = await app.container.make(MediaManager)
+const hls = new HlsDeliveryHandler({
+  library: media,
+  urlForPlaylist: ({ mediaId, file }) =>
+    router.makeUrl('videos.hls', { id: mediaId, file }),
+})
+
+router
+  .get('/videos/:id/hls/:file?', async ({ params, response, auth }) => {
+    await authorizeVideoAccess(auth.user, params.id) // ← your rule
+
+    const result = await hls.handle({ mediaId: params.id, file: params.file })
+    if (result.kind === 'redirect') return response.redirect(result.url)
+    if (result.kind === 'stream') {
+      response.header('content-type', result.mimeType)
+      return response.stream(result.stream)
+    }
+    response.header('content-type', result.contentType) // application/vnd.apple.mpegurl
+    response.header('cache-control', 'no-store')
+    return response.send(result.content)
+  })
+  .as('videos.hls')
+  .use(middleware.auth())
+```
+
+One route serves the whole package:
+
+- **playlist requested** (master or sub-playlist) → `{ kind: 'playlist', content }`, with every relative reference rewritten: sub-playlists through your `urlForPlaylist` (so each hop comes back through your auth), media references through `urlForSegment` — or, by default, a **presigned URL** straight to the object (`segmentTtlSeconds`, default 300s), so segment bytes flow from storage/CDN without transiting your app;
+- **media file requested** (a segment, an init section) → `{ kind: 'redirect' }` to a presigned URL, or `{ kind: 'stream' }` when `segmentDelivery: 'stream'` — for storage that isn't reachable from clients at all.
+
+Requested files are validated against the conversion's **persisted artifact list** — no caller input ever reaches the disk as a path, so traversal is structurally impossible. References a playlist makes to files the transformer never wrote (or absolute URLs) are left untouched.
+
+<Callout type="warn" title="A presigned segment URL is a capability">
+  Whoever holds it can fetch that segment until the TTL expires — the standard HLS trade-off. Keep `segmentTtlSeconds` short, or route segments through your app (`urlForSegment` pointing back at your route + `segmentDelivery: 'stream'`) to keep every byte behind your auth.
+</Callout>
+
+The rewriting itself is exported as `rewriteHlsPlaylist(content, rewrite)` if you need a custom read path: it covers URI lines, `URI="…"` attributes (`#EXT-X-MEDIA` audio renditions, `#EXT-X-MAP` init sections, `#EXT-X-I-FRAME-STREAM-INF`, `#EXT-X-KEY`), preserves everything else byte for byte, and accepts an async rewriter.
+
+---
+
+## Writing your own transformer
+
+The contract is one interface:
+
+```ts
+import type { Transformer, TransformerContext, TransformResult } from '@adonis-agora/media'
+
+export class ExtractAudioTransformer implements Transformer {
+  readonly name = 'audio'
+
+  async transform(context: TransformerContext): Promise<TransformResult> {
+    const original = await context.getBytes()        // or getStream()
+    const { data, durationSeconds } = await extractAacTrack(original) // your engine
+
+    await context.write('audio.m4a', data, { contentType: 'audio/mp4' })
+    return { entry: 'audio.m4a', meta: { durationSeconds } }
+  }
+}
+```
+
+What the context guarantees:
+
+- **`write(relativePath, contents, options?)`** is the only artifact path. Every write lands under `context.outputPrefix` (`…/conversions/<name>/`), is validated (no `..`, no absolute paths — `TransformerOutputError`), and is recorded: the persisted `files` list comes from what was actually written, never from the transformer's own bookkeeping. A `Readable` with a `contentLength` streams to the disk without buffering.
+- **`record`**, **`disk`**/**`diskName`**, and **`storage`** — the record being transformed, its disk, and the storage façade for reading auxiliary assets (a watermark logo on another disk) via `context.storage.disk(name)`.
+- The **result** names the entry (`entry` must be one of the written files) and carries `meta`. A metadata-only transformer writes nothing and returns just `{ meta }`.
+
+Rules of thumb, set by the built-ins:
+
+- import heavy engines **inside** `transform`, never at module top level, so configuring the transformer stays free;
+- if the runtime lacks a capability you need (an optional peer, WebCodecs), throw `TransformerRuntimeMissingError` with an install hint;
+- accept an injectable engine in your options — it is what makes the orchestration testable without the engine (see `FakeTransformer` in [`@adonis-agora/media/testing`](/docs/media/testing), which also lets apps test *their* jobs without ever touching a media engine).
+
+## Errors
+
+| Situation | Error | Code |
+|-----------|-------|------|
+| `transform()` with a name the collection doesn't define | `TransformerNotDefinedError` | `E_MEDIA_TRANSFORMER_NOT_DEFINED` |
+| Reading a transformer conversion before generating it | `TransformNotReadyError` | `E_MEDIA_TRANSFORM_NOT_READY` |
+| Duplicate derivative name in one collection | `TransformerConflictError` | `E_MEDIA_TRANSFORMER_CONFLICT` |
+| Missing optional peer / runtime capability | `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` |
+| Transformer wrote outside its prefix / bad entry | `TransformerOutputError` | `E_MEDIA_TRANSFORMER_OUTPUT_INVALID` |
+| Delivering a metadata-only conversion | `ConversionArtifactMissingError` | `E_MEDIA_CONVERSION_ARTIFACT_MISSING` |
+| HLS source can't be stream-copied (no encoder) | `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` |
+
+## Next steps
+
+- [Delivery](/docs/media/delivery) — the single-file read path this extends
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — landing the video the transformer will process
+- [Roadmap](/docs/media/roadmap) — the transformer lineup that isn't built yet, and why
