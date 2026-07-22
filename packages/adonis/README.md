@@ -27,7 +27,7 @@ The package uses **subpath exports** (the Agora idiom), so heavy backends stay o
 | `@adonis-agora/media/single-file` | `storeSingleFile` / `removeSingleFile` / `isSingleFileStoreAvailable` — lets other packages delegate single-file uploads (e.g. avatars) to media without a hard dependency |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
 | `@adonis-agora/media/upload_sessions/lucid` | the Lucid resumable `UploadSessionStore` (`@adonisjs/lucid` peer) |
-| `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` peers) |
+| `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` peer; presigning is hand-rolled SigV4) |
 | `@adonis-agora/media/processors/sharp` | the sharp `ImageProcessor` (`sharp` peer) |
 | `@adonis-agora/media/telescope` | `mediaTelescopeExtension` (`@adonis-agora/telescope` optional peer) |
 | `@adonis-agora/media/testing` | `InMemoryMediaStore`, `InMemoryDisk`, `inMemoryDiskResolver`, `FakeImageProcessor`, `InMemoryUploadSessionStore` |
@@ -48,7 +48,7 @@ Optional peers, loaded lazily only when selected:
 
 - `@adonisjs/lucid` (`^22.4.0`) — the `lucid` `MediaStore` / `UploadSessionStore`
 - `sharp` (`^0.33.0`) — image conversions
-- `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` (`^3.0.0`) — the bundled `disks.s3()` driver
+- `@aws-sdk/client-s3` (`^3.0.0`) — the bundled `disks.s3()` driver (presigned URLs are hand-rolled SigV4, no presigner package)
 - `@adonis-agora/telescope` (`^0.4.0`) — the Telescope watcher extension
 
 ## Configure

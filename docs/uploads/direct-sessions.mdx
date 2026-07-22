@@ -1,0 +1,190 @@
+---
+title: Direct Sessions
+description: Session-backed browser→S3 multipart uploads — media.direct persists uploadId, part size and confirmed ETags in an UploadSessionStore, so a page reload resumes instead of restarting. Presigned part URLs, collection-aware initiate, and completeDirectUploadToLibrary.
+icon: CloudUpload
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+For video-sized files, the deciding cost is bandwidth **through your app**. The [TUS path](/docs/media/uploads/resumable-tus) resumes beautifully, but every chunk crosses the wire twice: client → app, app → S3. The [raw direct primitives](/docs/media/uploads/upload-modes) send bytes straight to S3, but they are stateless — `uploadId`, the part size and every collected `ETag` live only in the client's memory, so a page reload orphans the upload and every consuming app ends up growing its own tracking table.
+
+**`media.direct` combines the two halves.** Bytes go browser → S3 through presigned part URLs (the app moves no payload at all), while the session — `uploadId`, the agreed `partSize`, every confirmed part ETag — is persisted server-side in an `UploadSessionStore`, the same SPI (and, with the Lucid driver, the same tables) TUS uses. A client that lost its state asks `status()` and gets back what is already confirmed plus **fresh** presigned URLs for the rest.
+
+| | TUS (`media.resumable`) | Direct sessions (`media.direct`) |
+|---|---|---|
+| Bytes through the app | every chunk (2× bandwidth) | none |
+| Disk support | any disk | multipart-capable only (`disks.s3()`) |
+| Resume granularity | byte offset | part (default 20 MiB) |
+| Client requirements | TUS client | plain `PUT`s + bucket CORS exposing `ETag` |
+| Sessions | `UploadSessionStore` | the **same** `UploadSessionStore` |
+
+---
+
+## Configure
+
+Fully opt-in: add `uploads.direct`; its presence makes `media.direct` available and, with `routes.enabled`, mounts the JSON endpoints. The store is picked exactly like the resumable one — and both can name the same `uploadSessions.lucid()` tables.
+
+```ts title="config/media.ts"
+import { defineConfig, disks, stores, uploadSessions } from '@adonis-agora/media'
+
+export default defineConfig({
+  disk: 's3',
+  disks: {
+    s3: disks.s3({
+      bucket: 'media',
+      endpoint: 'http://minio.internal:9000',      // server-side operations
+      publicEndpoint: 'https://files.example.com', // what the browser's presigned URLs are signed for
+      forcePathStyle: true,
+    }),
+  },
+  store: 'lucid',
+  stores: { lucid: stores.lucid() },
+
+  collections: [{ name: 'videos', acceptsMimeTypes: ['video/mp4', 'video/webm'] }],
+
+  uploads: {
+    direct: {
+      store: 'lucid',
+      stores: { lucid: uploadSessions.lucid() }, // durable, multi-process sessions
+      partSize: 20 * 1024 * 1024,                // default 20 MiB (S3: min 5 MiB, max 10,000 parts)
+      presignTtlSeconds: 3600,                   // per-URL lifetime; status() re-issues fresh ones
+      sessionTtlSeconds: 24 * 60 * 60,           // omit for never-expiring sessions
+      routes: {
+        enabled: true,
+        prefix: '/media/uploads/direct/sessions',
+        collection: 'videos', // reject a wrong declared type at initiate, before any byte moves
+        maxSize: 50 * 1024 ** 3,
+      },
+    },
+  },
+})
+```
+
+| Key | Type | Default | What it controls |
+|-----|------|---------|------------------|
+| `store` | `string` | in-memory | Session store name (a key of `stores`). |
+| `stores` | `Record<string, UploadSessionStoreFactory>` | — | Named session stores (`uploadSessions.memory()`, `uploadSessions.lucid()`). |
+| `partSize` | `number` | `uploads.partSize`, else 20 MiB | Slice size both sides must agree on. |
+| `presignTtlSeconds` | `number` | `uploads.presignTtlSeconds`, else 3600 | Lifetime of each presigned part URL. |
+| `sessionTtlSeconds` | `number` | never | Session lifetime; an expired session is reaped on access (native upload aborted). |
+| `routes.enabled` | `boolean` | `false` | Mount the built-in JSON routes. |
+| `routes.prefix` | `string` | `/media/uploads/direct/sessions` | Path prefix for those routes. |
+| `routes.disk` | `string` | media default disk | Disk uploads land on (must be multipart-capable). |
+| `routes.maxSize` | `number` | — | Reject initiations whose declared `size` exceeds this. |
+| `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates `initiate`. Omit to accept any type. |
+
+<Callout type="warn" title="Bucket CORS must expose ETag">
+  The browser `PUT`s each part to S3 and must read the `ETag` **response header** to confirm it.
+  Configure the bucket's CORS to allow `PUT` from your origin and expose `ETag`
+  (`ExposeHeaders: ["ETag"]` — on MinIO, `mc cors set` or `MINIO_API_CORS_ALLOW_ORIGIN`).
+  Behind a private network, also set the disk's [`publicEndpoint`](/docs/media/storage/s3-disk):
+  SigV4 bakes the host into the signature, so URLs must be signed for the endpoint the **browser**
+  reaches.
+</Callout>
+
+---
+
+## The lifecycle
+
+<Steps>
+<Step>
+
+### `initiate`
+
+Validates the part size (S3's 5 MiB floor, 10,000-part cap) and — given a `collection` — the declared `contentType` against that collection's `acceptsMimeTypes`, **before the multipart upload even opens**. Then persists the session and presigns one URL per part in a single local batch (signing is pure computation, no S3 round-trips).
+
+```ts
+const created = await media.direct.initiate({
+  key: `videos/${lesson.id}/original.mp4`, // resolve server-side, never from the client
+  contentType: 'video/mp4',
+  size: file.size,
+  collection: 'videos',
+})
+// { id, key, disk, partSize, totalParts, parts: [{ partNumber, url }, …], expiresAt? }
+```
+
+</Step>
+<Step>
+
+### The browser uploads, confirming as it goes
+
+The client slices the file with the returned `partSize`, `PUT`s each slice to its URL (in parallel, with retries), reads the `ETag` response header, and **confirms** each finished part. The confirmed ETag on the server is the resume currency — everything else is disposable client state.
+
+```ts
+// per finished part:
+await media.direct.confirmPart(created.id, { partNumber, etag })
+```
+
+</Step>
+<Step>
+
+### Reload? `status` answers with what's left
+
+```ts
+const s = await media.direct.status(created.id)
+// s.completedParts → [{ partNumber, etag }, …]   (already safe on S3)
+// s.pendingParts   → [{ partNumber, url }, …]    (FRESH URLs — expiry never strands an upload)
+// s.partSize, s.totalParts, s.size               (slice exactly as before)
+```
+
+</Step>
+<Step>
+
+### `complete` — or straight into the library
+
+`complete(id, parts?)` merges the caller's parts with the confirmed ones, fails fast naming any **missing part numbers** (instead of S3's opaque `InvalidPart`), assembles the object and closes the session.
+
+To land the object in the media library in the same step:
+
+```ts
+const record = await media.completeDirectUploadToLibrary(created.id, {
+  ownerType: 'Lesson',
+  ownerId: lesson.id,
+  collection: 'videos',
+  fileName: 'original.mp4',
+  mimeType: 'video/mp4',
+}, partsFromClient)
+```
+
+That chains [`attachExisting`](/docs/media/collections-and-conversions) — zero-copy adoption of the key, and the collection's whitelist is re-validated against the **real bytes** (a 16-byte head read). The `initiate` gate checks only what the client *declared*; this is the barrier that checks what it *sent*.
+
+</Step>
+</Steps>
+
+Abort with `media.direct.abort(id)` — S3 discards the stored parts (and stops charging for them) and the session is dropped. The S3 abort is best-effort: a session whose native upload a bucket lifecycle rule already reaped is still deletable.
+
+<Callout type="info" title="Set an abort lifecycle rule anyway">
+  A client that vanishes mid-upload leaves parts accruing storage charges until someone aborts.
+  Pair session TTLs with a bucket `AbortIncompleteMultipartUpload` lifecycle rule.
+</Callout>
+
+---
+
+## Provider routes
+
+With `uploads.direct.routes.enabled`, the provider mounts these plain AdonisJS routes (not controllers) under the prefix. Each drives a framework-agnostic `DirectUploadHandler` over `media.direct` — mount your own routes over the handler instead if you need custom placement:
+
+| Method | Path | Does |
+|--------|------|------|
+| `POST` | `/` | Initiate: `{ fileName, size, contentType?, metadata? }` → `201` + session, part URLs. |
+| `GET` | `/:id` | Status: confirmed ETags + fresh URLs for pending parts. `404` / `410` when gone / expired. |
+| `POST` | `/:id/parts/:partNumber` | Confirm one part: `{ etag }` → progress. |
+| `POST` | `/:id/complete` | Assemble: `{ parts? }` → `200`, or `409` naming the missing parts. |
+| `DELETE` | `/:id` | Abort. |
+
+The client sends a **`fileName`, never a key**: the handler resolves the key server-side (`keyFor`, default `uploads/<token>/<fileName>`). And like the TUS and delivery handlers, **no authorization is performed** — guard the routes with your own middleware.
+
+---
+
+## Diagnostics
+
+The same `agora:media:upload.*` events as every other upload path: `upload.start` (mode `direct`), `upload.progress` per confirmed part (offset = bytes safely on S3), `upload.complete`, `upload.abort`.
+
+---
+
+## Next steps
+
+- [Upload modes](/docs/media/uploads/upload-modes) — the raw stateless primitives these sessions wrap
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — when bytes must flow through the app (any disk, byte-exact resume)
+- [S3 disk](/docs/media/storage/s3-disk) — `publicEndpoint` and the hand-rolled SigV4 presigner

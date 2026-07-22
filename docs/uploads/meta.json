@@ -1,5 +1,5 @@
 {
   "title": "Uploads",
   "icon": "Upload",
-  "pages": ["upload-modes", "resumable-tus"]
+  "pages": ["upload-modes", "direct-sessions", "resumable-tus"]
 }
