@@ -7,6 +7,7 @@ import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
+import { transformers } from './transformers/factory.js';
 import type { UploadMode } from './upload_mode.js';
 import { uploadSessions } from './upload_sessions/factory.js';
 import type {
@@ -211,8 +212,8 @@ export interface MediaConfig {
    * so the heavy peer is imported lazily. Required only if any collection defines conversions.
    */
   imageProcessor?: ImageProcessor | ImageProcessorFactory;
-  /** Collection definitions (MIME whitelist, single-file replace, conversions). */
-  collections?: MediaCollectionConfig[];
+  /** Collection definitions (MIME whitelist, single-file replace, conversions, transformers). */
+  collections?: readonly MediaCollectionConfig[];
   /** Key prefix for column attachments created via the `AttachmentManager`. Default `attachments`. */
   attachmentKeyPrefix?: string;
   /** Emit `agora:media:*` diagnostics events (default true). */
@@ -223,12 +224,49 @@ export interface MediaConfig {
   delivery?: MediaDeliveryConfig;
 }
 
-/** Identity helper giving `config/media.ts` full type-checking. */
-export function defineConfig(config: MediaConfig = {}): MediaConfig {
+/**
+ * Identity helper giving `config/media.ts` full type-checking. The `const` type parameter keeps
+ * collection/conversion/transformer names as literal types, so {@link InferConversions} /
+ * {@link InferTransformers} can extract them from `typeof config` — no `as const` needed.
+ */
+export function defineConfig<const T extends MediaConfig>(config: T = {} as T): T {
   return config;
 }
 
-export { stores, processors, disks, uploadSessions };
+/** The collection literal types of a config (helper for the `Infer*` utilities). */
+type CollectionOf<T extends MediaConfig> = T['collections'] extends readonly (infer C extends
+  MediaCollectionConfig)[]
+  ? C
+  : never;
+
+/**
+ * Union of the transformer names a config declares — for typing job payloads, `transform()` call
+ * sites, and route params against the config instead of restating strings:
+ *
+ * ```ts
+ * const config = defineConfig({
+ *   collections: [{ name: 'videos', transformers: [transformers.hls(), transformers.probe()] }],
+ * })
+ * type AppTransformer = InferTransformers<typeof config> // 'hls' | 'probe'
+ * ```
+ */
+export type InferTransformers<T extends MediaConfig> = NonNullable<
+  CollectionOf<T>['transformers']
+>[number]['name'];
+
+/**
+ * Union of every conversion name a config declares — image presets and transformers alike, since
+ * both persist under `record.conversions`:
+ *
+ * ```ts
+ * type AppConversion = InferConversions<typeof config> // 'thumb' | 'og' | 'hls' | 'probe'
+ * ```
+ */
+export type InferConversions<T extends MediaConfig> =
+  | NonNullable<CollectionOf<T>['conversions']>[number]['name']
+  | InferTransformers<T>;
+
+export { stores, processors, disks, uploadSessions, transformers };
 export type {
   StoreContext,
   StoreFactory,

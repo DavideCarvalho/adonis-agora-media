@@ -1,6 +1,15 @@
 // Config idiom
-export { defineConfig, stores, processors, disks, uploadSessions } from './define_config.js';
+export {
+  defineConfig,
+  stores,
+  processors,
+  disks,
+  uploadSessions,
+  transformers,
+} from './define_config.js';
 export type {
+  InferConversions,
+  InferTransformers,
   MediaConfig,
   MediaUploadsConfig,
   MediaResumableConfig,
@@ -87,6 +96,49 @@ export type {
   DeliveryRequest,
   MediaDeliveryHandlerOptions,
 } from './delivery.js';
+
+// Transformers (pluggable content transformations persisted as conversions)
+export type {
+  Transformer,
+  TransformerContext,
+  TransformerWriteOptions,
+  TransformResult,
+} from './transformer.js';
+export { HlsTransformer, HLS_ENTRY_PLAYLIST, resolveWebCodecsSupport } from './transformers/hls.js';
+export type {
+  HlsTransformerOptions,
+  HlsRemuxEngine,
+  HlsRemuxRequest,
+  HlsRemuxSummary,
+  WebCodecsProvider,
+  WebCodecsSupport,
+} from './transformers/hls.js';
+export { MetadataProbeTransformer } from './transformers/probe.js';
+export type {
+  MetadataProbeTransformerOptions,
+  MediaProbeEngine,
+  MediaProbeSummary,
+} from './transformers/probe.js';
+
+// HLS delivery (playlist rewriting + the framework-agnostic package handler)
+export {
+  rewriteHlsPlaylist,
+  isRelativeUri,
+  classifyUri,
+  resolvePackagePath,
+  hlsArtifactContentType,
+  HLS_PLAYLIST_CONTENT_TYPE,
+  HLS_SEGMENT_CONTENT_TYPE,
+} from './hls/playlist.js';
+export type { HlsUriRef, HlsUriRewriter } from './hls/playlist.js';
+export { HlsDeliveryHandler } from './hls/delivery.js';
+export type {
+  HlsDeliveryHandlerOptions,
+  HlsDeliveryRequest,
+  HlsDeliveryResult,
+  HlsFileRef,
+  HlsUrlBuilder,
+} from './hls/delivery.js';
 
 // Real-content validation (magic-byte signatures behind `acceptsMimeTypes`)
 export {
@@ -186,6 +238,13 @@ export {
   MediaNotFoundError,
   MediaObjectMissingError,
   ConversionNotDefinedError,
+  ConversionArtifactMissingError,
+  TransformerNotDefinedError,
+  TransformNotReadyError,
+  TransformerConflictError,
+  TransformerRuntimeMissingError,
+  TransformerOutputError,
+  HlsSourceUnsupportedError,
   ImageProcessorMissingError,
   VariantNotFoundError,
   StoreNotConfiguredError,

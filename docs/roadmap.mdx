@@ -22,6 +22,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 - **A browser client + React package** — [`@adonis-agora/media-react`](/docs/media/react): `useMediaUpload`, `MediaUploader`, and a framework-free `createMediaUploadClient`.
 - **A management dashboard** — [`@adonis-agora/media-dashboard`](/docs/media/dashboard), with cross-owner [collection listing](/docs/media/dashboard/collections) via the new `MediaStore.list`.
 - **A Telescope extension** — a "Media" overview dashboard via [`mediaTelescopeExtension`](/docs/media/integrations/telescope).
+- **Transformers + HLS video** — the pluggable [`Transformer` contract](/docs/media/transformers) with a mediabunny-backed HLS transformer (remux to MPEG-TS segments + playlists, WebCodecs injectable), a metadata probe, and the `HlsDeliveryHandler` read path with m3u8 rewriting.
 
 ---
 
@@ -31,15 +32,36 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 The current alpha ships the in-memory and Lucid stores. Additional drivers (e.g. a document/Redis store) aren't built — but the `MediaStore` interface is small and stable, so you can [write your own](/docs/media/stores-and-processors#writing-your-own-store) today.
 
-### Richer conversions
+### More built-in transformers
 
-The sharp processor covers resize / crop / format / quality for images. Not yet built:
+The [`Transformer` contract](/docs/media/transformers) ships with HLS and a metadata probe; it was validated against this lineup, and each slots in without contract changes — they just aren't built yet:
 
-- **video and PDF thumbnails** (extracting a poster frame / first page),
-- **responsive `srcset`** generation across a set of widths,
-- an **antivirus / scanning hook** in the attach pipeline.
+- **ImageOptimizeTransformer** — recompress / WebP / strip EXIF via sharp (single replaceable artifact).
+- **PlaceholderTransformer** — blurhash/thumbhash from pixel data (metadata-only, like the probe).
+- **WatermarkTransformer** — stamp a configured logo (auxiliary asset read through `context.storage`).
+- **AudioExtractTransformer** — video → `.m4a` by aac remux; `.mp3` via the pure-JS `@mediabunny/mp3-encoder`.
+- **PosterFrameTransformer** — extract a poster frame. Needs a video *decoder*, so it requires an injected WebCodecs implementation (`transformers.hls({ webcodecs })`-style) and throws `TransformerRuntimeMissingError` without one.
+- **TranscriptionTransformer** — `.vtt` subtitles via an external async provider.
+- **Multi-quality HLS renditions** — a 360p/480p/720p ladder on top of an injected WebCodecs encoder, via mediabunny's fan-out video options. Remux-only stays the default; the ladder is opt-in config on `transformers.hls()` once built.
 
-The `ImageProcessor` interface is the seam for the first two; a scanning hook would slot into `attach` before the write.
+Also still open from the image side: **responsive `srcset`** generation and an **antivirus / scanning hook** in the attach pipeline (a scanning hook would slot into `attach` before the write).
+
+### Lucid `@media` model decorator
+
+Apps today hold a raw FK (`bannerMediaId`) and resolve records/URLs by hand — a dashboard listing N rows does N resolutions. The planned DX (prior art: `@jrmc/adonis-attachment`) is a decorator in a separate `@adonis-agora/media/lucid` module, keeping Lucid an optional peer:
+
+```ts
+class Course extends BaseModel {
+  @media({ collection: 'banner' })
+  declare banner: MediaAccessor // typed record + conversions + URLs, preloadable, serializable
+}
+```
+
+The `MediaRecord`/`conversions` shape (including transformer `meta` and multi-artifact `files`) was designed with this accessor in mind; it needs no refactor to support it.
+
+### Named delivery route + Tuyau/Edge helpers
+
+`MediaDeliveryHandler` / `HlsDeliveryHandler` exist, but the app mounts the route by hand. Planned (prior art: jrmc v5's `router.attachments()`): an opt-in, **named** route mount — a stable route name Tuyau can infer and Edge's `route()` can use — with a hook for the app to attach its middleware, keeping the standing rule that the library never decides authorization; plus an Edge helper for `<img src>` in server-rendered apps.
 
 ### Collection reordering
 

@@ -96,6 +96,118 @@ export class ConversionNotDefinedError extends Error {
   }
 }
 
+/**
+ * A conversion was requested by a name that names neither an image preset nor a transformer of the
+ * record's collection — the transformer counterpart of {@link ConversionNotDefinedError}, raised by
+ * `MediaLibrary.transform`.
+ */
+export class TransformerNotDefinedError extends Error {
+  readonly code = 'E_MEDIA_TRANSFORMER_NOT_DEFINED';
+  constructor(collection: string, transformer: string) {
+    super(`Transformer "${transformer}" is not defined for collection "${collection}"`);
+    this.name = 'TransformerNotDefinedError';
+  }
+}
+
+/**
+ * A transformer-produced conversion was read (`url` / `deliver` / HLS delivery) before it was
+ * generated. Deliberately NOT generated lazily on read like image conversions: a transform is
+ * assumed heavy (a video remux takes minutes), and a read path is the wrong place to pay that.
+ * Generate it explicitly — `media.library.transform(id, name)` from a job — then read again.
+ */
+export class TransformNotReadyError extends Error {
+  readonly code = 'E_MEDIA_TRANSFORM_NOT_READY';
+  constructor(
+    readonly mediaId: string,
+    readonly transformer: string,
+  ) {
+    super(
+      `Conversion "${transformer}" of media "${mediaId}" has not been generated yet. Transformer conversions are never generated inside a read path — run \`media.library.transform('${mediaId}', '${transformer}')\` (idempotent; call it from a job) and retry.`,
+    );
+    this.name = 'TransformNotReadyError';
+  }
+}
+
+/**
+ * Two derivatives of one collection claim the same name. Presets and transformers persist into the
+ * same `record.conversions` map, so the namespace is shared; raised at registry construction (boot),
+ * not on first attach.
+ */
+export class TransformerConflictError extends Error {
+  readonly code = 'E_MEDIA_TRANSFORMER_CONFLICT';
+  constructor(collection: string, name: string) {
+    super(
+      `Collection "${collection}" defines more than one conversion or transformer named "${name}". Preset and transformer names share the \`record.conversions\` namespace, so each name may appear once per collection.`,
+    );
+    this.name = 'TransformerConflictError';
+  }
+}
+
+/**
+ * A transformer needs a runtime capability the host doesn't provide — an optional peer that isn't
+ * installed (`mediabunny`), or an API the runtime lacks (WebCodecs in Node). Thrown by the built-in
+ * transformers and available for custom ones, so "this environment can't do that" always surfaces
+ * as one clear, typed error instead of a deep import/undefined crash.
+ */
+export class TransformerRuntimeMissingError extends Error {
+  readonly code = 'E_MEDIA_TRANSFORMER_RUNTIME_MISSING';
+  constructor(
+    readonly transformer: string,
+    readonly requirement: string,
+    hint?: string,
+  ) {
+    super(
+      `Transformer "${transformer}" requires ${requirement}, which is not available in this runtime.${hint ? ` ${hint}` : ''}`,
+    );
+    this.name = 'TransformerRuntimeMissingError';
+  }
+}
+
+/**
+ * A transformer violated the output contract: wrote outside its prefix (`..`/absolute path),
+ * declared an `entry` it never wrote, or wrote artifacts without declaring an entry. These are
+ * programming errors in the transformer, surfaced with the transformer's name so the broken one is
+ * obvious.
+ */
+export class TransformerOutputError extends Error {
+  readonly code = 'E_MEDIA_TRANSFORMER_OUTPUT_INVALID';
+  constructor(transformer: string, reason: string) {
+    super(`Transformer "${transformer}" produced an invalid output: ${reason}`);
+    this.name = 'TransformerOutputError';
+  }
+}
+
+/**
+ * A metadata-only conversion (a probe, a blurhash) was asked for its file — `url`, `signedUrl` or
+ * `deliver` — but it has no artifact; only `record.conversions[name].meta` exists. Read the record
+ * instead of a URL.
+ */
+export class ConversionArtifactMissingError extends Error {
+  readonly code = 'E_MEDIA_CONVERSION_ARTIFACT_MISSING';
+  constructor(mediaId: string, conversion: string) {
+    super(
+      `Conversion "${conversion}" of media "${mediaId}" is metadata-only — it has no artifact to deliver. Its result lives on \`record.conversions['${conversion}'].meta\`.`,
+    );
+    this.name = 'ConversionArtifactMissingError';
+  }
+}
+
+/**
+ * The HLS transformer could not stream-copy the source: a track's codec cannot be carried by the
+ * segment format (MPEG-TS wants h264/aac), and no re-encode path exists in this runtime. Definitive
+ * for the file — retrying cannot fix it; re-encode the source, or provide a WebCodecs
+ * implementation (see `transformers.hls({ webcodecs })`).
+ */
+export class HlsSourceUnsupportedError extends Error {
+  readonly code = 'E_MEDIA_HLS_SOURCE_UNSUPPORTED';
+  constructor(details: string) {
+    super(
+      `HLS remux is impossible for this source: ${details}. Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure \`transformers.hls({ webcodecs })\` with a WebCodecs implementation to enable the re-encode fallback.`,
+    );
+    this.name = 'HlsSourceUnsupportedError';
+  }
+}
+
 export class ImageProcessorMissingError extends Error {
   readonly code = 'E_MEDIA_IMAGE_PROCESSOR_MISSING';
   constructor() {

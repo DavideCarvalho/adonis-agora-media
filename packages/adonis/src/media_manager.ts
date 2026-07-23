@@ -29,7 +29,7 @@ export interface MediaManagerOptions {
   resolve: DiskResolver;
   store: MediaStore;
   imageProcessor?: ImageProcessor;
-  collections?: MediaCollectionConfig[];
+  collections?: readonly MediaCollectionConfig[];
   attachmentKeyPrefix?: string;
   emitDiagnostics?: boolean;
   /** Default upload mode for direct-S3 uploads (`auto`/`proxy`/`direct`). Default `auto`. */
