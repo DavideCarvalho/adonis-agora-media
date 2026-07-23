@@ -16,13 +16,13 @@ Media delegates storage to [`@adonisjs/drive`](https://github.com/adonisjs/drive
 
 ## Install the peer
 
-The driver needs two optional peers. Install them only if you use an S3 disk:
+The driver needs one optional peer. Install it only if you use an S3 disk:
 
 ```sh
-npm i @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
+npm i @aws-sdk/client-s3
 ```
 
-Both are declared `optional` in `peerDependenciesMeta`, so nothing is pulled in unless you configure `disks.s3()` and the provider builds it at boot.
+It is declared `optional` in `peerDependenciesMeta`, so nothing is pulled in unless you configure `disks.s3()` and the provider builds it at boot. Presigned URLs need no extra package: SigV4 query signing is implemented in the library itself (pure `node:crypto`), which is also what makes the split internal/public endpoint below possible.
 
 ---
 
@@ -55,20 +55,24 @@ export default defineConfig({
 | `region` | `string` | SDK default | AWS region, e.g. `us-east-1`. |
 | `credentials` | `{ accessKeyId, secretAccessKey, sessionToken? }` | SDK provider chain | Static credentials. Omit to use env vars / shared config / IAM role. |
 | `endpoint` | `string` | — | Custom endpoint for S3-compatible services (MinIO, Cloudflare R2, DigitalOcean Spaces, …). |
+| `publicEndpoint` | `string` | — | Endpoint **presigned URLs** are signed against, when it differs from `endpoint`. Presigned URLs are consumed by the browser and SigV4 bakes the host into the signature — so when `endpoint` is an internal FQDN the internet can't resolve, set the public one here. Server-side operations keep using `endpoint`. |
 | `forcePathStyle` | `boolean` | `false` | Path-style addressing (`endpoint/bucket/key`) — required by most S3-compatible services. |
 | `keyPrefix` | `string` | — | Prefix prepended to every key (e.g. `uploads`). |
 | `publicBaseUrl` | `string` | — | Base URL for stable public URLs (a CDN or the bucket website), used by `getUrl`. |
 | `visibility` | `'public' \| 'private'` | `private` | Whether objects are readable without credentials. Declarative — never applied as an ACL, never probed. Read by [`delivery.mode: 'auto'`](/docs/media/delivery). |
 
-Each `disks.s3(...)` returns a **lazy thunk**. Calling it in the config file costs nothing; `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` are imported only when the provider builds the selected disk at boot — so you can list an S3 disk in the map even where the AWS SDK isn't installed, as long as you don't select it.
+Each `disks.s3(...)` returns a **lazy thunk**. Calling it in the config file costs nothing; `@aws-sdk/client-s3` is imported only when the provider builds the selected disk at boot — so you can list an S3 disk in the map even where the AWS SDK isn't installed, as long as you don't select it.
 
 <Callout type="info" title="S3-compatible services">
-  For MinIO / R2 / Spaces, set `endpoint` and (usually) `forcePathStyle: true`:
+  For MinIO / R2 / Spaces, set `endpoint` and (usually) `forcePathStyle: true`. When the app reaches
+  MinIO through a private network but the browser must consume presigned URLs (direct uploads, signed
+  reads), add `publicEndpoint`:
 
   ```ts
   disks.s3({
     bucket: 'media',
-    endpoint: 'https://s3.example-compatible.com',
+    endpoint: 'http://minio.internal:9000',        // server-side operations
+    publicEndpoint: 'https://files.example.com',   // what presigned URLs are signed for
     forcePathStyle: true,
     credentials: { accessKeyId: '…', secretAccessKey: '…' },
   })
@@ -84,7 +88,7 @@ Like any Drive disk, `S3Disk` satisfies the structural [`Disk`](/docs/media/stor
 - `put` / `putStream` / `getBytes` / `getStream` / `exists` / `delete` / `getMetaData`
 - `getUrl(key)` — a stable public URL from `publicBaseUrl` (or a synthesised virtual-hosted / path-style URL).
 - `getVisibility(key)` — the configured `visibility`, verbatim. S3 can't be asked cheaply (a `GetObjectAcl` per read isn't free, and object ACLs say nothing about a bucket policy), so it reports what the disk was told. Read only by [`delivery.mode: 'auto'`](/docs/media/delivery).
-- `getSignedUrl(key, { expiresIn })` — a time-limited **signed read** URL via the request presigner. `expiresIn` accepts Drive's human duration strings (`'30m'`, `'1h'`, `'45s'`, `'2d'`) or a number of seconds; the default is 30 minutes.
+- `getSignedUrl(key, { expiresIn })` — a time-limited **signed read** URL (hand-rolled SigV4 query signing, no SDK presigner; signed against `publicEndpoint` when set). `expiresIn` accepts Drive's human duration strings (`'30m'`, `'1h'`, `'45s'`, `'2d'`) or a number of seconds; the default is 30 minutes.
 
 So `media.library.url(id)` and `media.library.signedUrl(id, '1h')` resolve through the S3 disk with no extra wiring.
 

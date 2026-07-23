@@ -24,7 +24,7 @@ The core package uses **subpath exports** (the Agora idiom), so heavy backends s
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
 | `@adonis-agora/media/upload_sessions/lucid` | the Lucid resumable `UploadSessionStore` (`@adonisjs/lucid` peer) |
-| `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` peers) |
+| `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` peer; presigning is hand-rolled SigV4) |
 | `@adonis-agora/media/processors/sharp` | the sharp `ImageProcessor` (`sharp` peer) |
 | `@adonis-agora/media/telescope` | `mediaTelescopeExtension` (`@adonis-agora/telescope` optional peer) |
 | `@adonis-agora/media/testing` | `InMemoryMediaStore`, `InMemoryDisk`, `inMemoryDiskResolver`, `FakeImageProcessor`, `InMemoryUploadSessionStore` |

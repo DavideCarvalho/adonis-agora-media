@@ -1,6 +1,8 @@
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MediaConfig } from '../src/define_config.js';
+import { DirectUploadHandler } from '../src/direct_upload_handler.js';
+import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
 import type { DriveServiceModule } from '../src/disks/drive.js';
 import { resolveConfiguredDisks } from '../src/disks/factory.js';
@@ -59,6 +61,20 @@ export default class MediaProvider {
           )
         : undefined;
 
+      // Same lazy, opt-in construction for the session-backed direct upload store. It may share
+      // the resumable store's Lucid tables, but each subsystem owns its store INSTANCE so enabling
+      // one never implies the other.
+      const direct = config.uploads?.direct;
+      const directUploadSessions: UploadSessionStore | undefined = direct
+        ? await resolveUploadSessionStore(
+            {
+              ...(direct.store !== undefined ? { store: direct.store } : {}),
+              ...(direct.stores !== undefined ? { stores: direct.stores } : {}),
+            },
+            { app: this.app },
+          )
+        : undefined;
+
       // Build any disks declared in `config.disks` (e.g. the bundled `disks.s3()` driver). Each
       // factory lazily loads its peer (the AWS SDK), so nothing is imported unless an S3 disk is
       // actually configured.
@@ -101,6 +117,21 @@ export default class MediaProvider {
         ...(resumable?.tmpPrefix !== undefined ? { resumableTmpPrefix: resumable.tmpPrefix } : {}),
         ...(resumable?.sessionTtlSeconds !== undefined
           ? { resumableSessionTtlSeconds: resumable.sessionTtlSeconds }
+          : {}),
+        ...(directUploadSessions !== undefined ? { directUploadSessions } : {}),
+        // Direct settings fall back to the shared `uploads.*` knobs, so one part size / TTL can
+        // govern both the raw primitives and the session flow.
+        ...((direct?.partSize ?? config.uploads?.partSize)
+          ? { directPartSize: (direct?.partSize ?? config.uploads?.partSize) as number }
+          : {}),
+        ...((direct?.presignTtlSeconds ?? config.uploads?.presignTtlSeconds)
+          ? {
+              directPresignTtlSeconds: (direct?.presignTtlSeconds ??
+                config.uploads?.presignTtlSeconds) as number,
+            }
+          : {}),
+        ...(direct?.sessionTtlSeconds !== undefined
+          ? { directSessionTtlSeconds: direct.sessionTtlSeconds }
           : {}),
         // Delivery is config only — no route is mounted for it, deliberately: serving a record is
         // an authorization decision, so the app owns the route (see `MediaDeliveryHandler`).
@@ -159,6 +190,7 @@ export default class MediaProvider {
   #registerRoutes(router: HttpRouterService) {
     const config = this.app.config.get<MediaConfig>('media', {});
     this.#mountTusRoutes(router, config);
+    this.#mountDirectSessionRoutes(router, config);
 
     const routes = config.uploads?.routes;
     if (!routes?.enabled) return;
@@ -343,6 +375,120 @@ export default class MediaProvider {
     router.route(`${prefix}/:id`, ['HEAD'], run('HEAD')).as('media.uploads.tus.head');
     router.patch(`${prefix}/:id`, run('PATCH', true)).as('media.uploads.tus.patch');
     router.delete(`${prefix}/:id`, run('DELETE')).as('media.uploads.tus.delete');
+  }
+
+  /**
+   * Mount the optional session-backed direct upload routes when `uploads.direct.routes.enabled`.
+   * Plain AdonisJS routes (NOT controllers), each driving a framework-agnostic
+   * {@link DirectUploadHandler} over `media.direct` — mirroring the TUS mount. The client sends a
+   * `fileName`, never a key: the key is resolved server-side by the handler's `keyFor`.
+   *
+   * Routes (relative to `uploads.direct.routes.prefix`, default `/media/uploads/direct/sessions`):
+   * - `POST   /`                      → initiate: persist a session, presign every part URL
+   * - `GET    /:id`                   → status: confirmed ETags + fresh URLs for pending parts
+   * - `POST   /:id/parts/:partNumber` → confirm one uploaded part's ETag
+   * - `POST   /:id/complete`          → assemble the parts into the final object
+   * - `DELETE /:id`                   → abort
+   *
+   * Like every built-in route these are UNGUARDED — add your own auth middleware, or leave them off
+   * and mount your own routes over the handler/manager.
+   */
+  #mountDirectSessionRoutes(router: HttpRouterService, config: MediaConfig) {
+    const direct = config.uploads?.direct;
+    if (!direct?.routes?.enabled) return;
+
+    const prefix = (direct.routes.prefix ?? '/media/uploads/direct/sessions').replace(/\/+$/, '');
+    const routeDisk = direct.routes.disk;
+    const maxSize = direct.routes.maxSize;
+    const collection = direct.routes.collection;
+
+    // Build the handler once, on first request, from the resolved MediaManager singleton.
+    let handler: DirectUploadHandler | undefined;
+    const getHandler = async (): Promise<DirectUploadHandler> => {
+      if (!handler) {
+        const media = await this.app.container.make(MediaManager);
+        handler = new DirectUploadHandler({
+          manager: media.direct,
+          ...(routeDisk !== undefined ? { disk: routeDisk } : {}),
+          ...(collection !== undefined ? { collection } : {}),
+          ...(maxSize !== undefined ? { maxSize } : {}),
+        });
+      }
+      return handler;
+    };
+
+    const run = (toRequest: (ctx: HttpContext) => DirectUploadRequest) => {
+      return async (ctx: HttpContext) => {
+        const direct_ = await getHandler();
+        const res = await direct_.handle(toRequest(ctx));
+        ctx.response.status(res.status);
+        return res.body ?? '';
+      };
+    };
+
+    router
+      .post(
+        prefix,
+        run((ctx) => {
+          const body = ctx.request.body() as {
+            fileName: string;
+            size: number;
+            contentType?: string;
+            metadata?: Record<string, string>;
+          };
+          return {
+            action: 'initiate',
+            fileName: body.fileName,
+            size: body.size,
+            ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
+            ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
+          };
+        }),
+      )
+      .as('media.uploads.direct.sessions.initiate');
+
+    router
+      .get(
+        `${prefix}/:id`,
+        run((ctx) => ({ action: 'status', uploadId: String(ctx.params.id) })),
+      )
+      .as('media.uploads.direct.sessions.status');
+
+    router
+      .post(
+        `${prefix}/:id/parts/:partNumber`,
+        run((ctx) => {
+          const body = ctx.request.body() as { etag: string };
+          return {
+            action: 'confirm-part',
+            uploadId: String(ctx.params.id),
+            partNumber: Number(ctx.params.partNumber),
+            etag: body.etag,
+          };
+        }),
+      )
+      .as('media.uploads.direct.sessions.confirmPart');
+
+    router
+      .post(
+        `${prefix}/:id/complete`,
+        run((ctx) => {
+          const body = ctx.request.body() as { parts?: MultipartPart[] };
+          return {
+            action: 'complete',
+            uploadId: String(ctx.params.id),
+            ...(body.parts !== undefined ? { parts: body.parts } : {}),
+          };
+        }),
+      )
+      .as('media.uploads.direct.sessions.complete');
+
+    router
+      .delete(
+        `${prefix}/:id`,
+        run((ctx) => ({ action: 'abort', uploadId: String(ctx.params.id) })),
+      )
+      .as('media.uploads.direct.sessions.abort');
   }
 
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */

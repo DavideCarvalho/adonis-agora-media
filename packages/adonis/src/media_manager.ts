@@ -1,6 +1,7 @@
 import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode } from './delivery.js';
-import { ResumableUploadsNotConfiguredError } from './errors.js';
+import { DirectUploadManager } from './direct_upload.js';
+import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import { MediaLibrary } from './media_library.js';
@@ -10,7 +11,7 @@ import type { MediaStore } from './media_store.js';
 import { ResumableUploadManager } from './resumable_upload.js';
 import type { UploadSessionStore } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
-import type { DiskResolver } from './types.js';
+import type { DiskResolver, MultipartPart } from './types.js';
 import {
   type AbortDirectUploadInput,
   type CompleteDirectUploadInput,
@@ -46,6 +47,18 @@ export interface MediaManagerOptions {
   resumableTmpPrefix?: string;
   /** Resumable session lifetime in seconds (TUS `expiration`). Omit for never-expiring sessions. */
   resumableSessionTtlSeconds?: number;
+  /**
+   * Session store for session-backed direct uploads. When provided, `media.direct` exposes a
+   * {@link DirectUploadManager}; when omitted, accessing `media.direct` throws a helpful error.
+   * May be the very same store instance (or the same Lucid tables) as `uploadSessions`.
+   */
+  directUploadSessions?: UploadSessionStore;
+  /** Default part size for session-backed direct uploads. Default 20 MiB. */
+  directPartSize?: number;
+  /** Presigned part-URL TTL in seconds for session-backed direct uploads. Default 3600. */
+  directPresignTtlSeconds?: number;
+  /** Direct session lifetime in seconds. Omit for never-expiring sessions. */
+  directSessionTtlSeconds?: number;
   /** Default read strategy (`auto`/`public`/`signed`/`proxy`) for `library.deliver`. Default `auto`. */
   deliveryMode?: DeliveryMode;
   /** Signed-URL lifetime in seconds when delivery resolves to `signed`. Default 300. */
@@ -76,6 +89,8 @@ export class MediaManager {
   readonly uploads: UploadManager;
   /** Resumable (TUS) upload coordinator — present only when a session store is configured. */
   readonly #resumable: ResumableUploadManager | undefined;
+  /** Session-backed direct upload coordinator — present only when a session store is configured. */
+  readonly #direct: DirectUploadManager | undefined;
 
   constructor(options: MediaManagerOptions) {
     this.store = options.store;
@@ -129,6 +144,25 @@ export class MediaManager {
           : {}),
       });
     }
+    if (options.directUploadSessions !== undefined) {
+      this.#direct = new DirectUploadManager({
+        storage: this.storage,
+        sessions: options.directUploadSessions,
+        // The manager reads the whitelist from the same registry attach uses, so the initiate
+        // gate and the attach-time barrier cannot drift.
+        collections: this.library.collections,
+        ...(options.directPartSize !== undefined ? { partSize: options.directPartSize } : {}),
+        ...(options.directPresignTtlSeconds !== undefined
+          ? { presignTtlSeconds: options.directPresignTtlSeconds }
+          : {}),
+        ...(options.directSessionTtlSeconds !== undefined
+          ? { sessionTtlSeconds: options.directSessionTtlSeconds }
+          : {}),
+        ...(options.emitDiagnostics !== undefined
+          ? { emitDiagnostics: options.emitDiagnostics }
+          : {}),
+      });
+    }
   }
 
   /**
@@ -161,6 +195,43 @@ export class MediaManager {
     input: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>,
   ): Promise<MediaRecord> {
     const { key, disk, size } = await this.resumable.complete(sessionId);
+    return this.library.attachExisting({ ...input, key, disk, size });
+  }
+
+  /**
+   * The session-backed direct upload coordinator. Throws {@link DirectUploadsNotConfiguredError}
+   * unless a session store was configured via `uploads.direct` in `config/media.ts`.
+   */
+  get direct(): DirectUploadManager {
+    if (!this.#direct) throw new DirectUploadsNotConfiguredError();
+    return this.#direct;
+  }
+
+  /** Whether session-backed direct uploads are configured (a session store is present). */
+  get hasDirect(): boolean {
+    return this.#direct !== undefined;
+  }
+
+  /**
+   * Finish a session-backed direct upload and register the assembled object as a media record, in
+   * one step — the direct-mode twin of {@link completeUploadToLibrary}, meeting the two layers at
+   * the manager the same way. `attachExisting` adopts the object zero-copy and re-validates the
+   * collection's whitelist against the REAL bytes (a short head read), so a client that lied about
+   * `contentType` at initiate is caught here, exactly like every other upload path.
+   *
+   * ```ts
+   * await media.completeDirectUploadToLibrary(sessionId, {
+   *   ownerType: 'Lesson', ownerId: lesson.id, collection: 'video',
+   *   fileName: 'original.mp4', mimeType: 'video/mp4',
+   * }, partsFromClient)
+   * ```
+   */
+  async completeDirectUploadToLibrary(
+    sessionId: string,
+    input: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>,
+    parts: MultipartPart[] = [],
+  ): Promise<MediaRecord> {
+    const { key, disk, size } = await this.direct.complete(sessionId, parts);
     return this.library.attachExisting({ ...input, key, disk, size });
   }
 

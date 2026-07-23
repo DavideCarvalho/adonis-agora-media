@@ -13,7 +13,6 @@ import {
   type S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type {
   CopyOptions,
   Disk,
@@ -30,6 +29,7 @@ import type {
   SignedUrlOptions,
 } from '../types.js';
 import { hardenBodyStream } from './harden_body_stream.js';
+import { type SigV4Credentials, presignS3Url } from './sigv4.js';
 import { extractListObjectsV2FromXml, isXmlEntityDeserializationError } from './xml_fallback.js';
 
 /**
@@ -50,6 +50,14 @@ export interface S3DiskOptions {
   region?: string;
   /** Custom endpoint (S3-compatible services). Used for URL synthesis when no `publicBaseUrl` is set. */
   endpoint?: string;
+  /**
+   * Endpoint presigned URLs are signed against, when it differs from `endpoint`. SigV4 embeds the
+   * `Host` in the signature, and presigned URLs are consumed by the BROWSER (a part `PUT` during a
+   * direct upload, a `GET` while streaming) — so when the app reaches storage through an internal
+   * FQDN the internet cannot resolve (MinIO behind a private network), set this to the public one.
+   * Server-side operations keep using `endpoint`; only what leaves the server is signed for here.
+   */
+  publicEndpoint?: string;
   /** Emit path-style URLs (`endpoint/bucket/key`) instead of virtual-hosted-style. */
   forcePathStyle?: boolean;
   /**
@@ -108,6 +116,7 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
   private readonly publicBaseUrl: string | undefined;
   private readonly region: string | undefined;
   private readonly endpoint: string | undefined;
+  private readonly publicEndpoint: string | undefined;
   private readonly forcePathStyle: boolean;
   private readonly visibility: 'public' | 'private';
 
@@ -118,6 +127,7 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     this.publicBaseUrl = options.publicBaseUrl;
     this.region = options.region;
     this.endpoint = options.endpoint;
+    this.publicEndpoint = options.publicEndpoint;
     this.forcePathStyle = options.forcePathStyle ?? false;
     this.visibility = options.visibility ?? 'private';
     this.capabilities = {
@@ -237,16 +247,95 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
   }
 
   async getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string> {
-    return getSignedUrl(
-      this.client,
-      new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: this.key(key),
-        ResponseContentType: options?.contentType,
-        ResponseContentDisposition: options?.contentDisposition,
-      }),
-      { expiresIn: toExpiresInSeconds(options?.expiresIn) },
-    );
+    const query: Record<string, string> = {};
+    if (options?.contentType !== undefined) query['response-content-type'] = options.contentType;
+    if (options?.contentDisposition !== undefined) {
+      query['response-content-disposition'] = options.contentDisposition;
+    }
+    return this.#presign('GET', this.key(key), query, toExpiresInSeconds(options?.expiresIn), {
+      browserFacing: true,
+    });
+  }
+
+  // --- Hand-rolled SigV4 presigning ---------------------------------------------------------
+
+  /**
+   * Credentials + region for signing, resolved from the SDK client's own config so every credential
+   * source the client supports (static, env, shared config, IAM role) keeps working. Only the
+   * *signature computation* is hand-rolled — see {@link presignS3Url} for why (it is pure local
+   * crypto, and owning it is what lets a URL be signed for {@link S3DiskOptions.publicEndpoint}
+   * without constructing a second client per endpoint).
+   */
+  async #signingContext(): Promise<{ credentials: SigV4Credentials; region: string }> {
+    const config = this.client.config as unknown as {
+      credentials: SigV4Credentials | (() => Promise<SigV4Credentials>);
+      region: string | (() => Promise<string>);
+    };
+    const credentials =
+      typeof config.credentials === 'function' ? await config.credentials() : config.credentials;
+    let region = this.region;
+    if (region === undefined) {
+      try {
+        region = typeof config.region === 'function' ? await config.region() : config.region;
+      } catch {
+        // A client constructed without a region (S3-compatible services often don't need one).
+      }
+    }
+    return { credentials, region: region ?? 'us-east-1' };
+  }
+
+  /**
+   * The scheme/host/path a presigned URL is computed for. `browserFacing` URLs prefer
+   * {@link S3DiskOptions.publicEndpoint}: the signature bakes the `Host` in, and these URLs are
+   * consumed outside the server's network. Server-side presigns (the list XML fallback) always
+   * target the internal endpoint.
+   */
+  #presignTarget(
+    fullKey: string,
+    options: { browserFacing: boolean; region: string; bucket?: string | undefined },
+  ): { protocol: 'http:' | 'https:'; host: string; path: string } {
+    const bucket = options.bucket ?? this.bucket;
+    const base = (options.browserFacing ? this.publicEndpoint : undefined) ?? this.endpoint;
+    if (base !== undefined) {
+      const url = new URL(base);
+      const basePath = url.pathname.replace(/\/+$/, '');
+      const protocol = url.protocol === 'http:' ? 'http:' : 'https:';
+      if (this.forcePathStyle) {
+        return {
+          protocol,
+          host: url.host,
+          path: `${basePath}/${bucket}${fullKey ? `/${fullKey}` : ''}`,
+        };
+      }
+      return { protocol, host: `${bucket}.${url.host}`, path: `${basePath}/${fullKey}` };
+    }
+    return {
+      protocol: 'https:',
+      host: `${bucket}.s3.${options.region}.amazonaws.com`,
+      path: `/${fullKey}`,
+    };
+  }
+
+  /** Presign one request against this disk. `fullKey` is already prefixed; `''` targets the bucket. */
+  async #presign(
+    method: string,
+    fullKey: string,
+    query: Record<string, string>,
+    expiresInSeconds: number,
+    options: { browserFacing: boolean; bucket?: string | undefined },
+  ): Promise<string> {
+    const { credentials, region } = await this.#signingContext();
+    const target = this.#presignTarget(fullKey, { ...options, region });
+    return presignS3Url({
+      method,
+      protocol: target.protocol,
+      host: target.host,
+      path: target.path,
+      query,
+      credentials,
+      region,
+      expiresInSeconds,
+    });
   }
 
   async getMetaData(key: string): Promise<DiskMetaData> {
@@ -369,19 +458,20 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     } catch (err) {
       if (!isXmlEntityDeserializationError(err)) throw err;
       // fast-xml-parser rejected valid entity refs in the ListObjectsV2 XML — presign the same
-      // request and fetch the raw body, then parse it by hand into the same shape. The presigner is
-      // already bundled with this disk, so the fallback adds no new dependency (see xml_fallback.ts).
-      const signedUrl = await getSignedUrl(
-        this.client,
-        new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: fullPrefix,
-          Delimiter: options?.delimiter ?? '/',
-          MaxKeys: options?.limit,
-          ContinuationToken: options?.cursor,
-        }),
-        { expiresIn: 60 },
-      );
+      // request (hand-rolled SigV4, see sigv4.ts) and fetch the raw body, then parse it by hand
+      // into the same shape. This is a SERVER-side fetch, so it deliberately targets the internal
+      // endpoint even when a `publicEndpoint` is configured (see xml_fallback.ts).
+      const listQuery: Record<string, string> = {
+        'list-type': '2',
+        prefix: fullPrefix,
+        delimiter: options?.delimiter ?? '/',
+      };
+      if (options?.limit !== undefined) listQuery['max-keys'] = String(options.limit);
+      if (options?.cursor !== undefined) listQuery['continuation-token'] = options.cursor;
+      const signedUrl = await this.#presign('GET', '', listQuery, 60, {
+        browserFacing: false,
+        bucket,
+      });
       const response = await fetch(signedUrl);
       if (!response.ok) {
         throw new Error(
@@ -449,15 +539,14 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     partNumber: number,
     expiresInSeconds: number,
   ): Promise<string> {
-    return getSignedUrl(
-      this.client,
-      new UploadPartCommand({
-        Bucket: this.bucket,
-        Key: this.key(key),
-        UploadId: uploadId,
-        PartNumber: partNumber,
-      }),
-      { expiresIn: Math.max(1, Math.round(expiresInSeconds)) },
+    // Browser-facing: the client PUTs the part bytes to this URL, so it is signed against the
+    // public endpoint when one is configured.
+    return this.#presign(
+      'PUT',
+      this.key(key),
+      { uploadId, partNumber: String(partNumber) },
+      expiresInSeconds,
+      { browserFacing: true },
     );
   }
 

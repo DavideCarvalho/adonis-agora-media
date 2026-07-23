@@ -47,6 +47,62 @@ export interface MediaUploadsConfig {
    * disabled and no session store is built.
    */
   resumable?: MediaResumableConfig;
+  /**
+   * Session-backed direct upload settings (`media.direct`) — browser→S3 multipart through presigned
+   * part URLs, with the session (uploadId, part size, confirmed ETags) persisted server-side so an
+   * interrupted upload resumes after a page reload. Present ⇒ `media.direct` is available; when
+   * `routes.enabled`, the provider mounts the JSON endpoints. Absent ⇒ disabled, no session store
+   * is built. See {@link MediaDirectUploadConfig} for how this relates to TUS.
+   */
+  direct?: MediaDirectUploadConfig;
+}
+
+/**
+ * Session-backed direct upload configuration. The session store is the SAME SPI (and, with
+ * `uploadSessions.lucid()`, the same tables) the resumable (TUS) subsystem uses — the two flows are
+ * complements, not rivals: TUS streams every chunk THROUGH the app (works on any disk, byte-exact
+ * resume), while direct hands the browser presigned URLs and the bytes never touch the app (S3-only,
+ * resumes at part granularity, needs bucket CORS exposing `ETag`). For video-sized files on S3,
+ * direct halves the total bandwidth.
+ */
+export interface MediaDirectUploadConfig {
+  /**
+   * Name of the session store (a key of {@link stores} below). Omit to use the in-memory store
+   * (single-process, non-durable — sessions won't survive a restart, uploads in flight will).
+   */
+  store?: string;
+  /** Named session stores, built with the {@link uploadSessions} factory (lazy peers). */
+  stores?: Record<string, UploadSessionStoreFactory>;
+  /**
+   * Multipart part size in bytes. Falls back to `uploads.partSize`, then 20 MiB. S3 requires at
+   * least 5 MiB and at most 10,000 parts per upload.
+   */
+  partSize?: number;
+  /**
+   * Lifetime of presigned part URLs, in seconds. Falls back to `uploads.presignTtlSeconds`, then
+   * 3600. Expiry never strands an upload: `status()` re-issues fresh URLs for pending parts.
+   */
+  presignTtlSeconds?: number;
+  /** Session lifetime in seconds. Omit for sessions that never expire. */
+  sessionTtlSeconds?: number;
+  /** Mount the built-in direct-session HTTP routes. Opt-in. */
+  routes?: {
+    /** Register the routes. Default false. */
+    enabled?: boolean;
+    /** Path prefix for the routes. Default `/media/uploads/direct/sessions`. */
+    prefix?: string;
+    /** Disk uploads land on. Defaults to the media default disk (must be multipart-capable). */
+    disk?: string;
+    /** Reject initiations whose declared `size` exceeds this many bytes. */
+    maxSize?: number;
+    /**
+     * Collection these uploads are destined for. Set it to have `initiate` reject a declared
+     * `contentType` outside that collection's `acceptsMimeTypes` — before the multipart upload
+     * even opens. The collection config remains the single source of truth; nothing is restated
+     * here. Omit to accept any type (size limits still apply).
+     */
+    collection?: string;
+  };
 }
 
 /**

@@ -14,6 +14,13 @@ Beyond the buffer-once `attach` / `createFromFile` calls, the library now ships 
 
 `auto` (the default) picks `direct` on a multipart-capable disk, else `proxy`.
 
+<Callout type="info" title="These are the raw, stateless primitives">
+  `uploadId` and the collected part ETags live only in the caller's hands — a page reload loses them.
+  For browser uploads that must survive a reload, use the session-backed
+  [direct sessions](/docs/media/uploads/direct-sessions) flow (`media.direct`), which persists the
+  session server-side and wraps exactly these primitives.
+</Callout>
+
 <Callout type="info">
   This is the server side. For a browser client that speaks this contract (progress, retries, concurrency), use [`@adonis-agora/media-react`](/docs/media/react) — its `createMediaUploadClient` / `useMediaUpload` implement exactly the routes below.
 </Callout>
@@ -136,6 +143,7 @@ Direct and proxy uploads emit `agora:media:upload.start` / `upload.complete` / `
 
 ## Next steps
 
+- [Direct sessions](/docs/media/uploads/direct-sessions) — these primitives plus a persisted session: resume after a page reload, key resolved server-side
 - [Resumable / TUS](/docs/media/uploads/resumable-tus) — chunked uploads that resume after a dropped connection
 - [React client](/docs/media/react) — a browser client that drives these routes
 - [S3 disk](/docs/media/storage/s3-disk) — the multipart-capable disk direct mode needs

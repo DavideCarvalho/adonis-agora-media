@@ -55,5 +55,17 @@ export default defineConfig({
   //     sessionTtlSeconds: 24 * 60 * 60,
   //     routes: { enabled: true, prefix: '/media/uploads/tus' },
   //   },
+  //
+  //   // Session-backed direct uploads — the browser PUTs multipart parts straight to S3 through
+  //   // presigned URLs (bytes never pass through the app), and the session (uploadId, part size,
+  //   // confirmed ETags) persists server-side so an interrupted upload resumes after a page
+  //   // reload. Needs a multipart-capable disk (disks.s3()); shares the session tables above.
+  //   direct: {
+  //     store: 'lucid',
+  //     stores: { lucid: uploadSessions.lucid() },
+  //     partSize: 20 * 1024 * 1024,
+  //     sessionTtlSeconds: 24 * 60 * 60,
+  //     routes: { enabled: true, prefix: '/media/uploads/direct/sessions', collection: 'videos' },
+  //   },
   // },
 })
