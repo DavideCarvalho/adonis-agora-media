@@ -77,13 +77,15 @@ await media.library.attach({
 //   declared "application/pdf". Collection "exams" accepts [application/pdf].
 ```
 
-The embedded signature table covers **PNG, JPEG, GIF, WEBP and PDF** — no extra dependency. You can call the detector yourself with `detectMimeType(head)`.
+The embedded signature table covers **PNG, JPEG, GIF, WEBP, PDF, MP4, QuickTime, WebM, Matroska, AVI and MPEG-TS** — no extra dependency. You can call the detector yourself with `detectMimeType(head)`.
+
+For the video containers, detection is signature-precise, not extension-guessing: an MP4 is identified by its `ftyp` box and major brand (so a QuickTime `.mov` relabeled `video/mp4` is a *mismatch*, not a pass), and a WebM is told apart from a generic Matroska file by the `DocType` inside the EBML header. An `ftyp` brand outside the recognised MP4 set (3GPP, `M4A `) and an EBML DocType that is neither `webm` nor `matroska` stay *unrecognised* rather than being guessed — under an open whitelist they fall back to the declared type as before.
 
 #### Closed whitelists reject unrecognisable content
 
 Formats with no fixed signature (SVG, CSV, plain text, most office formats) are *unknown*, not invalid — rejecting them outright would break legitimate uploads. But "unknown" is only uninformative when an accepted type could plausibly BE unknown. So the rule turns on the whitelist itself:
 
-- **Closed whitelist** — every type in `acceptsMimeTypes` is in the signature table (`['application/pdf']`, `['image/png', 'image/jpeg']`). Content matching no signature cannot be any of them, so it is rejected with `ContentSignatureUnrecognizedError`. A `.txt` renamed to `.pdf` no longer becomes a record, and your app does not have to reimplement that check.
+- **Closed whitelist** — every type in `acceptsMimeTypes` is in the signature table (`['application/pdf']`, `['image/png', 'image/jpeg']`, `['video/mp4']`). Content matching no signature cannot be any of them, so it is rejected with `ContentSignatureUnrecognizedError`. A `.txt` renamed to `.pdf` no longer becomes a record, and your app does not have to reimplement that check.
 - **Open whitelist** — at least one accepted type has no signature (`['application/pdf', 'image/svg+xml']`, `['text/csv']`). Unrecognisable content is the normal case there, so the declared type stands, exactly as before.
 
 ```ts
@@ -97,7 +99,7 @@ Formats with no fixed signature (SVG, CSV, plain text, most office formats) are 
 Use `isDetectableMimeType(type)` / `isClosedSignatureWhitelist(types)` if you need the same reasoning outside the library.
 
 <Callout type="info" title="It never reads the whole file">
-  Only the first `SIGNATURE_HEAD_BYTES` (16) are inspected. For `attach` the head is peeked and then **replayed** in front of the rest, so a `Readable` payload stays streaming; for [`attachExisting`](/docs/media/uploads/resumable-tus) it is a short read against the disk that is torn down immediately — adopting a 2 GiB scan in place never downloads it.
+  Only the first `SIGNATURE_HEAD_BYTES` (189 — two MPEG-TS sync bytes, the deepest probe in the table) are inspected. For `attach` the head is peeked and then **replayed** in front of the rest, so a `Readable` payload stays streaming; for [`attachExisting`](/docs/media/uploads/resumable-tus) it is a short read against the disk that is torn down immediately — adopting a 2 GiB scan in place never downloads it.
 </Callout>
 
 ### Single-file collections
