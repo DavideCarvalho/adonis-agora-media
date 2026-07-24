@@ -1,5 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
+import type { MiddlewareFn, ParsedNamedMiddleware } from '@adonisjs/core/types/http';
 import type { MediaConfig } from '../src/define_config.js';
 import { DirectUploadHandler } from '../src/direct_upload_handler.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
@@ -14,7 +15,7 @@ import { resolveStore } from '../src/stores/factory.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import { TusUploadHandler } from '../src/tus.js';
 import type { TusRequest } from '../src/tus.js';
-import type { MultipartPart } from '../src/types.js';
+import type { DirectUploadPolicy, MultipartPart } from '../src/types.js';
 import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
 
 /**
@@ -401,17 +402,24 @@ export default class MediaProvider {
     const routeDisk = direct.routes.disk;
     const maxSize = direct.routes.maxSize;
     const collection = direct.routes.collection;
+    const policyThunk = direct.routes.policy;
+    const routeMiddleware = direct.routes.middleware;
 
-    // Build the handler once, on first request, from the resolved MediaManager singleton.
+    // Build the handler once, on first request, from the resolved MediaManager singleton. The
+    // policy (when configured) is lazy-imported here too, so its module loads only if the routes
+    // actually serve a request. `adopt` wires the policy's `complete` path onto the library.
     let handler: DirectUploadHandler | undefined;
     const getHandler = async (): Promise<DirectUploadHandler> => {
       if (!handler) {
         const media = await this.app.container.make(MediaManager);
+        const policy = await this.#resolveDirectUploadPolicy(policyThunk);
         handler = new DirectUploadHandler({
           manager: media.direct,
+          adopt: media.completeDirectUploadToLibrary.bind(media),
           ...(routeDisk !== undefined ? { disk: routeDisk } : {}),
           ...(collection !== undefined ? { collection } : {}),
           ...(maxSize !== undefined ? { maxSize } : {}),
+          ...(policy !== undefined ? { policy } : {}),
         });
       }
       return handler;
@@ -420,75 +428,95 @@ export default class MediaProvider {
     const run = (toRequest: (ctx: HttpContext) => DirectUploadRequest) => {
       return async (ctx: HttpContext) => {
         const direct_ = await getHandler();
-        const res = await direct_.handle(toRequest(ctx));
+        const res = await direct_.handle(toRequest(ctx), ctx);
         ctx.response.status(res.status);
         return res.body ?? '';
       };
     };
 
+    // The five session endpoints, grouped so `routes.middleware` (e.g. `middleware.auth()`) guards
+    // them all at once. Paths are relative to the group `prefix`. Empty middleware ⇒ the routes stay
+    // UNGUARDED, exactly as before this seam existed.
     router
-      .post(
-        prefix,
-        run((ctx) => {
-          const body = ctx.request.body() as {
-            fileName: string;
-            size: number;
-            contentType?: string;
-            metadata?: Record<string, string>;
-          };
-          return {
-            action: 'initiate',
-            fileName: body.fileName,
-            size: body.size,
-            ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
-            ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
-          };
-        }),
-      )
-      .as('media.uploads.direct.sessions.initiate');
+      .group(() => {
+        router
+          .post(
+            '/',
+            run((ctx) => {
+              const body = ctx.request.body() as {
+                fileName: string;
+                size: number;
+                contentType?: string;
+                metadata?: Record<string, string>;
+              };
+              return {
+                action: 'initiate',
+                fileName: body.fileName,
+                size: body.size,
+                ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
+                ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
+              };
+            }),
+          )
+          .as('media.uploads.direct.sessions.initiate');
 
-    router
-      .get(
-        `${prefix}/:id`,
-        run((ctx) => ({ action: 'status', uploadId: String(ctx.params.id) })),
-      )
-      .as('media.uploads.direct.sessions.status');
+        router
+          .get(
+            '/:id',
+            run((ctx) => ({ action: 'status', uploadId: String(ctx.params.id) })),
+          )
+          .as('media.uploads.direct.sessions.status');
 
-    router
-      .post(
-        `${prefix}/:id/parts/:partNumber`,
-        run((ctx) => {
-          const body = ctx.request.body() as { etag: string };
-          return {
-            action: 'confirm-part',
-            uploadId: String(ctx.params.id),
-            partNumber: Number(ctx.params.partNumber),
-            etag: body.etag,
-          };
-        }),
-      )
-      .as('media.uploads.direct.sessions.confirmPart');
+        router
+          .post(
+            '/:id/parts/:partNumber',
+            run((ctx) => {
+              const body = ctx.request.body() as { etag: string };
+              return {
+                action: 'confirm-part',
+                uploadId: String(ctx.params.id),
+                partNumber: Number(ctx.params.partNumber),
+                etag: body.etag,
+              };
+            }),
+          )
+          .as('media.uploads.direct.sessions.confirmPart');
 
-    router
-      .post(
-        `${prefix}/:id/complete`,
-        run((ctx) => {
-          const body = ctx.request.body() as { parts?: MultipartPart[] };
-          return {
-            action: 'complete',
-            uploadId: String(ctx.params.id),
-            ...(body.parts !== undefined ? { parts: body.parts } : {}),
-          };
-        }),
-      )
-      .as('media.uploads.direct.sessions.complete');
+        router
+          .post(
+            '/:id/complete',
+            run((ctx) => {
+              const body = ctx.request.body() as { parts?: MultipartPart[] };
+              return {
+                action: 'complete',
+                uploadId: String(ctx.params.id),
+                ...(body.parts !== undefined ? { parts: body.parts } : {}),
+              };
+            }),
+          )
+          .as('media.uploads.direct.sessions.complete');
 
-    router
-      .delete(
-        `${prefix}/:id`,
-        run((ctx) => ({ action: 'abort', uploadId: String(ctx.params.id) })),
-      )
-      .as('media.uploads.direct.sessions.abort');
+        router
+          .delete(
+            '/:id',
+            run((ctx) => ({ action: 'abort', uploadId: String(ctx.params.id) })),
+          )
+          .as('media.uploads.direct.sessions.abort');
+      })
+      .prefix(prefix)
+      .middleware((routeMiddleware ?? []) as (MiddlewareFn | ParsedNamedMiddleware)[]);
+  }
+
+  /**
+   * Resolve the configured direct-upload {@link DirectUploadPolicy} from its lazy thunk, reading the
+   * module's default export. Returns `undefined` when no policy is configured, leaving the handler on
+   * its built-in key/complete behavior.
+   */
+  async #resolveDirectUploadPolicy(
+    thunk?: () => Promise<{ default: DirectUploadPolicy<unknown, unknown> }>,
+  ): Promise<DirectUploadPolicy<unknown, unknown> | undefined> {
+    if (!thunk) return undefined;
+    return (await thunk()).default;
   }
 
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */

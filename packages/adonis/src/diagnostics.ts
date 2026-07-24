@@ -8,6 +8,15 @@ const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');
 type EmitFn = (lib: string, event: string, payload: unknown) => void;
 
 /**
+ * The `@adonis-agora/diagnostics` trace capability, published on this global slot. Like
+ * {@link EMIT_SLOT} it is read STRUCTURALLY — media never imports the diagnostics package.
+ * A trace slot wraps a unit of work so an observer can time/inspect it; when no slot is
+ * installed the wrapped function simply runs and its result (or error) passes through.
+ */
+const TRACE_SLOT = Symbol.for('@agora/diagnostics:trace');
+type TraceFn = <T>(lib: string, event: string, fn: () => T, payload?: unknown) => T;
+
+/**
  * Every media milestone published on `agora:media:<event>`. The single runtime source for the
  * {@link MediaDiagnosticEvent} union — a Telescope watcher iterates this to subscribe/claim.
  */
@@ -168,4 +177,18 @@ export function publishMedia<E extends MediaDiagnosticEvent>(
       // diagnostics must never break a media operation
     }
   }
+}
+
+/**
+ * Wrap a unit of media work in a structural trace span (`upload.policy.*` and friends). When a
+ * diagnostics trace slot is installed it observes the call (lib hard-coded to `'media'`); otherwise
+ * the wrapped function runs directly. Unlike {@link publishMedia}, errors are NOT swallowed — a
+ * traced policy hook must surface its failure to the caller so the handler can map it.
+ */
+export function traceMedia<T>(event: string, fn: () => T, payload?: unknown): T {
+  const trace = (globalThis as Record<symbol, unknown>)[TRACE_SLOT] as TraceFn | undefined;
+  if (typeof trace === 'function') {
+    return trace('media', event, fn, payload);
+  }
+  return fn();
 }

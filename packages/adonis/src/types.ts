@@ -1,4 +1,8 @@
 import type { Readable } from 'node:stream';
+import type { DirectUploadCreatedSession } from './direct_upload.js';
+import type { DirectUploadResponse } from './direct_upload_handler.js';
+import type { AttachExistingInput } from './media_library.js';
+import type { MediaRecord } from './media_record.js';
 
 /**
  * The minimal disk surface `@adonis-agora/media` needs — a structural subset of an
@@ -195,3 +199,83 @@ export interface MultipartUploadDisk {
  * Omitting the name yields the configured default disk.
  */
 export type DiskResolver = (name?: string) => Disk;
+
+/**
+ * The app's decision for ONE direct upload, returned by {@link DirectUploadPolicy.onInitiate}. The
+ * library owns the invariant mechanics (open the multipart upload, presign, persist the session,
+ * confirm parts, assemble, adopt); the policy supplies the variant — above all the final object
+ * {@link key}, resolved server-side per user/tenant (the client sends a `fileName`, never a key).
+ *
+ * `response` is merged onto the `201` body the client receives (after the session fields), so a
+ * policy can hand the client extra data — e.g. the app-side `directUploadSessionId` it just
+ * persisted. `rollback` runs if anything after `onInitiate` throws (MIME gate, S3 open), letting the
+ * policy undo app-side state it already created.
+ */
+export type InitiateDecision<C> = {
+  key: string;
+  collection?: string;
+  disk?: string;
+  visibility?: 'public' | 'private';
+  partSize?: number;
+  metadata?: Record<string, string>;
+  response?: Record<string, unknown>;
+  context?: C;
+  rollback?: () => void | Promise<void>;
+};
+
+/**
+ * How a completed upload maps onto the media library, returned by
+ * {@link DirectUploadPolicy.resolveComplete}. `target` is everything `attachExisting` needs to adopt
+ * the already-uploaded object (minus `key`/`disk`/`size`, which the session already fixes).
+ */
+export type CompleteResolution<C> = {
+  sessionId: string;
+  target: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>;
+  context?: C;
+};
+
+/** Which policy phase failed, with the decision/resolution in flight — handed to {@link DirectUploadPolicy.mapError}. */
+export type PolicyErrorInfo<C> =
+  | { phase: 'initiate'; decision?: InitiateDecision<C> | undefined }
+  | { phase: 'complete'; resolution?: CompleteResolution<C> | undefined }
+  | { phase: 'abort' };
+
+/**
+ * The app-injected strategy that turns the framework-neutral {@link DirectUploadHandler} into a
+ * complete upload feature. The handler stays dumb and authorization-free; the policy answers the
+ * app-specific questions — where the object lives (`onInitiate`), what it becomes on completion
+ * (`resolveComplete`/`onComplete`), and how failures read as HTTP (`mapError`).
+ *
+ * Methods (not arrow properties) on purpose: TypeScript checks method parameters bivariantly, so an
+ * app's `DirectUploadPolicy<HttpContext, FileUpload>` is assignable to the handler's
+ * `DirectUploadPolicy<unknown, unknown>` without a cast.
+ */
+export interface DirectUploadPolicy<Ctx, C> {
+  onInitiate(
+    ctx: Ctx,
+    input: {
+      fileName: string;
+      size: number;
+      contentType?: string | undefined;
+      metadata?: Record<string, string> | undefined;
+    },
+  ): Promise<InitiateDecision<C>> | InitiateDecision<C>;
+  onInitiated?(
+    ctx: Ctx,
+    info: { decision: InitiateDecision<C>; session: DirectUploadCreatedSession },
+  ): Promise<void> | void;
+  resolveComplete(
+    ctx: Ctx,
+    input: { id: string; parts?: MultipartPart[] | undefined },
+  ): Promise<CompleteResolution<C>> | CompleteResolution<C>;
+  onComplete(
+    ctx: Ctx,
+    info: { record: MediaRecord; resolution: CompleteResolution<C> },
+  ): Promise<unknown>;
+  onAbort?(ctx: Ctx, input: { id: string }): Promise<void> | void;
+  mapError?(
+    ctx: Ctx,
+    error: unknown,
+    info: PolicyErrorInfo<C>,
+  ): Promise<DirectUploadResponse | undefined> | DirectUploadResponse | undefined;
+}
