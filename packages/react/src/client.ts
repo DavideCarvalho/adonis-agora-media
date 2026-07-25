@@ -214,10 +214,24 @@ const TUS_VERSION = '1.0.0';
 
 // --- small helpers (mirrors the reference client's utilities) --------------------------------
 
+/**
+ * An HTTP-level upload failure. `status` is the non-2xx response code when the server replied (absent on
+ * a network error), letting callers tell a definitive failure (e.g. 404/410 — gone) from a transient one
+ * (network blip / 5xx) without parsing the message string.
+ */
+export class MediaHttpError extends Error {
+  readonly status: number | undefined;
+
+  constructor(message: string, status?: number) {
+    super(status !== undefined ? `${message} (status ${status})` : message);
+    this.name = 'MediaHttpError';
+    this.status = status;
+  }
+}
+
 function assertOk(res: { ok?: boolean; status?: number }, message: string): void {
   if (!('ok' in res) || res.ok === false) {
-    const status = typeof res.status === 'number' ? ` (status ${res.status})` : '';
-    throw new Error(`${message}${status}`);
+    throw new MediaHttpError(message, typeof res.status === 'number' ? res.status : undefined);
   }
 }
 

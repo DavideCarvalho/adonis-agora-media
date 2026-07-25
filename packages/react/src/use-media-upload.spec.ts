@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MediaUploadClient } from './client';
+import { MediaHttpError, type MediaUploadClient } from './client';
 import { useMediaUpload } from './use-media-upload';
 
 function fakeClient(overrides: Partial<MediaUploadClient> = {}): MediaUploadClient {
@@ -439,11 +439,19 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
   it('mount probe clears a stale session with no pending parts', async () => {
     localStorage.setItem(storageKey, JSON.stringify(stored));
     const directSessionStatus = vi.fn(async () => ({ ...statusWithPending, pendingParts: [] }));
-    const client = fakeClient({ directSessionStatus });
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({ directSessionStatus, abortDirectSession });
     const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
 
     await waitFor(() => expect(localStorage.getItem(storageKey)).toBeNull());
     expect(result.current.resumable).toBeUndefined();
+
+    // The probe released ownership once it cleared the completed entry, so an abort must NOT delete a
+    // server session it never confirmed was still resumable.
+    act(() => {
+      result.current.abort();
+    });
+    expect(abortDirectSession).not.toHaveBeenCalled();
   });
 
   it('abort clears the stored session', async () => {
@@ -650,11 +658,11 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
     expect(result.current.status).toBe('idle');
   });
 
-  it('falls through to a fresh initiate when the stored session is gone server-side', async () => {
+  it('falls through to a fresh initiate when the stored session is gone server-side (404/410)', async () => {
     localStorage.setItem(storageKey, JSON.stringify(stored)); // up1, matches name + size
-    // The server no longer knows the session (expired/deleted) -> the status query throws.
+    // The server no longer knows the session (expired/deleted) -> a definitive 404.
     const directSessionStatus = vi.fn(async () => {
-      throw new Error('Not Found');
+      throw new MediaHttpError('Not Found', 404);
     });
     const uploadDirect = vi.fn(
       async () => ({ mode: 'direct', uploadId: 'up9', key: 'k9', disk: 's3', body: {} }) as const,
@@ -668,11 +676,41 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
       await result.current.upload(file, { filename: 'a.txt' });
     });
 
-    // The throwing status query did NOT reject the upload; it dropped the stale entry and initiated
-    // fresh (no resume), so an expired session can never brick this storageKey.
+    // A definitive "gone" dropped the stale entry and initiated fresh (no resume) without rejecting the
+    // upload, so an expired session can never brick this storageKey.
     expect(result.current.status).toBe('success');
+    expect(localStorage.getItem(storageKey)).toBeNull();
     const opts = uploadDirect.mock.calls[0][2];
     expect(opts?.resume).toBeUndefined();
+  });
+
+  it('keeps the session and rejects (no silent restart) on a transient status failure', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored)); // up1, matches name + size
+    // A transient failure (network blip) — NOT a definitive 404/410 — must not discard resumable progress.
+    const directSessionStatus = vi.fn(async () => {
+      throw new Error('network blip');
+    });
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up9', key: 'k9', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+    // Flush the mount probe's rejected status query so it does not interfere.
+    await act(async () => {});
+
+    await act(async () => {
+      await expect(result.current.upload(file, { filename: 'a.txt' })).rejects.toThrow(
+        'network blip',
+      );
+    });
+
+    // The transient failure surfaced as an error (the caller can retry and resume) and the resumable
+    // session survived — it was NOT silently restarted from 0% behind the caller's back.
+    expect(result.current.status).toBe('error');
+    expect(uploadDirect).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toMatchObject({
+      uploadId: 'up1',
+    });
   });
 
   it('does not tear down the session on a post-success abort', async () => {
@@ -758,5 +796,97 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
     expect(directSessionStatus).not.toHaveBeenCalled();
     const opts = uploadDirect.mock.calls[0][2];
     expect(opts?.resume).toBeUndefined();
+  });
+
+  it('reset clears the stored session and returns to idle (no server teardown)', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({
+      directSessionStatus: vi.fn(async () => statusWithPending),
+      abortDirectSession,
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await waitFor(() =>
+      expect(result.current.resumable).toEqual({ uploadId: 'up1', fileName: 'a.txt' }),
+    );
+
+    act(() => result.current.reset());
+
+    expect(result.current.status).toBe('idle');
+    expect(result.current.resumable).toBeUndefined();
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    // reset is a LOCAL clear — it must never tear down the server session (that is abort's job).
+    expect(abortDirectSession).not.toHaveBeenCalled();
+  });
+
+  it('reset invalidates an in-flight mount probe so it cannot re-populate state', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    let resolveStatus!: (value: unknown) => void;
+    const directSessionStatus = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+    );
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({ directSessionStatus, abortDirectSession });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    // The probe is now awaiting the (never-resolving) status query.
+    await waitFor(() => expect(directSessionStatus).toHaveBeenCalled());
+
+    act(() => result.current.reset());
+    expect(result.current.status).toBe('idle');
+
+    // Resolve the probe late — the epoch bump must make it a no-op (no resumable, no teardown).
+    await act(async () => {
+      resolveStatus(statusWithPending);
+    });
+
+    expect(result.current.status).toBe('idle');
+    expect(result.current.resumable).toBeUndefined();
+    expect(abortDirectSession).not.toHaveBeenCalled();
+  });
+
+  it('reset stops an in-flight upload and holds idle without server teardown', async () => {
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({
+      abortDirectSession,
+      uploadDirect: vi.fn((_d, _m, opts) => {
+        opts?.onSession?.({
+          uploadId: 'up1',
+          fileName: 'a.txt',
+          key: 'k',
+          disk: 's3',
+          partSize: 5,
+        });
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('Upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    let uploadPromise: Promise<unknown>;
+    act(() => {
+      uploadPromise = result.current.upload(file, { filename: 'a.txt' }).catch(() => {});
+    });
+    await waitFor(() => expect(client.uploadDirect).toHaveBeenCalled());
+
+    act(() => result.current.reset());
+    await act(async () => {
+      await uploadPromise;
+    });
+
+    // The in-flight upload was aborted (it cannot re-populate state) and we are back to idle.
+    expect(result.current.status).toBe('idle');
+    expect(result.current.progress).toBe(0);
+    // reset is a LOCAL clear — it must NOT tear down the server session (that is abort's job).
+    expect(abortDirectSession).not.toHaveBeenCalled();
   });
 });

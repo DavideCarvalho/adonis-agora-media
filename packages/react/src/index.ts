@@ -10,6 +10,7 @@ export {
   type TusUploadOptions,
   type UploadedPart,
   type UploadMeta,
+  MediaHttpError,
   createMediaUploadClient,
   mediaUrl,
   xhrPartUploader,

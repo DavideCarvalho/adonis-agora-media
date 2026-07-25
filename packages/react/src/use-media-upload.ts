@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type DirectUploadOptions,
   type DirectUploadSessionStatus,
+  MediaHttpError,
   type MediaUploadClient,
   type MediaUploadClientOptions,
   type MediaUploadResult,
@@ -240,17 +241,23 @@ export function useMediaUpload<TComplete = unknown>(
             // Resume a persisted session of the SAME file — same name AND same size, so a revised
             // same-named file can never splice its bytes into the old session. Re-query the server for
             // fresh presigned URLs and continue from the still-pending parts, trusting the server's
-            // authoritative coordinates/size over the (possibly stale) stored ones. Any mismatch, a
-            // fully-completed session, OR a session the server no longer knows (expired/deleted, so the
-            // status query throws) drops the stale entry and falls through to a fresh initiate — an
-            // expired session must never brick this storageKey.
+            // authoritative coordinates/size over the (possibly stale) stored ones. A mismatch or a
+            // fully-completed session falls through to a fresh initiate. A definitive "gone" (404/410)
+            // drops the stale entry and falls through too, so an expired session never bricks this
+            // storageKey — but a TRANSIENT failure (network blip / 5xx) keeps the entry resumable and
+            // surfaces the error, instead of silently discarding progress and restarting from 0%.
             const stored = readStoredSession(storageKey);
             if (stored && stored.fileName === meta.filename && stored.size === size) {
               let status: DirectUploadSessionStatus | undefined;
               try {
                 status = await client.directSessionStatus(stored.uploadId);
-              } catch {
-                clearStoredSession(storageKey); // abandon an expired/missing session, initiate fresh below
+              } catch (err) {
+                const httpStatus = err instanceof MediaHttpError ? err.status : undefined;
+                if (httpStatus === 404 || httpStatus === 410) {
+                  clearStoredSession(storageKey); // truly gone — initiate fresh below
+                } else {
+                  throw err; // transient — keep the entry resumable, let the caller retry
+                }
               }
               if (status && status.pendingParts.length > 0 && status.size === size) {
                 directSessionIdRef.current = stored.uploadId;
@@ -360,10 +367,15 @@ export function useMediaUpload<TComplete = unknown>(
 
   const reset = useCallback(() => {
     epochRef.current += 1; // invalidate any in-flight mount probe
+    // Stop the in-flight transfer so it cannot re-populate the state we are about to clear (an orphaned
+    // upload would otherwise creep progress back and eventually flip to `success` after the reset). Like
+    // `abort()`, clear `pausingRef` first so the resulting AbortError is not read as a pause. Unlike
+    // `abort()`, reset is a LOCAL clear — it never tears down the server session (that is abort's job).
+    pausingRef.current = false;
+    controllerRef.current?.abort();
     controllerRef.current = undefined;
     locationRef.current = undefined;
     pendingRef.current = undefined;
-    pausingRef.current = false;
     directSessionIdRef.current = undefined;
     if (storageKey) clearStoredSession(storageKey);
     setState(INITIAL as MediaUploadState<TComplete>);
@@ -376,6 +388,10 @@ export function useMediaUpload<TComplete = unknown>(
     if (mode !== 'direct' || !storageKey) return;
     const stored = readStoredSession(storageKey);
     if (!stored) return;
+    // An upload already in flight (or paused) owns the session lifecycle. Bail BEFORE claiming ownership
+    // so a re-run of this effect (e.g. an unstable `client` identity) cannot clobber the live session id
+    // or clear coordinates the running upload still needs. On a normal mount no upload is in flight yet.
+    if (controllerRef.current !== undefined) return;
     // Claim ownership of the probed session synchronously so an explicit `abort()` — which never re-reads
     // storage — tears down exactly the session THIS instance would resume, never one another instance/tab
     // wrote into storage afterwards.
@@ -403,7 +419,9 @@ export function useMediaUpload<TComplete = unknown>(
         }
       })
       .catch(() => {
-        // Transient failure (network blip / 5xx): keep the entry so a later mount can still resume.
+        // Unverified state (transient failure): keep the entry so a later mount can still resume, but
+        // release ownership so an abort cannot DELETE a session that may already be completed server-side.
+        if (!stale()) directSessionIdRef.current = undefined;
       });
     return () => {
       cancelled = true;
