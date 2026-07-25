@@ -96,7 +96,8 @@ export const xhrPartUploader: PartUploader = (url, body, options) =>
           resolve(etag);
         }
       } else {
-        reject(new Error(`media upload: PUT part failed (status ${xhr.status})`));
+        // A typed HTTP error so withRetry can fail fast on a definitive 4xx yet keep retrying 5xx.
+        reject(new MediaHttpError('media upload: PUT part failed', xhr.status));
       }
     };
     xhr.onerror = () => {
@@ -271,6 +272,11 @@ async function withRetry<T>(attempts: number, fn: () => Promise<T>): Promise<T> 
       lastError = error;
       // Never retry a caller-driven abort — surface it immediately.
       if (error instanceof Error && error.name === 'AbortError') throw error;
+      // A definitive client error (4xx) fails identically on every attempt — fail fast instead of burning
+      // attempts×backoff. 5xx and network errors (no status) stay retryable.
+      if (error instanceof MediaHttpError && error.status !== undefined && error.status < 500) {
+        throw error;
+      }
       if (attempt < attempts) await new Promise((r) => setTimeout(r, attempt * 500));
     }
   }

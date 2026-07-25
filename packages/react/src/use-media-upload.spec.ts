@@ -595,15 +595,55 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
     const directSessionStatus = vi.fn(async () => {
       throw new Error('network blip');
     });
-    const client = fakeClient({ directSessionStatus });
-    renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({ directSessionStatus, abortDirectSession });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
 
     await waitFor(() => expect(directSessionStatus).toHaveBeenCalledWith('up1'));
     // Flush the rejected promise's catch.
     await act(async () => {});
 
-    // A transient failure must not discard a resumable session.
+    // A transient failure must not discard a resumable session...
     expect(localStorage.getItem(storageKey)).not.toBeNull();
+
+    // ...but the probe released ownership of the unverified session, so an abort must NOT delete a
+    // server session it never confirmed was still resumable.
+    act(() => result.current.abort());
+    expect(abortDirectSession).not.toHaveBeenCalled();
+  });
+
+  it('mount probe does not re-fire while an upload owns the controller (unstable client identity)', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored)); // up1, fileName 'a.txt'
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const uploadDirect = vi.fn(() => new Promise(() => {})); // hang: the upload stays in flight
+    const clientA = fakeClient({ directSessionStatus, uploadDirect });
+    const { result, rerender } = renderHook(
+      ({ client }: { client: MediaUploadClient }) =>
+        useMediaUpload({ client, mode: 'direct', storageKey }),
+      { initialProps: { client: clientA } },
+    );
+
+    // The initial mount probe ran once and surfaced the resumable session.
+    await waitFor(() =>
+      expect(result.current.resumable).toEqual({ uploadId: 'up1', fileName: 'a.txt' }),
+    );
+    expect(directSessionStatus).toHaveBeenCalledTimes(1);
+
+    // Start an upload under a DIFFERENT filename so the resume path skips its own status query — the only
+    // status call so far is the mount probe's. The upload now owns the controller.
+    act(() => {
+      void result.current.upload(file, { filename: 'other.txt' }).catch(() => {});
+    });
+    await waitFor(() => expect(uploadDirect).toHaveBeenCalled());
+    expect(directSessionStatus).toHaveBeenCalledTimes(1);
+
+    // Re-render with a NEW client identity. `client` is in the probe effect's deps, so the effect re-runs
+    // — but the in-flight guard must make that re-run a no-op (no second status query, no clobber).
+    const clientB = fakeClient({ directSessionStatus, uploadDirect });
+    rerender({ client: clientB });
+    await act(async () => {});
+
+    expect(directSessionStatus).toHaveBeenCalledTimes(1);
   });
 
   it('abort tears down the probed session, not one another instance later wrote into storage', async () => {

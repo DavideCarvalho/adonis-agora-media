@@ -389,8 +389,10 @@ export function useMediaUpload<TComplete = unknown>(
     const stored = readStoredSession(storageKey);
     if (!stored) return;
     // An upload already in flight (or paused) owns the session lifecycle. Bail BEFORE claiming ownership
-    // so a re-run of this effect (e.g. an unstable `client` identity) cannot clobber the live session id
-    // or clear coordinates the running upload still needs. On a normal mount no upload is in flight yet.
+    // so a re-run of this effect cannot clobber the live session id or clear coordinates the running
+    // upload still needs. `client` is in the dep array below, so an unstable `client` identity re-fires
+    // the effect mid-upload — this guard is what keeps that re-run a no-op. On a normal mount no upload
+    // is in flight yet, so the probe proceeds.
     if (controllerRef.current !== undefined) return;
     // Claim ownership of the probed session synchronously so an explicit `abort()` — which never re-reads
     // storage — tears down exactly the session THIS instance would resume, never one another instance/tab

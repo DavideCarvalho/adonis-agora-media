@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMediaUploadClient, mediaUrl, xhrPartUploader } from './client';
+import { MediaHttpError, createMediaUploadClient, mediaUrl, xhrPartUploader } from './client';
 
 function blobOf(bytes: number): Blob {
   return new Blob([new Uint8Array(bytes)]);
@@ -454,6 +454,76 @@ describe('uploadDirect (session-backed)', () => {
 
     expect(partUploader).toHaveBeenCalledTimes(3);
     expect(result).toMatchObject({ mode: 'direct', uploadId: 'up-r', key: 'u/r.bin', disk: 's3' });
+  });
+
+  it('fails fast on a definitive 4xx part failure (no retry)', async () => {
+    const onePartBody = {
+      id: 'up-4xx',
+      key: 'u/4xx.bin',
+      disk: 's3',
+      partSize: 10,
+      size: 10,
+      totalParts: 1,
+      parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
+    };
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (url.endsWith('/complete')) return json(completeBody);
+      if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
+      return json({});
+    });
+
+    // A definitive 403 (e.g. an expired presigned URL) fails identically on every attempt — it must NOT
+    // burn attempts×backoff.
+    const partUploader = vi.fn(async (): Promise<string> => {
+      throw new MediaHttpError('media upload: PUT part failed', 403);
+    });
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader,
+      retries: 3,
+    });
+
+    await expect(client.uploadDirect(blobOf(10), { filename: '4xx.bin' })).rejects.toThrow(
+      /status 403/,
+    );
+    expect(partUploader).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries a 5xx part failure (only 4xx fails fast)', async () => {
+    const onePartBody = {
+      id: 'up-5xx',
+      key: 'u/5xx.bin',
+      disk: 's3',
+      partSize: 10,
+      size: 10,
+      totalParts: 1,
+      parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
+    };
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (url.endsWith('/complete')) return json(completeBody);
+      if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
+      return json({});
+    });
+
+    // Fail twice with a 503, succeed on the third — a 5xx stays retryable even though it is a MediaHttpError.
+    let attempts = 0;
+    const partUploader = vi.fn(async (): Promise<string> => {
+      attempts += 1;
+      if (attempts < 3) throw new MediaHttpError('media upload: PUT part failed', 503);
+      return '"etag-1"';
+    });
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader,
+      retries: 3,
+    });
+
+    const result = await client.uploadDirect(blobOf(10), { filename: '5xx.bin' });
+
+    expect(partUploader).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ mode: 'direct', uploadId: 'up-5xx', key: 'u/5xx.bin' });
   });
 });
 
