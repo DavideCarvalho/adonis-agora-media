@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type DirectUploadOptions,
+  type DirectUploadSessionStatus,
   type MediaUploadClient,
   type MediaUploadClientOptions,
   type MediaUploadResult,
@@ -239,12 +240,19 @@ export function useMediaUpload<TComplete = unknown>(
             // Resume a persisted session of the SAME file — same name AND same size, so a revised
             // same-named file can never splice its bytes into the old session. Re-query the server for
             // fresh presigned URLs and continue from the still-pending parts, trusting the server's
-            // authoritative coordinates/size over the (possibly stale) stored ones. Any mismatch or a
-            // fully-completed session falls through to a fresh initiate.
+            // authoritative coordinates/size over the (possibly stale) stored ones. Any mismatch, a
+            // fully-completed session, OR a session the server no longer knows (expired/deleted, so the
+            // status query throws) drops the stale entry and falls through to a fresh initiate — an
+            // expired session must never brick this storageKey.
             const stored = readStoredSession(storageKey);
             if (stored && stored.fileName === meta.filename && stored.size === size) {
-              const status = await client.directSessionStatus(stored.uploadId);
-              if (status.pendingParts.length > 0 && status.size === size) {
+              let status: DirectUploadSessionStatus | undefined;
+              try {
+                status = await client.directSessionStatus(stored.uploadId);
+              } catch {
+                clearStoredSession(storageKey); // abandon an expired/missing session, initiate fresh below
+              }
+              if (status && status.pendingParts.length > 0 && status.size === size) {
                 directSessionIdRef.current = stored.uploadId;
                 directOptions.resume = {
                   id: stored.uploadId,
@@ -330,25 +338,28 @@ export function useMediaUpload<TComplete = unknown>(
 
   const abort = useCallback(() => {
     pausingRef.current = false;
+    epochRef.current += 1; // invalidate any in-flight mount probe
     controllerRef.current?.abort();
     const location = locationRef.current;
     if (location) void client.abortTus(location).catch(() => {});
-    // Tear down a live `direct` session server-side (mirrors `abortTus`), so its PENDING server record
-    // is cleaned up instead of lingering until expiry. Fall back to the persisted coordinates for the
-    // mount-then-abort-without-upload case. `pause` is a separate path and never reaches here.
-    const directId =
-      directSessionIdRef.current ??
-      (storageKey ? readStoredSession(storageKey)?.uploadId : undefined);
-    if (directId) void client.abortDirectSession(directId).catch(() => {});
+    // Tear down a live `direct` session server-side (mirrors `abortTus`) so its PENDING server record is
+    // cleaned up instead of lingering until expiry. We only ever tear down the session THIS instance owns
+    // — the one it started (`onSession`), resumed, or probed at mount (`directSessionIdRef`) — and never
+    // re-read storage, so a different instance/tab that later overwrote storage is left untouched. `pause`
+    // is a separate path and never reaches here.
+    if (mode === 'direct' && directSessionIdRef.current) {
+      void client.abortDirectSession(directSessionIdRef.current).catch(() => {});
+    }
     if (storageKey) clearStoredSession(storageKey);
     controllerRef.current = undefined;
     locationRef.current = undefined;
     pendingRef.current = undefined;
     directSessionIdRef.current = undefined;
     setState(INITIAL as MediaUploadState<TComplete>);
-  }, [client, storageKey]);
+  }, [client, mode, storageKey]);
 
   const reset = useCallback(() => {
+    epochRef.current += 1; // invalidate any in-flight mount probe
     controllerRef.current = undefined;
     locationRef.current = undefined;
     pendingRef.current = undefined;
@@ -365,10 +376,14 @@ export function useMediaUpload<TComplete = unknown>(
     if (mode !== 'direct' || !storageKey) return;
     const stored = readStoredSession(storageKey);
     if (!stored) return;
+    // Claim ownership of the probed session synchronously so an explicit `abort()` — which never re-reads
+    // storage — tears down exactly the session THIS instance would resume, never one another instance/tab
+    // wrote into storage afterwards.
+    directSessionIdRef.current = stored.uploadId;
     const epoch = epochRef.current;
     let cancelled = false;
-    // Bail if unmounted or an upload started since (epoch moved). Only clear storage when it still
-    // holds THIS session — another tab/upload may have overwritten it with a fresh one.
+    // Bail if unmounted, an upload started, or the session was aborted/reset since (epoch moved). Only
+    // clear storage when it still holds THIS session — another tab/upload may have overwritten it.
     const stale = () => cancelled || epoch !== epochRef.current;
     const stillThisSession = () => readStoredSession(storageKey)?.uploadId === stored.uploadId;
     client
@@ -381,7 +396,10 @@ export function useMediaUpload<TComplete = unknown>(
             resumable: { uploadId: stored.uploadId, fileName: stored.fileName },
           }));
         } else if (stillThisSession()) {
+          // Fully completed/expired server-side: drop the entry and release ownership so a later abort
+          // does not DELETE a finished session.
           clearStoredSession(storageKey);
+          directSessionIdRef.current = undefined;
         }
       })
       .catch(() => {
