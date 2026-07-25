@@ -212,6 +212,10 @@ export type {
   ListOptions,
   ListEntry,
   ListResult,
+  DirectUploadPolicy,
+  InitiateDecision,
+  CompleteResolution,
+  PolicyErrorInfo,
 } from './types.js';
 
 // Diagnostics (event types only — `publishMedia` is the internal emit helper and is not exported)

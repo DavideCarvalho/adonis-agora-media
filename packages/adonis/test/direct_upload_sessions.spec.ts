@@ -1,6 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DirectUploadManager, MIN_DIRECT_PART_SIZE } from '../src/direct_upload.js';
-import { DirectUploadHandler } from '../src/direct_upload_handler.js';
+import {
+  DirectUploadHandler,
+  type DirectUploadHandlerOptions,
+} from '../src/direct_upload_handler.js';
 import {
   DirectUploadsNotConfiguredError,
   MimeNotAllowedError,
@@ -17,9 +20,15 @@ import { FakeTransformer } from '../src/testing/fake_transformer.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
 import { InMemoryUploadSessionStore } from '../src/testing/in_memory_upload_session_store.js';
-import type { DiskWriteOptions, MultipartPart, MultipartUploadDisk } from '../src/types.js';
+import type {
+  DirectUploadPolicy,
+  DiskWriteOptions,
+  MultipartPart,
+  MultipartUploadDisk,
+} from '../src/types.js';
 
 const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');
+const TRACE_SLOT = Symbol.for('@agora/diagnostics:trace');
 
 /** 5 MiB — the smallest partSize S3 (and the manager) accepts, keeps test arithmetic readable. */
 const PART = MIN_DIRECT_PART_SIZE;
@@ -666,5 +675,323 @@ describe('direct uploads × transformers — the finalize hook', () => {
     expect(deferred.calls).toHaveLength(0);
     const after = await media.library.transform(record.id, 'hls');
     expect(after.conversions.hls?.path).toBe('uploads/v/conversions/hls/index.m3u8');
+  });
+});
+
+describe('DirectUploadPolicy', () => {
+  // A policy requires an `adopt` (the handler enforces it), so the harness wires a no-op stub unless
+  // the test supplies its own mock to assert against.
+  const makeHandler = (policy: DirectUploadPolicy<unknown, unknown> | undefined, adopt?: unknown) =>
+    new DirectUploadHandler({
+      manager: makeManager({
+        collections: new MediaCollectionRegistry([
+          { name: 'scans', acceptsMimeTypes: ['image/png'] },
+        ]),
+      }),
+      idGenerator: () => 'tok',
+      ...(policy !== undefined ? { policy } : {}),
+      ...(policy !== undefined
+        ? {
+            adopt: (adopt ??
+              (async () => ({ id: 'adopted' }))) as DirectUploadHandlerOptions['adopt'],
+          }
+        : {}),
+    });
+
+  const target = {
+    ownerType: 'Doc',
+    ownerId: '7',
+    collection: 'scans',
+    fileName: 'scan.png',
+    mimeType: 'image/png',
+  };
+
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[TRACE_SLOT];
+  });
+
+  it('initiate: onInitiate decides key/collection/metadata/response; 201 merges session + response; onInitiated sees {decision, session}', async () => {
+    const onInitiated = vi.fn();
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({
+        key: 'tenant/42/scan.png',
+        collection: 'scans',
+        metadata: { purpose: 'scan' },
+        response: { policyApplied: true },
+      }),
+      onInitiated,
+      resolveComplete: () => ({ sessionId: 'd-1', target }),
+      onComplete: () => ({}),
+    };
+    const res = await makeHandler(policy).handle(
+      { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+      { user: 'u1' },
+    );
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 'd-1', key: 'tenant/42/scan.png', policyApplied: true });
+    expect(disk.created[0]?.key).toBe('tenant/42/scan.png');
+    expect((await sessions.get('d-1'))?.metadata?.purpose).toBe('scan');
+    expect(onInitiated).toHaveBeenCalledTimes(1);
+    expect(onInitiated.mock.calls[0]?.[0]).toEqual({ user: 'u1' });
+    expect(onInitiated.mock.calls[0]?.[1]).toMatchObject({
+      decision: { key: 'tenant/42/scan.png' },
+      session: { id: 'd-1', key: 'tenant/42/scan.png' },
+    });
+  });
+
+  it("complete: resolveComplete → adopt(sessionId, target, parts) → onComplete; 200 body is onComplete's return", async () => {
+    const fakeRecord = { id: 'rec-1', ownerType: 'Doc', ownerId: '7' };
+    const adopt = vi.fn(async () => fakeRecord);
+    const onComplete = vi.fn(() => ({ adopted: true, id: 'rec-1' }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'x' }),
+      resolveComplete: () => ({ sessionId: 'sess-9', target }),
+      onComplete,
+    };
+    const parts = [{ partNumber: 1, etag: '"e1"' }];
+    const res = await makeHandler(policy, adopt).handle(
+      { action: 'complete', uploadId: 'sess-9', parts },
+      { user: 'u1' },
+    );
+    expect(res.status).toBe(200);
+    expect(adopt).toHaveBeenCalledTimes(1);
+    expect(adopt.mock.calls[0]?.[0]).toBe('sess-9');
+    expect(adopt.mock.calls[0]?.[1]).toMatchObject({
+      ownerType: 'Doc',
+      ownerId: '7',
+      collection: 'scans',
+    });
+    expect(adopt.mock.calls[0]?.[2]).toEqual(parts);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete.mock.calls[0]?.[1]).toMatchObject({
+      record: fakeRecord,
+      resolution: { sessionId: 'sess-9' },
+    });
+    expect(res.body).toEqual({ adopted: true, id: 'rec-1' });
+  });
+
+  it('initiate: mapError (phase initiate) maps a MIME rejection and rollback runs', async () => {
+    const rollback = vi.fn();
+    const mapError = vi.fn(() => ({ status: 422, body: { error: 'mime rejected by policy' } }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'tenant/42/scan.jpg', collection: 'scans', rollback }),
+      resolveComplete: () => ({ sessionId: 'd-1', target }),
+      onComplete: () => ({}),
+      mapError,
+    };
+    const res = await makeHandler(policy).handle(
+      { action: 'initiate', fileName: 'scan.jpg', size: PART, contentType: 'image/jpeg' },
+      { user: 'u1' },
+    );
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({ error: 'mime rejected by policy' });
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(mapError).toHaveBeenCalledTimes(1);
+    expect(mapError.mock.calls[0]?.[0]).toEqual({ user: 'u1' });
+    expect(mapError.mock.calls[0]?.[1]).toBeInstanceOf(MimeNotAllowedError);
+    expect(mapError.mock.calls[0]?.[2]).toMatchObject({
+      phase: 'initiate',
+      decision: { key: 'tenant/42/scan.jpg' },
+    });
+  });
+
+  it('initiate: when mapError returns undefined, the default mapping applies (415 for MIME)', async () => {
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'tenant/42/scan.jpg', collection: 'scans' }),
+      resolveComplete: () => ({ sessionId: 'd-1', target }),
+      onComplete: () => ({}),
+      mapError: () => undefined,
+    };
+    const res = await makeHandler(policy).handle(
+      { action: 'initiate', fileName: 'scan.jpg', size: PART, contentType: 'image/jpeg' },
+      { user: 'u1' },
+    );
+    expect(res.status).toBe(415);
+  });
+
+  it('complete: mapError (phase complete) maps an adopt failure; resolution is in the info', async () => {
+    const adopt = vi.fn(async () => {
+      throw new UploadPartsIncompleteError('sess-9', [2]);
+    });
+    const mapError = vi.fn(() => ({
+      status: 409,
+      body: { error: 'incomplete', missingParts: [2] },
+    }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'x' }),
+      resolveComplete: () => ({ sessionId: 'sess-9', target }),
+      onComplete: () => ({}),
+      mapError,
+    };
+    const res = await makeHandler(policy, adopt).handle(
+      { action: 'complete', uploadId: 'sess-9', parts: [{ partNumber: 1, etag: '"e1"' }] },
+      { user: 'u1' },
+    );
+    expect(res.status).toBe(409);
+    expect(mapError).toHaveBeenCalledTimes(1);
+    expect(mapError.mock.calls[0]?.[1]).toBeInstanceOf(UploadPartsIncompleteError);
+    expect(mapError.mock.calls[0]?.[2]).toMatchObject({
+      phase: 'complete',
+      resolution: { sessionId: 'sess-9' },
+    });
+  });
+
+  it('abort: onAbort is called and the session is dropped', async () => {
+    const onAbort = vi.fn();
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'tenant/42/scan.png', collection: 'scans' }),
+      resolveComplete: () => ({ sessionId: 'd-1', target }),
+      onComplete: () => ({}),
+      onAbort,
+    };
+    const handler = makeHandler(policy);
+    await handler.handle(
+      { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+      { user: 'u1' },
+    );
+    expect(await sessions.get('d-1')).not.toBeNull();
+    const res = await handler.handle({ action: 'abort', uploadId: 'd-1' }, { user: 'u1' });
+    expect(res.status).toBe(204);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(onAbort.mock.calls[0]?.[0]).toEqual({ user: 'u1' });
+    expect(onAbort.mock.calls[0]?.[1]).toEqual({ id: 'd-1' });
+    expect(await sessions.get('d-1')).toBeNull();
+  });
+
+  it('wraps every policy hook in traceMedia (upload.policy.* events fire through the trace slot)', async () => {
+    const traced: string[] = [];
+    (globalThis as Record<symbol, unknown>)[TRACE_SLOT] = (
+      _lib: string,
+      event: string,
+      fn: () => unknown,
+    ) => {
+      traced.push(event);
+      return fn();
+    };
+    const adopt = vi.fn(async () => ({ id: 'rec-1' }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'tenant/42/scan.png', collection: 'scans' }),
+      onInitiated: () => {},
+      resolveComplete: () => ({ sessionId: 'sess-9', target }),
+      onComplete: () => ({}),
+      onAbort: () => {},
+    };
+    const handler = makeHandler(policy, adopt);
+    await handler.handle(
+      { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+      {},
+    );
+    await handler.handle(
+      { action: 'complete', uploadId: 'sess-9', parts: [{ partNumber: 1, etag: '"e1"' }] },
+      {},
+    );
+    await handler.handle({ action: 'abort', uploadId: 'd-1' }, {});
+    expect(traced).toEqual(
+      expect.arrayContaining([
+        'upload.policy.on_initiate',
+        'upload.policy.on_initiated',
+        'upload.policy.resolve_complete',
+        'upload.policy.on_complete',
+        'upload.policy.on_abort',
+      ]),
+    );
+  });
+
+  it('constructor: a policy without adopt throws a TypeError mentioning adopt; policy+adopt or neither does not throw', () => {
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'x' }),
+      resolveComplete: () => ({ sessionId: 'x', target }),
+      onComplete: () => ({}),
+    };
+    const manager = makeManager({
+      collections: new MediaCollectionRegistry([
+        { name: 'scans', acceptsMimeTypes: ['image/png'] },
+      ]),
+    });
+    expect(() => new DirectUploadHandler({ manager, policy })).toThrowError(TypeError);
+    expect(() => new DirectUploadHandler({ manager, policy })).toThrowError(/adopt/);
+    expect(
+      () =>
+        new DirectUploadHandler({
+          manager,
+          policy,
+          adopt: (async () => ({ id: 'r' })) as DirectUploadHandlerOptions['adopt'],
+        }),
+    ).not.toThrow();
+    expect(() => new DirectUploadHandler({ manager })).not.toThrow();
+  });
+
+  it('initiate: a throwing rollback does not mask the primary error; mapError still sees the original error', async () => {
+    const original = new Error('onInitiated failed');
+    const rollback = vi.fn(async () => {
+      throw new Error('rollback failed');
+    });
+    const mapError = vi.fn(() => ({ status: 422, body: { error: 'mapped original' } }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => ({ key: 'tenant/42/scan.png', collection: 'scans', rollback }),
+      onInitiated: () => {
+        throw original;
+      },
+      resolveComplete: () => ({ sessionId: 'x', target }),
+      onComplete: () => ({}),
+      mapError,
+    };
+    const res = await makeHandler(policy).handle(
+      { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+      { user: 'u1' },
+    );
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(mapError).toHaveBeenCalledTimes(1);
+    expect(mapError.mock.calls[0]?.[1]).toBe(original);
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: 'mapped original' });
+  });
+
+  it('initiate: an error thrown BY onInitiate is mappable (mapError receives decision: undefined)', async () => {
+    const sentinel = new Error('not allowed to upload');
+    const mapError = vi.fn(() => ({ status: 403, body: { error: 'forbidden by policy' } }));
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => {
+        throw sentinel;
+      },
+      resolveComplete: () => ({ sessionId: 'x', target }),
+      onComplete: () => ({}),
+      mapError,
+    };
+    const res = await makeHandler(policy).handle(
+      { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+      { user: 'u1' },
+    );
+    expect(mapError).toHaveBeenCalledTimes(1);
+    expect(mapError.mock.calls[0]?.[1]).toBe(sentinel);
+    const info = mapError.mock.calls[0]?.[2] as { phase: string; decision?: unknown };
+    expect(info.phase).toBe('initiate');
+    expect(info.decision).toBeUndefined();
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden by policy' });
+  });
+
+  it('initiate: an error thrown BY onInitiate with mapError returning undefined falls through to the default mapper', async () => {
+    const sentinel = new Error('opaque failure');
+    const mapError = vi.fn(() => undefined);
+    const policy: DirectUploadPolicy<unknown, unknown> = {
+      onInitiate: () => {
+        throw sentinel;
+      },
+      resolveComplete: () => ({ sessionId: 'x', target }),
+      onComplete: () => ({}),
+      mapError,
+    };
+    const handler = makeHandler(policy);
+    await expect(
+      handler.handle(
+        { action: 'initiate', fileName: 'scan.png', size: PART, contentType: 'image/png' },
+        { user: 'u1' },
+      ),
+    ).rejects.toBe(sentinel);
+    expect(mapError).toHaveBeenCalledTimes(1);
+    const info = mapError.mock.calls[0]?.[2] as { phase: string; decision?: unknown };
+    expect(info.phase).toBe('initiate');
+    expect(info.decision).toBeUndefined();
   });
 });

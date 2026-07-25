@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DirectUploadManager } from './direct_upload.js';
+import { traceMedia } from './diagnostics.js';
+import type { DirectUploadCreatedSession, DirectUploadManager } from './direct_upload.js';
 import {
   MimeNotAllowedError,
   UploadNotSupportedError,
@@ -9,7 +10,14 @@ import {
   UploadSessionExpiredError,
   UploadSessionNotFoundError,
 } from './errors.js';
-import type { MultipartPart } from './types.js';
+import type { AttachExistingInput } from './media_library.js';
+import type { MediaRecord } from './media_record.js';
+import type {
+  CompleteResolution,
+  DirectUploadPolicy,
+  InitiateDecision,
+  MultipartPart,
+} from './types.js';
 
 /**
  * A web-framework-neutral direct-upload request, one variant per lifecycle step (the provider maps
@@ -54,6 +62,24 @@ export interface DirectUploadHandlerOptions {
     | ((fileName: string, token: string, metadata: Record<string, string>) => string)
     | undefined;
   idGenerator?: (() => string) | undefined;
+  /**
+   * App-injected strategy that owns the variant decisions (key resolution, what the upload becomes
+   * on completion, error→HTTP mapping). When present, `initiate`/`complete`/`abort` route through
+   * it; when absent, the handler keeps its built-in key/complete behavior. See {@link DirectUploadPolicy}.
+   */
+  policy?: DirectUploadPolicy<unknown, unknown> | undefined;
+  /**
+   * Adopt an assembled object into the media library — wired to `MediaManager.completeDirectUploadToLibrary`
+   * by the provider. The policy's `complete` path calls it with the resolution's `sessionId`/`target`
+   * (plus the caller-supplied parts) and returns the resulting record. Unused without a {@link policy}.
+   */
+  adopt?:
+    | ((
+        sessionId: string,
+        target: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>,
+        parts?: MultipartPart[] | undefined,
+      ) => Promise<MediaRecord>)
+    | undefined;
 }
 
 /**
@@ -81,6 +107,14 @@ export class DirectUploadHandler {
   private readonly maxSize: number | undefined;
   private readonly keyFor: (f: string, t: string, m: Record<string, string>) => string;
   private readonly newId: () => string;
+  private readonly policy: DirectUploadPolicy<unknown, unknown> | undefined;
+  private readonly adopt:
+    | ((
+        sessionId: string,
+        target: Omit<AttachExistingInput, 'key' | 'disk' | 'size'>,
+        parts?: MultipartPart[] | undefined,
+      ) => Promise<MediaRecord>)
+    | undefined;
 
   constructor(options: DirectUploadHandlerOptions) {
     this.manager = options.manager;
@@ -89,9 +123,14 @@ export class DirectUploadHandler {
     this.maxSize = options.maxSize;
     this.keyFor = options.keyFor ?? ((fileName, token) => `uploads/${token}/${fileName}`);
     this.newId = options.idGenerator ?? (() => randomUUID());
+    this.policy = options.policy;
+    this.adopt = options.adopt;
+    if (this.policy && !this.adopt) {
+      throw new TypeError('DirectUploadHandler: "adopt" is required when a "policy" is configured');
+    }
   }
 
-  async handle(req: DirectUploadRequest): Promise<DirectUploadResponse> {
+  async handle(req: DirectUploadRequest, ctx?: unknown): Promise<DirectUploadResponse> {
     switch (req.action) {
       case 'initiate': {
         if (typeof req.fileName !== 'string' || req.fileName.length === 0) {
@@ -106,6 +145,7 @@ export class DirectUploadHandler {
             body: { error: `Upload exceeds the maximum size of ${this.maxSize} bytes` },
           };
         }
+        if (this.policy) return this.initiatePolicy(req, ctx);
         const metadata = req.metadata ?? {};
         try {
           const created = await this.manager.initiate({
@@ -116,21 +156,7 @@ export class DirectUploadHandler {
             ...(this.disk !== undefined ? { disk: this.disk } : {}),
             ...(this.collection !== undefined ? { collection: this.collection } : {}),
           });
-          return {
-            status: 201,
-            body: {
-              id: created.id,
-              key: created.key,
-              disk: created.disk,
-              partSize: created.partSize,
-              size: created.size,
-              totalParts: created.totalParts,
-              parts: created.parts,
-              ...(created.expiresAt !== undefined
-                ? { expiresAt: created.expiresAt.toISOString() }
-                : {}),
-            },
-          };
+          return { status: 201, body: this.initiateBody(created) };
         } catch (err) {
           return this.mapError(err);
         }
@@ -180,6 +206,7 @@ export class DirectUploadHandler {
       }
 
       case 'complete': {
+        if (this.policy) return this.completePolicy(req, ctx);
         const parts = req.parts ?? [];
         if (
           !Array.isArray(parts) ||
@@ -205,12 +232,124 @@ export class DirectUploadHandler {
       }
 
       case 'abort': {
+        if (this.policy) return this.abortPolicy(req, ctx);
         await this.manager.abort(req.uploadId);
         return { status: 204 };
       }
 
       default:
         return { status: 400, body: { error: 'Unknown action' } };
+    }
+  }
+
+  /** The `201` body for a created session — shared by the built-in and policy initiate paths. */
+  private initiateBody(created: DirectUploadCreatedSession): Record<string, unknown> {
+    return {
+      id: created.id,
+      key: created.key,
+      disk: created.disk,
+      partSize: created.partSize,
+      size: created.size,
+      totalParts: created.totalParts,
+      parts: created.parts,
+      ...(created.expiresAt !== undefined ? { expiresAt: created.expiresAt.toISOString() } : {}),
+    };
+  }
+
+  /**
+   * Policy-driven `initiate`: the policy decides the key/collection/metadata (and may attach a
+   * `response` merged onto the `201`), the manager opens the upload. If anything throws after the
+   * decision, the decision's `rollback` runs and the policy's `mapError` gets first refusal on the
+   * HTTP mapping (with the decision in the info); an unmapped error falls through to {@link mapError}.
+   */
+  private async initiatePolicy(
+    req: Extract<DirectUploadRequest, { action: 'initiate' }>,
+    ctx: unknown,
+  ): Promise<DirectUploadResponse> {
+    const policy = this.policy!;
+    let decision: InitiateDecision<unknown> | undefined;
+    try {
+      decision = await traceMedia('upload.policy.on_initiate', () =>
+        policy.onInitiate(ctx, {
+          fileName: req.fileName,
+          size: req.size,
+          contentType: req.contentType,
+          metadata: req.metadata,
+        }),
+      );
+      const disk = decision.disk ?? this.disk;
+      const collection = decision.collection ?? this.collection;
+      const session = await this.manager.initiate({
+        key: decision.key,
+        size: req.size,
+        contentType: req.contentType,
+        metadata: decision.metadata ?? {},
+        ...(disk !== undefined ? { disk } : {}),
+        ...(collection !== undefined ? { collection } : {}),
+        ...(decision.visibility !== undefined ? { visibility: decision.visibility } : {}),
+        ...(decision.partSize !== undefined ? { partSize: decision.partSize } : {}),
+      });
+      await traceMedia('upload.policy.on_initiated', () =>
+        policy.onInitiated?.(ctx, { decision: decision!, session }),
+      );
+      return {
+        status: 201,
+        body: { ...this.initiateBody(session), ...(decision.response ?? {}) },
+      };
+    } catch (err) {
+      try {
+        await decision?.rollback?.();
+      } catch {
+        // a failing rollback must not mask the primary error or preempt mapError
+      }
+      const mapped = await policy.mapError?.(ctx, err, { phase: 'initiate', decision });
+      if (mapped !== undefined) return mapped;
+      return this.mapError(err);
+    }
+  }
+
+  /**
+   * Policy-driven `complete`: `resolveComplete` maps the session onto a library `target`, `adopt`
+   * assembles + adopts the object, and the `200` body is whatever `onComplete` returns. Parts-shape
+   * validation is deliberately skipped — the policy owns what a completion means. `mapError` (with
+   * the resolution in the info) gets first refusal on failures; else {@link mapError}.
+   */
+  private async completePolicy(
+    req: Extract<DirectUploadRequest, { action: 'complete' }>,
+    ctx: unknown,
+  ): Promise<DirectUploadResponse> {
+    const policy = this.policy!;
+    let resolution: CompleteResolution<unknown> | undefined;
+    try {
+      resolution = await traceMedia('upload.policy.resolve_complete', () =>
+        policy.resolveComplete(ctx, { id: req.uploadId, parts: req.parts }),
+      );
+      const record = await this.adopt!(resolution.sessionId, resolution.target, req.parts);
+      const body = await traceMedia('upload.policy.on_complete', () =>
+        policy.onComplete(ctx, { record, resolution: resolution! }),
+      );
+      return { status: 200, body };
+    } catch (err) {
+      const mapped = await policy.mapError?.(ctx, err, { phase: 'complete', resolution });
+      if (mapped !== undefined) return mapped;
+      return this.mapError(err);
+    }
+  }
+
+  /** Policy-driven `abort`: the policy cleans up app-side state, then the session is dropped. */
+  private async abortPolicy(
+    req: Extract<DirectUploadRequest, { action: 'abort' }>,
+    ctx: unknown,
+  ): Promise<DirectUploadResponse> {
+    const policy = this.policy!;
+    try {
+      await traceMedia('upload.policy.on_abort', () => policy.onAbort?.(ctx, { id: req.uploadId }));
+      await this.manager.abort(req.uploadId);
+      return { status: 204 };
+    } catch (err) {
+      const mapped = await policy.mapError?.(ctx, err, { phase: 'abort' });
+      if (mapped !== undefined) return mapped;
+      return this.mapError(err);
     }
   }
 

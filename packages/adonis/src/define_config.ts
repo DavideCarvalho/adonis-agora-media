@@ -8,6 +8,7 @@ import type { ImageProcessorFactory } from './processors/factory.js';
 import { stores } from './stores/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
 import { transformers } from './transformers/factory.js';
+import type { DirectUploadPolicy } from './types.js';
 import type { UploadMode } from './upload_mode.js';
 import { uploadSessions } from './upload_sessions/factory.js';
 import type {
@@ -103,6 +104,19 @@ export interface MediaDirectUploadConfig {
      * here. Omit to accept any type (size limits still apply).
      */
     collection?: string;
+    /**
+     * Middleware applied to every built-in direct-session route (the provider passes them straight
+     * to the AdonisJS route group). Typed framework-neutrally as `unknown[]` so this config never
+     * imports AdonisJS — guard the routes here (e.g. `middleware.auth()`), since the handler itself
+     * performs NO authorization.
+     */
+    middleware?: readonly unknown[];
+    /**
+     * Lazily load a {@link DirectUploadPolicy} that owns the app-specific decisions (key resolution,
+     * what the upload becomes on completion, error→HTTP mapping). A thunk so the policy module — and
+     * anything it imports — loads only when the routes mount. The provider reads its default export.
+     */
+    policy?: () => Promise<{ default: DirectUploadPolicy<unknown, unknown> }>;
   };
 }
 
