@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MediaUploadClient } from './client';
 import { useMediaUpload } from './use-media-upload';
 
@@ -213,5 +213,195 @@ describe('useMediaUpload pause / resume / abort (TUS)', () => {
     expect(abortTus).toHaveBeenCalledWith('/media/uploads/tus/s1');
     expect(result.current.status).toBe('idle');
     expect(result.current.progress).toBe(0);
+  });
+});
+
+describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
+  const storageKey = 'media.direct.session';
+  const stored = { uploadId: 'up1', fileName: 'a.txt', key: 'k', disk: 's3', partSize: 5 };
+  const statusWithPending = {
+    id: 'up1',
+    key: 'k',
+    disk: 's3',
+    partSize: 5,
+    size: 11,
+    totalParts: 3,
+    completedParts: [{ partNumber: 1, etag: 'e1' }],
+    pendingParts: [{ partNumber: 2, url: 'https://s3/part/2' }],
+  };
+
+  // This vitest+jsdom build exposes no `localStorage` (opaque origin, no config-level URL), so install
+  // a faithful in-memory double. It exercises the hook's real code path: the `typeof localStorage`
+  // guard plus JSON.stringify/parse and setItem/removeItem/clear.
+  const storage = (() => {
+    let store: Record<string, string> = {};
+    return {
+      getItem: (key: string) => (key in store ? store[key] : null),
+      setItem: (key: string, value: string) => {
+        store[key] = String(value);
+      },
+      removeItem: (key: string) => {
+        delete store[key];
+      },
+      clear: () => {
+        store = {};
+      },
+    };
+  })();
+
+  beforeAll(() => vi.stubGlobal('localStorage', storage));
+  afterAll(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    storage.clear();
+    vi.clearAllMocks();
+  });
+
+  it('persists the session coordinates on initiate', async () => {
+    // The upload hangs after onSession so we can observe the persisted coordinates before the
+    // success path clears them (a successful upload always clears storage).
+    const client = fakeClient({
+      uploadDirect: vi.fn((_d, _m, opts) => {
+        opts?.onSession?.({
+          uploadId: 'up1',
+          fileName: 'a.txt',
+          key: 'k',
+          disk: 's3',
+          partSize: 5,
+        });
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('Upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    act(() => {
+      void result.current.upload(file, { filename: 'a.txt' }).catch(() => {});
+    });
+    await waitFor(() => expect(client.uploadDirect).toHaveBeenCalled());
+
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toEqual({
+      uploadId: 'up1',
+      fileName: 'a.txt',
+      key: 'k',
+      disk: 's3',
+      partSize: 5,
+    });
+  });
+
+  it('clears the stored session on success', async () => {
+    const client = fakeClient({
+      uploadDirect: vi.fn(async (_d, _m, opts) => {
+        opts?.onSession?.({
+          uploadId: 'up1',
+          fileName: 'a.txt',
+          key: 'k',
+          disk: 's3',
+          partSize: 5,
+        });
+        return { mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} } as const;
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await act(async () => {
+      await result.current.upload(file, { filename: 'a.txt' });
+    });
+
+    expect(result.current.status).toBe('success');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it('resumes a persisted session using fresh URLs from directSessionStatus', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await act(async () => {
+      await result.current.upload(file, { filename: 'a.txt' });
+    });
+
+    const opts = uploadDirect.mock.calls[0][2];
+    expect(opts?.resume).toEqual({
+      id: 'up1',
+      key: 'k',
+      disk: 's3',
+      partSize: 5,
+      parts: [{ partNumber: 2, url: 'https://s3/part/2' }],
+    });
+  });
+
+  it('does not resume when the file name differs from the stored session', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await act(async () => {
+      await result.current.upload(file, { filename: 'OTHER.txt' });
+    });
+
+    const opts = uploadDirect.mock.calls[0][2];
+    expect(opts?.resume).toBeUndefined();
+  });
+
+  it('mount probe surfaces a resumable persisted session', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const client = fakeClient({ directSessionStatus });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await waitFor(() =>
+      expect(result.current.resumable).toEqual({ uploadId: 'up1', fileName: 'a.txt' }),
+    );
+  });
+
+  it('mount probe clears a stale session with no pending parts', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => ({ ...statusWithPending, pendingParts: [] }));
+    const client = fakeClient({ directSessionStatus });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await waitFor(() => expect(localStorage.getItem(storageKey)).toBeNull());
+    expect(result.current.resumable).toBeUndefined();
+  });
+
+  it('abort clears the stored session', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const client = fakeClient({
+      directSessionStatus: vi.fn(async () => statusWithPending),
+      uploadDirect: vi.fn((_d, _m, opts) => {
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('Upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    act(() => {
+      void result.current.upload(file, { filename: 'a.txt' }).catch(() => {});
+    });
+    await waitFor(() => expect(client.uploadDirect).toHaveBeenCalled());
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
+
+    act(() => result.current.abort());
+
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(result.current.status).toBe('idle');
   });
 });
