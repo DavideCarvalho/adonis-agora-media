@@ -1,5 +1,17 @@
 # @adonis-agora/media
 
+## 0.10.0
+
+### Minor Changes
+
+- [#23](https://github.com/DavideCarvalho/adonis-media/pull/23) [`77337c8`](https://github.com/DavideCarvalho/adonis-media/commit/77337c8ecde9589f9a006600420327eae5b6a0f2) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `DirectUploadPolicy` — the business-logic extension point for session-backed direct uploads.
+
+  The 0.9.0 `media.direct` flow knew how to move bytes straight to S3 and persist the session, but every consuming app still had to wrap the built-in routes to answer the questions that are always the same shape yet always app-specific: _is this caller allowed to upload here, does the declared file pass my rules, which record do I create up front, and what do I do once the bytes land?_ `DirectUploadPolicy` lifts that seam into the lib. An app implements one object — `onInitiate` (validate + open the multipart upload + return the `InitiateDecision`: key, collection/disk overrides, visibility, part size, metadata, an optional JSON `response` merged into the 201, and an optional `rollback` ran if the initiate later fails), `resolveComplete` (map the session id back to the app's pending record + the `attachExisting` target) and `onComplete` (run after the bytes are attached — flip status, probe duration, dispatch the transcode job — and return the response body) — plus the optional `onInitiated` (persist the session id on the record), `onAbort` (clean up the pending record) and `mapError` (translate a thrown error into a typed HTTP response, e.g. a validation failure → 422 or incomplete-parts / session-not-found → 409).
+
+  The policy is wired through two new `uploads.direct.routes` config seams: `policy` (a lazy `() => import(...)` so the app's models load only when an upload actually happens) and `middleware`. **The built-in routes remain unguarded by default** — exactly as before — so an app that wants auth sets `middleware: [middleware.auth()]` itself; the lib never silently adds a guard. The provider forwards the request context into the handler (`handle(toRequest(ctx), ctx)`) and adopts the completed bytes via `completeDirectUploadToLibrary`, so the collection whitelist is still re-verified against the **real** bytes on complete. A per-decision `disk`/`collection` falls back to the manager-level default when the policy doesn't override it.
+
+  Also new: `traceMedia` observability hooks that republish the direct-upload lifecycle as spans through `@adonis-agora/diagnostics`' global `TRACE_SLOT` **structurally** — no hard dependency, no-op when diagnostics is absent.
+
 ## 0.9.0
 
 ### Minor Changes
