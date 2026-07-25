@@ -9,13 +9,15 @@ function fakeClient(overrides: Partial<MediaUploadClient> = {}): MediaUploadClie
     createTusSession: vi.fn(async () => ({ location: '/media/uploads/tus/s1' })),
     tusOffset: vi.fn(async () => 0),
     abortTus: vi.fn(async () => {}),
+    directSessionStatus: vi.fn(async () => ({ completedParts: [], pendingParts: [] })),
+    abortDirectSession: vi.fn(async () => {}),
     uploadTus: vi.fn(async (_d, _m, opts) => {
       opts?.onProgress?.(5, 10);
       opts?.onProgress?.(10, 10);
       return { mode: 'tus', location: '/media/uploads/tus/s1' } as const;
     }),
     uploadDirect: vi.fn(
-      async () => ({ mode: 'direct', key: 'k', disk: 's3', uploadId: 'up' }) as const,
+      async () => ({ mode: 'direct', uploadId: 'up', key: 'k', disk: 's3', body: {} }) as const,
     ),
     uploadProxy: vi.fn(async () => ({ mode: 'proxy', key: 'k', disk: 'local' }) as const),
     mediaUrl: (id: string) => `/media/${id}`,

@@ -1,13 +1,16 @@
 export {
+  type DirectUploadOptions,
   type MediaUploadClient,
   type MediaUploadClientOptions,
   type MediaUploadResult,
+  type PartUploader,
   type PerUploadOptions,
   type TusUploadOptions,
   type UploadedPart,
   type UploadMeta,
   createMediaUploadClient,
   mediaUrl,
+  xhrPartUploader,
 } from './client.js';
 export {
   MEDIA_UPLOADER_STYLE_ID,

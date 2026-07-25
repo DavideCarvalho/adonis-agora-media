@@ -26,6 +26,16 @@ function tusFetch(location = '/media/uploads/tus/s1') {
   });
 }
 
+/** A JSON `Response`-shaped mock (jsdom has no `Response` constructor). */
+function json(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+    json: async () => body,
+  } as unknown as Response;
+}
+
 describe('mediaUrl', () => {
   it('builds id and conversion URLs', () => {
     expect(mediaUrl('abc')).toBe('/media/abc');
@@ -183,120 +193,231 @@ describe('uploadTus (target TUS endpoints)', () => {
   });
 });
 
-describe('uploadDirect (target presigned-S3 multipart endpoints)', () => {
-  it('initiates, PUTs each part to its presigned URL, collects ETags, then completes', async () => {
-    const calls: string[] = [];
-    let completeBody: unknown;
-    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+describe('uploadDirect (session-backed)', () => {
+  const initiateBody = {
+    id: 'up-1',
+    key: 'u/1/a.bin',
+    disk: 's3',
+    partSize: 10,
+    size: 25,
+    totalParts: 3,
+    parts: [
+      { partNumber: 1, url: 'https://s3.example/part-1' },
+      { partNumber: 2, url: 'https://s3.example/part-2' },
+      { partNumber: 3, url: 'https://s3.example/part-3' },
+    ],
+  };
+  const completeBody = { key: 'u/1/a.bin', disk: 's3', mediaId: 'm-1' };
+
+  type PartOpts = {
+    contentType?: string;
+    signal?: AbortSignal;
+    onBytes?: (loaded: number) => void;
+  };
+  type Capture = { initiate?: unknown; confirms: unknown[]; complete?: unknown };
+
+  function okPartUploader() {
+    return vi.fn(async (url: string, body: Blob, opts: PartOpts): Promise<string> => {
+      opts.onBytes?.(body.size);
+      return `"etag-${url.slice(-1)}"`;
+    });
+  }
+
+  /** A fetch mock speaking the session contract: initiate → confirm parts → complete. */
+  function sessionServer(calls: string[], capture: Capture) {
+    return vi.fn(async (url: string, init: RequestInit) => {
       calls.push(`${init.method} ${url}`);
-      if (url.endsWith('/direct/initiate')) {
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers(),
-          json: async () => ({
-            uploadId: 'up-1',
-            key: 'u/1/a.bin',
-            disk: 's3',
-            partSize: 10,
-            parts: [
-              { partNumber: 1, url: 'https://s3.example/part-1' },
-              { partNumber: 2, url: 'https://s3.example/part-2' },
-              { partNumber: 3, url: 'https://s3.example/part-3' },
-            ],
-          }),
-        } as unknown as Response;
-      }
-      if (init.method === 'PUT') {
-        // presigned S3 PUT → returns an ETag header, NO app auth headers present
-        expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
-        const n = url.slice(-1);
-        return { ok: true, status: 200, headers: new Headers({ ETag: `"etag-${n}"` }) } as Response;
+      if (init.method === 'POST' && url === '/media/uploads') {
+        capture.initiate = JSON.parse(init.body as string);
+        return json(initiateBody, 201);
       }
       if (url.endsWith('/complete')) {
-        completeBody = JSON.parse(init.body as string);
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers(),
-          json: async () => ({ key: 'u/1/a.bin', disk: 's3' }),
-        } as unknown as Response;
+        capture.complete = JSON.parse(init.body as string);
+        return json(completeBody);
       }
-      return { ok: true, status: 200, headers: new Headers() } as Response;
+      if (/\/parts\/\d+$/.test(url)) {
+        capture.confirms.push(JSON.parse(init.body as string));
+        return json({ offset: 0, completedParts: [] });
+      }
+      return json({});
     });
+  }
 
+  it('initiates a session, uploads + confirms each part, then completes', async () => {
+    const calls: string[] = [];
+    const capture: Capture = { confirms: [] };
+    const fetchImpl = sessionServer(calls, capture);
+    const partUploader = okPartUploader();
     const client = createMediaUploadClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
-      headers: { Authorization: 'Bearer t' },
+      partUploader,
     });
+
     const onProgress = vi.fn();
     // 25 bytes @ server partSize 10 => 3 parts
     const result = await client.uploadDirect(
       blobOf(25),
-      { filename: 'a.bin', key: 'u/1/a.bin' },
-      {
-        concurrency: 2,
-        onProgress,
-      },
+      { filename: 'a.bin', contentType: 'application/octet-stream' },
+      { onProgress },
     );
 
-    expect(result).toEqual({ mode: 'direct', key: 'u/1/a.bin', disk: 's3', uploadId: 'up-1' });
-    expect(calls).toContain('PUT https://s3.example/part-1');
-    expect(calls).toContain('PUT https://s3.example/part-3');
-    expect(calls.some((c) => c.includes('/direct/up-1/complete'))).toBe(true);
-    // ETags forwarded to complete, sorted by part number
-    expect(completeBody).toEqual({
+    expect(result).toEqual({
+      mode: 'direct',
+      uploadId: 'up-1',
       key: 'u/1/a.bin',
+      disk: 's3',
+      body: completeBody,
+    });
+    expect(capture.initiate).toEqual({
+      fileName: 'a.bin',
+      size: 25,
+      contentType: 'application/octet-stream',
+    });
+    expect(partUploader).toHaveBeenCalledTimes(3);
+    expect(calls).toContain('POST /media/uploads');
+    expect(calls).toContain('POST /media/uploads/up-1/parts/1');
+    expect(calls).toContain('POST /media/uploads/up-1/parts/2');
+    expect(calls).toContain('POST /media/uploads/up-1/parts/3');
+    expect(calls).toContain('POST /media/uploads/up-1/complete');
+    expect(capture.confirms).toEqual([
+      { etag: '"etag-1"' },
+      { etag: '"etag-2"' },
+      { etag: '"etag-3"' },
+    ]);
+    expect(capture.complete).toEqual({
       parts: [
         { partNumber: 1, etag: '"etag-1"' },
         { partNumber: 2, etag: '"etag-2"' },
         { partNumber: 3, etag: '"etag-3"' },
       ],
     });
-    const last = onProgress.mock.calls.at(-1) as [number, number];
-    expect(last).toEqual([25, 25]);
+    expect(onProgress.mock.calls.at(-1)).toEqual([25, 25]);
   });
 
-  it('requires meta.key', async () => {
-    const client = createMediaUploadClient({ fetchImpl: vi.fn() as unknown as typeof fetch });
-    await expect(client.uploadDirect(blobOf(4), { filename: 'a' })).rejects.toThrow(/key/);
+  it('fires onSession once with the session details (not on resume)', async () => {
+    const calls: string[] = [];
+    const capture: Capture = { confirms: [] };
+    const fetchImpl = sessionServer(calls, capture);
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader: okPartUploader(),
+    });
+
+    const onSession = vi.fn();
+    await client.uploadDirect(blobOf(25), { filename: 'a.bin' }, { onSession });
+
+    expect(onSession).toHaveBeenCalledTimes(1);
+    expect(onSession).toHaveBeenCalledWith({
+      uploadId: 'up-1',
+      fileName: 'a.bin',
+      key: 'u/1/a.bin',
+      disk: 's3',
+      partSize: 10,
+    });
   });
 
-  it('surfaces the first part failure and stops early', async () => {
-    let puts = 0;
+  it('resumes from a persisted session, uploading only the pending parts', async () => {
+    const calls: string[] = [];
+    const capture: Capture = { confirms: [] };
+    const fetchImpl = sessionServer(calls, capture);
+    const partUploader = okPartUploader();
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader,
+    });
+
+    const onSession = vi.fn();
+    const seen: Array<[number, number]> = [];
+    const result = await client.uploadDirect(
+      blobOf(15),
+      { filename: 'a.bin' },
+      {
+        onSession,
+        onProgress: (s, t) => seen.push([s, t]),
+        resume: {
+          id: 'up-9',
+          key: 'k',
+          disk: 's3',
+          partSize: 5,
+          parts: [
+            { partNumber: 2, url: 'https://s3.example/p2' },
+            { partNumber: 3, url: 'https://s3.example/p3' },
+          ],
+        },
+      },
+    );
+
+    // No fresh initiate; onSession is not re-fired on resume.
+    expect(calls).not.toContain('POST /media/uploads');
+    expect(capture.initiate).toBeUndefined();
+    expect(onSession).not.toHaveBeenCalled();
+    // Only the two pending parts uploaded (part 1 was already done).
+    expect(partUploader).toHaveBeenCalledTimes(2);
+    expect(calls).toContain('POST /media/uploads/up-9/parts/2');
+    expect(calls).toContain('POST /media/uploads/up-9/parts/3');
+    expect(calls).not.toContain('POST /media/uploads/up-9/parts/1');
+    expect(calls).toContain('POST /media/uploads/up-9/complete');
+    // Progress starts from the already-uploaded part 1 (5 bytes) and ends complete.
+    expect(seen[0][0]).toBeGreaterThanOrEqual(5);
+    expect(seen.at(-1)).toEqual([15, 15]);
+    expect(result).toMatchObject({ mode: 'direct', uploadId: 'up-9', key: 'k', disk: 's3' });
+  });
+
+  it('directSessionStatus GETs the session with app headers', async () => {
+    let seenUrl = '';
+    let seenMethod = '';
+    let seenHeaders: Record<string, string> = {};
+    const status = { completedParts: [1], pendingParts: [2, 3] };
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
-      if (url.endsWith('/direct/initiate')) {
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers(),
-          json: async () => ({
-            uploadId: 'up',
-            key: 'k',
-            disk: 's3',
-            partSize: 10,
-            parts: Array.from({ length: 50 }, (_, i) => ({
-              partNumber: i + 1,
-              url: `https://s3/p${i + 1}`,
-            })),
-          }),
-        } as unknown as Response;
-      }
-      if (init.method === 'PUT') {
-        puts += 1;
-        if (puts === 1) throw new Error('boom: part 1');
-        return { ok: true, status: 200, headers: new Headers({ ETag: '"e"' }) } as Response;
-      }
-      return { ok: true, status: 200, headers: new Headers() } as Response;
+      seenUrl = url;
+      seenMethod = init.method as string;
+      seenHeaders = init.headers as Record<string, string>;
+      return json(status);
     });
     const client = createMediaUploadClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
+      headers: { Authorization: 'Bearer t' },
+    });
+
+    const result = await client.directSessionStatus('up-1');
+
+    expect(seenMethod).toBe('GET');
+    expect(seenUrl).toBe('/media/uploads/up-1');
+    expect(seenHeaders.Authorization).toBe('Bearer t');
+    expect(result).toEqual(status);
+  });
+
+  it('abortDirectSession DELETEs the session', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push(`${init.method} ${url}`);
+      return { ok: true, status: 204, headers: new Headers() } as Response;
+    });
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await client.abortDirectSession('up-1');
+
+    expect(calls).toEqual(['DELETE /media/uploads/up-1']);
+  });
+
+  it('surfaces a part failure after retries', async () => {
+    const calls: string[] = [];
+    const capture: Capture = { confirms: [] };
+    const fetchImpl = sessionServer(calls, capture);
+    const partUploader = vi.fn(async (): Promise<string> => {
+      throw new Error('boom: part 1');
+    });
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader,
       retries: 1,
     });
-    await expect(
-      client.uploadDirect(blobOf(500), { filename: 'a', key: 'k' }, { concurrency: 4 }),
-    ).rejects.toThrow('boom: part 1');
-    expect(puts).toBeLessThan(25); // bounded by concurrency, nowhere near all 50 parts
+
+    await expect(client.uploadDirect(blobOf(25), { filename: 'a.bin' })).rejects.toThrow(
+      'boom: part 1',
+    );
   });
 });
 
