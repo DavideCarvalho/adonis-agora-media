@@ -218,7 +218,15 @@ describe('useMediaUpload pause / resume / abort (TUS)', () => {
 
 describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
   const storageKey = 'media.direct.session';
-  const stored = { uploadId: 'up1', fileName: 'a.txt', key: 'k', disk: 's3', partSize: 5 };
+  // `file` ("hello world") is 11 bytes, so a matching session stores size: 11.
+  const stored = {
+    uploadId: 'up1',
+    fileName: 'a.txt',
+    key: 'k',
+    disk: 's3',
+    partSize: 5,
+    size: 11,
+  };
   const statusWithPending = {
     id: 'up1',
     key: 'k',
@@ -290,6 +298,7 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
       key: 'k',
       disk: 's3',
       partSize: 5,
+      size: 11,
     });
   });
 
@@ -329,6 +338,7 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
       await result.current.upload(file, { filename: 'a.txt' });
     });
 
+    expect(directSessionStatus).toHaveBeenCalledWith('up1');
     const opts = uploadDirect.mock.calls[0][2];
     expect(opts?.resume).toEqual({
       id: 'up1',
@@ -337,6 +347,65 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
       partSize: 5,
       parts: [{ partNumber: 2, url: 'https://s3/part/2' }],
     });
+  });
+
+  it('prefers the server-authoritative coordinates over the stored ones when resuming', async () => {
+    // Stored coordinates are stale; the server status is the source of truth for key/disk/partSize.
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({ ...stored, key: 'stale-key', disk: 'stale-disk', partSize: 99 }),
+    );
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await act(async () => {
+      await result.current.upload(file, { filename: 'a.txt' });
+    });
+
+    const opts = uploadDirect.mock.calls[0][2];
+    expect(opts?.resume).toMatchObject({ id: 'up1', key: 'k', disk: 's3', partSize: 5 });
+  });
+
+  it('does not resume a same-named file whose size differs from the stored session', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    // Same name as the stored session but a different size (1 byte) — a revised export of "a.txt".
+    const revised = new File(['x'], 'a.txt', { type: 'text/plain' });
+    await act(async () => {
+      await result.current.upload(revised, { filename: 'a.txt' });
+    });
+
+    // The size gate fails before any status query, so a fresh initiate happens (no resume).
+    const opts = uploadDirect.mock.calls[0][2];
+    expect(opts?.resume).toBeUndefined();
+  });
+
+  it('does not resume when the server-reported size disagrees with the file', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    // Stored size matches the file, but the authoritative server size does not — refuse to resume.
+    const directSessionStatus = vi.fn(async () => ({ ...statusWithPending, size: 999 }));
+    const uploadDirect = vi.fn(
+      async () => ({ mode: 'direct', uploadId: 'up1', key: 'k', disk: 's3', body: {} }) as const,
+    );
+    const client = fakeClient({ directSessionStatus, uploadDirect });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await act(async () => {
+      await result.current.upload(file, { filename: 'a.txt' });
+    });
+
+    const opts = uploadDirect.mock.calls[0][2];
+    expect(opts?.resume).toBeUndefined();
   });
 
   it('does not resume when the file name differs from the stored session', async () => {
@@ -403,5 +472,129 @@ describe('useMediaUpload direct cross-reload resume (storageKey)', () => {
 
     expect(localStorage.getItem(storageKey)).toBeNull();
     expect(result.current.status).toBe('idle');
+  });
+
+  it('abort tears down the live direct session server-side', async () => {
+    const abortDirectSession = vi.fn(async () => {});
+    const client = fakeClient({
+      abortDirectSession,
+      uploadDirect: vi.fn((_d, _m, opts) => {
+        opts?.onSession?.({
+          uploadId: 'up1',
+          fileName: 'a.txt',
+          key: 'k',
+          disk: 's3',
+          partSize: 5,
+        });
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('Upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    act(() => {
+      void result.current.upload(file, { filename: 'a.txt' }).catch(() => {});
+    });
+    await waitFor(() => expect(client.uploadDirect).toHaveBeenCalled());
+
+    act(() => result.current.abort());
+
+    expect(abortDirectSession).toHaveBeenCalledWith('up1');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it('abort tears down a persisted session even without an upload (mount-then-abort)', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const abortDirectSession = vi.fn(async () => {});
+    const directSessionStatus = vi.fn(async () => statusWithPending);
+    const client = fakeClient({ abortDirectSession, directSessionStatus });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    // Let the probe settle (pending parts -> resumable, storage kept) without ever uploading.
+    await waitFor(() =>
+      expect(result.current.resumable).toEqual({ uploadId: 'up1', fileName: 'a.txt' }),
+    );
+
+    act(() => result.current.abort());
+
+    // No upload ran, so the id falls back to the persisted coordinates.
+    expect(abortDirectSession).toHaveBeenCalledWith('up1');
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it('mount probe does not clobber a session written by a later upload (race)', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored)); // up1, a.txt
+    // Control when the probe's status query resolves so we can interleave an upload before it.
+    let resolveProbe!: (status: typeof statusWithPending) => void;
+    const probePending = new Promise<typeof statusWithPending>((resolve) => {
+      resolveProbe = resolve;
+    });
+    const directSessionStatus = vi.fn(() => probePending);
+    const client = fakeClient({
+      directSessionStatus,
+      uploadDirect: vi.fn((_d, _m, opts) => {
+        // A different file -> fresh initiate; persist its coordinates, then hang (no success-clear).
+        opts?.onSession?.({
+          uploadId: 'up2',
+          fileName: 'b.txt',
+          key: 'k2',
+          disk: 's3',
+          partSize: 5,
+        });
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            const err = new Error('Upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      }),
+    });
+    const { result } = renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    // The probe fires for up1 and stays pending.
+    await waitFor(() => expect(directSessionStatus).toHaveBeenCalledWith('up1'));
+
+    // Start an upload of a DIFFERENT file before the probe resolves: bumps the epoch, writes up2.
+    const other = new File(['different content'], 'b.txt', { type: 'text/plain' });
+    act(() => {
+      void result.current.upload(other, { filename: 'b.txt' }).catch(() => {});
+    });
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toMatchObject({
+        uploadId: 'up2',
+      }),
+    );
+
+    // The probe now resolves saying up1 has no pending parts. Without the epoch guard it would wipe
+    // up2's freshly-written coordinates; with it, the probe bails and up2 survives.
+    await act(async () => {
+      resolveProbe({ ...statusWithPending, pendingParts: [] });
+    });
+
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toMatchObject({
+      uploadId: 'up2',
+    });
+  });
+
+  it('mount probe keeps the stored session when the status query fails', async () => {
+    localStorage.setItem(storageKey, JSON.stringify(stored));
+    const directSessionStatus = vi.fn(async () => {
+      throw new Error('network blip');
+    });
+    const client = fakeClient({ directSessionStatus });
+    renderHook(() => useMediaUpload({ client, mode: 'direct', storageKey }));
+
+    await waitFor(() => expect(directSessionStatus).toHaveBeenCalledWith('up1'));
+    // Flush the rejected promise's catch.
+    await act(async () => {});
+
+    // A transient failure must not discard a resumable session.
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
   });
 });
