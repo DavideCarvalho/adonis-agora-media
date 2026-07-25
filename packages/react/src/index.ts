@@ -1,5 +1,7 @@
 export {
   type DirectUploadOptions,
+  type DirectUploadPartUrl,
+  type DirectUploadSessionStatus,
   type MediaUploadClient,
   type MediaUploadClientOptions,
   type MediaUploadResult,

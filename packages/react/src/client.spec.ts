@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createMediaUploadClient, mediaUrl } from './client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMediaUploadClient, mediaUrl, xhrPartUploader } from './client';
 
 function blobOf(bytes: number): Blob {
   return new Blob([new Uint8Array(bytes)]);
@@ -363,11 +363,25 @@ describe('uploadDirect (session-backed)', () => {
     expect(result).toMatchObject({ mode: 'direct', uploadId: 'up-9', key: 'k', disk: 's3' });
   });
 
-  it('directSessionStatus GETs the session with app headers', async () => {
+  it('directSessionStatus GETs the session with app headers and passes the full shape through', async () => {
     let seenUrl = '';
     let seenMethod = '';
     let seenHeaders: Record<string, string> = {};
-    const status = { completedParts: [1], pendingParts: [2, 3] };
+    const status = {
+      id: 'up-1',
+      key: 'u/1/a.bin',
+      disk: 's3',
+      partSize: 10,
+      size: 25,
+      totalParts: 3,
+      contentType: 'application/octet-stream',
+      completedParts: [{ partNumber: 1, etag: '"etag-1"' }],
+      pendingParts: [
+        { partNumber: 2, url: 'https://s3.example/part-2' },
+        { partNumber: 3, url: 'https://s3.example/part-3' },
+      ],
+      expiresAt: '2026-01-01T00:00:00.000Z',
+    };
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       seenUrl = url;
       seenMethod = init.method as string;
@@ -384,7 +398,10 @@ describe('uploadDirect (session-backed)', () => {
     expect(seenMethod).toBe('GET');
     expect(seenUrl).toBe('/media/uploads/up-1');
     expect(seenHeaders.Authorization).toBe('Bearer t');
+    // The full session (object arrays, not bare part numbers) survives the round-trip.
     expect(result).toEqual(status);
+    expect(result.pendingParts[0]?.url).toBe('https://s3.example/part-2');
+    expect(result.completedParts[0]?.etag).toBe('"etag-1"');
   });
 
   it('abortDirectSession DELETEs the session', async () => {
@@ -402,22 +419,41 @@ describe('uploadDirect (session-backed)', () => {
     expect(calls).toEqual(['DELETE /media/uploads/up-1']);
   });
 
-  it('surfaces a part failure after retries', async () => {
-    const calls: string[] = [];
-    const capture: Capture = { confirms: [] };
-    const fetchImpl = sessionServer(calls, capture);
+  it('retries a transient part failure and ultimately succeeds', async () => {
+    // A single-part session so the uploader call count is exactly the retry count.
+    const onePartBody = {
+      id: 'up-r',
+      key: 'u/r.bin',
+      disk: 's3',
+      partSize: 10,
+      size: 10,
+      totalParts: 1,
+      parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
+    };
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (url.endsWith('/complete')) return json(completeBody);
+      if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
+      return json({});
+    });
+
+    // Fail the first two attempts, succeed on the third (retries: 3 === 3 total attempts).
+    let attempts = 0;
     const partUploader = vi.fn(async (): Promise<string> => {
-      throw new Error('boom: part 1');
+      attempts += 1;
+      if (attempts < 3) throw new Error('boom: transient');
+      return '"etag-1"';
     });
     const client = createMediaUploadClient({
       fetchImpl: fetchImpl as unknown as typeof fetch,
       partUploader,
-      retries: 1,
+      retries: 3,
     });
 
-    await expect(client.uploadDirect(blobOf(25), { filename: 'a.bin' })).rejects.toThrow(
-      'boom: part 1',
-    );
+    const result = await client.uploadDirect(blobOf(10), { filename: 'r.bin' });
+
+    expect(partUploader).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ mode: 'direct', uploadId: 'up-r', key: 'u/r.bin', disk: 's3' });
   });
 });
 
@@ -480,5 +516,129 @@ describe('baseUrl resolution', () => {
     });
     expect(urls[0]).toBe('https://api.example.com/media/uploads/tus');
     expect(urls[1]).toBe('https://api.example.com/media/uploads/tus/z'); // PATCH against resolved location
+  });
+});
+
+/** A minimal, deterministic `XMLHttpRequest` mock — no real timers or network. */
+class MockXHR {
+  static instances: MockXHR[] = [];
+
+  method = '';
+  url = '';
+  status = 0;
+  aborted = false;
+  sentBody: unknown;
+  requestHeaders: Record<string, string> = {};
+  responseHeaders: Record<string, string> = {};
+  upload: { onprogress?: (event: { lengthComputable: boolean; loaded: number }) => void } = {};
+  onload?: () => void;
+  onerror?: () => void;
+  onabort?: () => void;
+
+  constructor() {
+    MockXHR.instances.push(this);
+  }
+
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string): void {
+    this.requestHeaders[name] = value;
+  }
+
+  // Case-insensitive header read, per the XHR spec.
+  getResponseHeader(name: string): string | null {
+    const key = Object.keys(this.responseHeaders).find(
+      (header) => header.toLowerCase() === name.toLowerCase(),
+    );
+    return key ? this.responseHeaders[key] : null;
+  }
+
+  send(body: unknown): void {
+    this.sentBody = body;
+  }
+
+  abort(): void {
+    this.aborted = true;
+    this.onabort?.();
+  }
+}
+
+describe('xhrPartUploader (real transport, mocked XHR)', () => {
+  const realXHR = globalThis.XMLHttpRequest;
+  const lastXHR = () => MockXHR.instances[MockXHR.instances.length - 1];
+
+  beforeEach(() => {
+    MockXHR.instances = [];
+    (globalThis as { XMLHttpRequest: unknown }).XMLHttpRequest = MockXHR;
+  });
+
+  afterEach(() => {
+    (globalThis as { XMLHttpRequest: unknown }).XMLHttpRequest = realXHR;
+  });
+
+  it('PUTs to the URL and resolves with the ETag (case-insensitive header read)', async () => {
+    const promise = xhrPartUploader('https://s3.example/part-1', blobOf(4), {
+      contentType: 'application/octet-stream',
+    });
+    const xhr = lastXHR();
+    expect(xhr.method).toBe('PUT');
+    expect(xhr.url).toBe('https://s3.example/part-1');
+    expect(xhr.requestHeaders['Content-Type']).toBe('application/octet-stream');
+
+    // The server sends a lowercase `etag`; the read must be case-insensitive.
+    xhr.status = 200;
+    xhr.responseHeaders = { etag: '"abc123"' };
+    xhr.onload?.();
+
+    await expect(promise).resolves.toBe('"abc123"');
+  });
+
+  it('rejects with a useful error on a non-2xx status', async () => {
+    const promise = xhrPartUploader('https://s3.example/part-1', blobOf(4), {});
+    const xhr = lastXHR();
+    xhr.status = 403;
+    xhr.onload?.();
+    await expect(promise).rejects.toThrow(/status 403/);
+  });
+
+  it('rejects with an AbortError when the signal fires mid-flight', async () => {
+    const controller = new AbortController();
+    const promise = xhrPartUploader('https://s3.example/part-1', blobOf(4), {
+      signal: controller.signal,
+    });
+    const xhr = lastXHR();
+    expect(xhr.aborted).toBe(false);
+
+    controller.abort();
+
+    expect(xhr.aborted).toBe(true);
+    await expect(promise).rejects.toHaveProperty('name', 'AbortError');
+  });
+
+  it('rejects immediately (no hang) when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const promise = xhrPartUploader('https://s3.example/part-1', blobOf(4), {
+      signal: controller.signal,
+    });
+
+    // A hang would resolve to 'hang' and fail the assertion instead of stalling the whole suite.
+    const outcome = await Promise.race([
+      promise.then(
+        () => 'resolved' as const,
+        (error: Error) => error,
+      ),
+      new Promise((resolve) => {
+        setTimeout(() => resolve('hang'), 200);
+      }),
+    ]);
+
+    expect(outcome).toHaveProperty('name', 'AbortError');
+    // send() must never run on the pre-aborted path.
+    expect(lastXHR().sentBody).toBeUndefined();
   });
 });

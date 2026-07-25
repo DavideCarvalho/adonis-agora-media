@@ -9,14 +9,15 @@
  *   session with `POST` + `Upload-Length`/`Upload-Metadata`, then append bytes sequentially with
  *   `PATCH` (`Content-Type: application/offset+octet-stream`, `Upload-Offset`). Interrupted uploads
  *   resume from the server's `Upload-Offset` reported by `HEAD`. This is the default strategy.
- * - **Direct-S3 multipart** (`uploads.routes`, default prefix `/media/uploads`): `POST /direct/initiate`
- *   hands back presigned part URLs; the client `PUT`s each part *straight to S3* (no app auth headers
- *   on those requests — they are already signed), collects each part's `ETag`, then `POST
- *   /direct/:uploadId/complete` assembles them.
+ * - **Direct-S3 multipart** (`uploads.routes`, default prefix `/media/uploads`): a session-backed
+ *   flow — `POST /` initiates and hands back presigned part URLs; the client `PUT`s each part
+ *   *straight to S3* (no app auth headers on those requests — they are already signed), confirms each
+ *   part's `ETag` via `POST /:id/parts/:partNumber`, then `POST /:id/complete` assembles the object.
+ *   A session's status is readable via `GET /:id` and can be torn down via `DELETE /:id`.
  * - **Proxy** (same prefix): a single `PUT /proxy` streams the whole body through the app to the disk.
  *
- * Every request against the *app* endpoints (TUS create/HEAD/PATCH/DELETE, direct initiate/presign/
- * complete/abort, and proxy PUT) merges the static `headers` with a freshly-resolved `getHeaders()`
+ * Every request against the *app* endpoints (TUS create/HEAD/PATCH/DELETE, direct initiate/status/
+ * confirm/complete/abort, and proxy PUT) merges the static `headers` with a freshly-resolved `getHeaders()`
  * so short-lived auth tokens can be refreshed mid-upload. Presigned S3 PUTs deliberately receive
  * neither — adding an `Authorization` header would break the SigV4 signature.
  */
@@ -25,6 +26,30 @@
 export interface UploadedPart {
   partNumber: number;
   etag: string;
+}
+
+/** A part the client should `PUT`: its number and the presigned URL that authorizes exactly that. */
+export interface DirectUploadPartUrl {
+  partNumber: number;
+  url: string;
+}
+
+/**
+ * The full direct-upload session as returned by the server (`GET /:id` and the initiate response):
+ * the agreed coordinates plus which parts are already confirmed and which are still pending (with
+ * fresh presigned URLs). `expiresAt` is an ISO-8601 string — it arrives over JSON, not as a `Date`.
+ */
+export interface DirectUploadSessionStatus {
+  id: string;
+  key: string;
+  disk: string;
+  partSize: number;
+  size: number;
+  totalParts: number;
+  contentType?: string;
+  completedParts: UploadedPart[];
+  pendingParts: DirectUploadPartUrl[];
+  expiresAt?: string;
 }
 
 /**
@@ -47,14 +72,20 @@ export type PartUploader = (
 export const xhrPartUploader: PartUploader = (url, body, options) =>
   new Promise<string>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    // Hold the listener so it can be removed on settle — a shared signal must never retain dead XHRs.
+    const onAbort = () => xhr.abort();
+    const detach = () => options.signal?.removeEventListener('abort', onAbort);
+
     xhr.open('PUT', url);
     if (options.contentType) xhr.setRequestHeader('Content-Type', options.contentType);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) options.onBytes?.(event.loaded);
     };
     xhr.onload = () => {
+      detach();
       if (xhr.status >= 200 && xhr.status < 300) {
-        const etag = xhr.getResponseHeader('ETag') ?? xhr.getResponseHeader('etag');
+        // getResponseHeader is case-insensitive per spec, so a single read suffices.
+        const etag = xhr.getResponseHeader('ETag');
         if (!etag) {
           reject(
             new Error(
@@ -68,15 +99,22 @@ export const xhrPartUploader: PartUploader = (url, body, options) =>
         reject(new Error(`media upload: PUT part failed (status ${xhr.status})`));
       }
     };
-    xhr.onerror = () => reject(new Error('media upload: PUT part failed (network error)'));
-    xhr.onabort = () => reject(abortError());
-    if (options.signal) {
-      if (options.signal.aborted) {
-        xhr.abort();
-        return;
-      }
-      options.signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.onerror = () => {
+      detach();
+      reject(new Error('media upload: PUT part failed (network error)'));
+    };
+    xhr.onabort = () => {
+      detach();
+      reject(abortError());
+    };
+
+    // Already aborted: `abort()` before `send()` dispatches no event and `send()` never runs, which
+    // would leave the promise unsettled forever — reject up front instead.
+    if (options.signal?.aborted) {
+      reject(abortError());
+      return;
     }
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     xhr.send(body);
   });
 
@@ -87,9 +125,12 @@ export interface MediaUploadClientOptions {
   tusPath?: string;
   /** Direct-S3 + proxy base path. Must match `uploads.routes.prefix`. Default `/media/uploads`. */
   uploadsPath?: string;
-  /** Bytes per TUS chunk / requested direct part size. Default 8 MiB (S3's part minimum is 5 MiB). */
+  /** Bytes per TUS chunk. Default 8 MiB. The direct-S3 part size is decided by the server, not this. */
   chunkSize?: number;
-  /** Max in-flight part PUTs for direct-S3 multipart. Default 3. */
+  /**
+   * Reserved for parallel part PUTs. Direct-S3 uploads are currently sequential, so this option does
+   * not apply to direct; it is kept for the other strategies and forward compatibility.
+   */
   concurrency?: number;
   /** Per-chunk/part retry attempts. Default 3. */
   retries?: number;
@@ -118,7 +159,10 @@ export interface UploadMeta {
   key?: string;
   /** Total byte length (defaults to the blob's `.size`). */
   size?: number;
-  /** Disk override forwarded to the direct/proxy routes. */
+  /**
+   * Disk override forwarded to the **proxy** route. For direct uploads the disk is assigned by the
+   * server at initiate time, so this value is not sent on the direct path.
+   */
   disk?: string;
 }
 
@@ -154,7 +198,7 @@ export interface DirectUploadOptions extends PerUploadOptions {
     key: string;
     disk: string;
     partSize: number;
-    parts: { partNumber: number; url: string }[];
+    parts: DirectUploadPartUrl[];
   };
 }
 
@@ -255,11 +299,8 @@ export interface MediaUploadClient {
   tusOffset(location: string): Promise<number>;
   /** Terminate an in-flight TUS session (TUS `DELETE`). */
   abortTus(location: string): Promise<void>;
-  /** Report the completed/pending parts of a direct upload session. */
-  directSessionStatus(uploadId: string): Promise<{
-    completedParts: number[];
-    pendingParts: number[];
-  }>;
+  /** Report the full state of a direct upload session (confirmed + still-pending parts). */
+  directSessionStatus(uploadId: string): Promise<DirectUploadSessionStatus>;
   /** Terminate an in-flight direct upload session. */
   abortDirectSession(uploadId: string): Promise<void>;
   /** Build a media URL by id + optional conversion. */
@@ -368,6 +409,8 @@ export function createMediaUploadClient(
     return { mode: 'tus', location };
   }
 
+  // Intentionally non-generic: returns `MediaUploadResult` (body: unknown); the generic is applied at
+  // the hook level so the `fakeClient` mock stays assignable.
   async function uploadDirect(
     data: Blob,
     meta: UploadMeta,
@@ -382,7 +425,7 @@ export function createMediaUploadClient(
       key: string;
       disk: string;
       partSize: number;
-      parts: { partNumber: number; url: string }[];
+      parts: DirectUploadPartUrl[];
     };
     if (options.resume) {
       session = options.resume;
@@ -398,7 +441,7 @@ export function createMediaUploadClient(
         partSize: number;
         size: number;
         totalParts: number;
-        parts: { partNumber: number; url: string }[];
+        parts: DirectUploadPartUrl[];
       };
       session = created;
       options.onSession?.({
@@ -480,18 +523,16 @@ export function createMediaUploadClient(
     return { mode: 'proxy', key: body?.key ?? key, disk: body?.disk ?? meta.disk ?? 'default' };
   }
 
-  async function directSessionStatus(uploadId: string): Promise<{
-    completedParts: number[];
-    pendingParts: number[];
-  }> {
+  async function directSessionStatus(uploadId: string): Promise<DirectUploadSessionStatus> {
     const res = await doFetch(joinUrl(baseUrl, `${uploadsPath}/${uploadId}`), {
       method: 'GET',
       headers: { ...(await appHeaders()) },
     });
     assertOk(res, 'media upload: direct session status failed');
-    return (await safeJson(res)) as { completedParts: number[]; pendingParts: number[] };
+    return (await safeJson(res)) as DirectUploadSessionStatus;
   }
 
+  // Best-effort teardown (mirrors `abortTus`): a non-2xx response is intentionally swallowed.
   async function abortDirectSession(uploadId: string): Promise<void> {
     await doFetch(joinUrl(baseUrl, `${uploadsPath}/${uploadId}`), {
       method: 'DELETE',
