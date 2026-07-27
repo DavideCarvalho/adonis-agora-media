@@ -1,7 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MiddlewareFn, ParsedNamedMiddleware } from '@adonisjs/core/types/http';
-import type { MediaConfig } from '../src/define_config.js';
+import type { DirectUploadPolicyModule, MediaConfig } from '../src/define_config.js';
 import { DirectUploadHandler } from '../src/direct_upload_handler.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
@@ -509,14 +509,16 @@ export default class MediaProvider {
 
   /**
    * Resolve the configured direct-upload {@link DirectUploadPolicy} from its lazy thunk, reading the
-   * module's default export. Returns `undefined` when no policy is configured, leaving the handler on
-   * its built-in key/complete behavior.
+   * module's default export. The default export may be a policy CLASS (instantiated here with no
+   * arguments) or a ready policy OBJECT (used as-is). Returns `undefined` when no policy is
+   * configured, leaving the handler on its built-in key/complete behavior.
    */
   async #resolveDirectUploadPolicy(
-    thunk?: () => Promise<{ default: DirectUploadPolicy<unknown, unknown> }>,
+    thunk?: () => Promise<{ default: DirectUploadPolicyModule }>,
   ): Promise<DirectUploadPolicy<unknown, unknown> | undefined> {
     if (!thunk) return undefined;
-    return (await thunk()).default;
+    const policy = (await thunk()).default;
+    return typeof policy === 'function' ? new policy() : policy;
   }
 
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */

@@ -18,6 +18,22 @@ import type {
 } from './upload_sessions/factory.js';
 
 /**
+ * The default export of a lazy `policy` module: a {@link DirectUploadPolicy} CLASS (the provider
+ * instantiates it with no arguments) or a ready policy OBJECT (used as-is).
+ *
+ * `DirectUploadPolicy` is INVARIANT in `Ctx` and `C` — its methods receive `InitiateDecision<C>` /
+ * `CompleteResolution<C>` as inputs — so a concretely-typed policy (e.g. one over `HttpContext` and
+ * a Lucid model) is NOT assignable to `DirectUploadPolicy<unknown, unknown>`. This config is the
+ * existential boundary where the app's policy types meet the framework-neutral handler, so the
+ * policy is typed `<any, any>`: the one typing that admits every concrete policy. The `any` is
+ * contained here; the handler still sees a fully-typed policy at its own boundary.
+ */
+export type DirectUploadPolicyModule =
+  // biome-ignore lint/suspicious/noExplicitAny: invariant `Ctx` — see the doc above.
+  // biome-ignore lint/suspicious/noExplicitAny: invariant `C` — see the doc above.
+  (new (...args: unknown[]) => DirectUploadPolicy<any, any>) | DirectUploadPolicy<any, any>;
+
+/**
  * Direct-S3 upload configuration. Governs the `proxy`/`direct` multipart upload modes and, when
  * `routes.enabled`, the HTTP endpoints the provider mounts to drive them (idiomatic AdonisJS routes,
  * NOT controllers).
@@ -114,9 +130,11 @@ export interface MediaDirectUploadConfig {
     /**
      * Lazily load a {@link DirectUploadPolicy} that owns the app-specific decisions (key resolution,
      * what the upload becomes on completion, error→HTTP mapping). A thunk so the policy module — and
-     * anything it imports — loads only when the routes mount. The provider reads its default export.
+     * anything it imports — loads only when the routes mount. The provider reads its default export
+     * (see {@link DirectUploadPolicyModule}): a policy class, instantiated with no arguments, or a
+     * ready policy object.
      */
-    policy?: () => Promise<{ default: DirectUploadPolicy<unknown, unknown> }>;
+    policy?: () => Promise<{ default: DirectUploadPolicyModule }>;
   };
 }
 
