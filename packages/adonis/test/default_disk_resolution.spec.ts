@@ -37,6 +37,8 @@ function makeTmpDir(): string {
 async function bootApp(options: {
   drive?: unknown;
   media?: MediaConfig;
+  /** Register the real `@adonisjs/drive` provider. Off for configs Drive itself would reject. */
+  withDrive?: boolean;
 }): Promise<{ app: ApplicationService; media: MediaManager; driveConfigValue: unknown }> {
   const ignitor = new IgnitorFactory()
     .withCoreProviders()
@@ -48,7 +50,7 @@ async function bootApp(options: {
       },
       rcFileContents: {
         providers: [
-          ...(options.drive !== undefined ? [() => import('@adonisjs/drive/drive_provider')] : []),
+          ...(options.withDrive ? [() => import('@adonisjs/drive/drive_provider')] : []),
           () => import('../providers/media_provider.js'),
         ],
       },
@@ -73,6 +75,7 @@ afterEach(() => {
 describe('default disk resolution (real booted app, real Drive ConfigProvider)', () => {
   it("uses Drive's configured default disk when `media.disk` is omitted", async () => {
     const { media, driveConfigValue } = await bootApp({
+      withDrive: true,
       drive: defineDriveConfig({
         default: 'images',
         services: {
@@ -94,6 +97,7 @@ describe('default disk resolution (real booted app, real Drive ConfigProvider)',
 
   it('still lets an explicit `media.disk` win over Drive’s default', async () => {
     const { media } = await bootApp({
+      withDrive: true,
       drive: defineDriveConfig({
         default: 'images',
         services: {
@@ -105,6 +109,15 @@ describe('default disk resolution (real booted app, real Drive ConfigProvider)',
     });
 
     expect(media.storage.defaultDisk).toBe('archive');
+  });
+
+  it('reads a plain-object drive config too (not everything is a ConfigProvider)', async () => {
+    // `@adonisjs/drive`'s provider rejects this shape, so such a host is not using Drive's manager —
+    // but media must not regress it into `'default'` either. No drive provider is registered here.
+    const { media, driveConfigValue } = await bootApp({ drive: { default: 'images' } });
+
+    expect((driveConfigValue as { type?: string }).type).toBeUndefined();
+    expect(media.storage.defaultDisk).toBe('images');
   });
 
   it("falls back to 'default' when the app has no drive config at all", async () => {
