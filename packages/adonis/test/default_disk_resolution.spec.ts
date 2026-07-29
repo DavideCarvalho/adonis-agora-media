@@ -111,6 +111,35 @@ describe('default disk resolution (real booted app, real Drive ConfigProvider)',
     expect(media.storage.defaultDisk).toBe('archive');
   });
 
+  it('resolves the config provider even when a service needs the router (serveFiles)', async () => {
+    // `services.fs({ serveFiles: true })`'s resolver awaits `container.make('router')`, so resolving
+    // Drive's config provider from inside the MediaManager singleton could have been a boot-ordering
+    // trap. It is not: `router` is a container binding registered in core's app provider `register()`,
+    // and our resolution happens lazily on the first `make(MediaManager)`. Drive's own file-serving
+    // route is still mounted exactly once — from Drive's resolution, not ours (we discard the
+    // `locallyServed` array our resolution returns), so the route name does not collide.
+    const { app, media } = await bootApp({
+      withDrive: true,
+      drive: defineDriveConfig({
+        default: 'served',
+        services: {
+          served: driveServices.fs({
+            location: makeTmpDir(),
+            visibility: 'public',
+            serveFiles: true,
+            routeBasePath: '/uploads',
+          }),
+        },
+      }),
+    });
+
+    expect(media.storage.defaultDisk).toBe('served');
+
+    const router = await app.container.make('router');
+    router.commit();
+    expect(router.findOrFail('drive.served.serve').pattern).toBe('/uploads/*');
+  });
+
   it('reads a plain-object drive config too (not everything is a ConfigProvider)', async () => {
     // `@adonisjs/drive`'s provider rejects this shape, so such a host is not using Drive's manager —
     // but media must not regress it into `'default'` either. No drive provider is registered here.
