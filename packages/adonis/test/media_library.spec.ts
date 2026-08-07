@@ -1,6 +1,5 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { MimeNotAllowedError } from '../src/errors.js';
 import { MediaLibrary } from '../src/media_library.js';
 import type { MediaRecord } from '../src/media_record.js';
 import { StorageManager } from '../src/storage_manager.js';
@@ -203,7 +202,7 @@ describe('single-file collections', () => {
 });
 
 describe('MIME whitelist', () => {
-  it('rejects a disallowed MIME type', async () => {
+  it('rejects a disallowed MIME type, listing the allowed types', async () => {
     const { library, disks } = makeLibrary({
       collections: [{ name: 'avatar', acceptsMimeTypes: ['image/png'] }],
     });
@@ -216,7 +215,10 @@ describe('MIME whitelist', () => {
         mimeType: 'image/gif',
         contents: png,
       }),
-    ).rejects.toBeInstanceOf(MimeNotAllowedError);
+    ).rejects.toMatchObject({
+      code: 'E_MEDIA_MIME_NOT_ALLOWED',
+      message: expect.stringContaining('Allowed: image/png'),
+    });
     // nothing written
     expect(disks.fs.files.size).toBe(0);
   });
@@ -234,6 +236,74 @@ describe('MIME whitelist', () => {
       contents: png,
     });
     expect(record.id).toBeDefined();
+  });
+
+  it('normalizes a bare top-level MIME from the file extension', async () => {
+    const { library, disks } = makeLibrary({
+      collections: [{ name: 'dataset', acceptsMimeTypes: ['text/csv', 'text/plain'] }],
+    });
+    const record = await library.attach({
+      ownerType: 'Dataset',
+      ownerId: '1',
+      collection: 'dataset',
+      fileName: 'rows.csv',
+      mimeType: 'text', // a truncated multipart header — the fix for #27
+      contents: Buffer.from('id,name\n1,ana\n'),
+    });
+    expect(record.mimeType).toBe('text/csv');
+    expect(disks.fs.files.get(record.path)?.contentType).toBe('text/csv');
+  });
+
+  it('normalizes a concrete non-whitelisted MIME when the extension resolves to a whitelisted one', async () => {
+    const { library } = makeLibrary({
+      collections: [{ name: 'exams', acceptsMimeTypes: ['application/pdf'] }],
+    });
+    const record = await library.attach({
+      ownerType: 'Patient',
+      ownerId: '1',
+      collection: 'exams',
+      fileName: 'scan.pdf',
+      mimeType: 'application/octet-stream', // not whitelisted, but the extension is
+      contents: Buffer.from('%PDF-1.7\nfake-pdf-bytes'),
+    });
+    expect(record.mimeType).toBe('application/pdf');
+  });
+
+  it('rejects a generic MIME whose extension resolves to nothing, listing the allowed types', async () => {
+    const { library, disks } = makeLibrary({
+      collections: [{ name: 'dataset', acceptsMimeTypes: ['text/csv', 'text/plain'] }],
+    });
+    await expect(
+      library.attach({
+        ownerType: 'Dataset',
+        ownerId: '1',
+        collection: 'dataset',
+        fileName: 'archive.xyz',
+        mimeType: 'text',
+        contents: Buffer.from('hello'),
+      }),
+    ).rejects.toMatchObject({
+      code: 'E_MEDIA_MIME_NOT_ALLOWED',
+      message: expect.stringContaining('Allowed: text/csv, text/plain'),
+    });
+    // nothing written
+    expect(disks.fs.files.size).toBe(0);
+  });
+
+  it('does not rescue an extension whose MIME is not whitelisted', async () => {
+    const { library } = makeLibrary({
+      collections: [{ name: 'avatar', acceptsMimeTypes: ['image/png'] }],
+    });
+    await expect(
+      library.attach({
+        ownerType: 'User',
+        ownerId: '1',
+        collection: 'avatar',
+        fileName: 'a.gif',
+        mimeType: 'image', // generic top-level type, but .gif is not on the whitelist
+        contents: png,
+      }),
+    ).rejects.toMatchObject({ code: 'E_MEDIA_MIME_NOT_ALLOWED' });
   });
 });
 

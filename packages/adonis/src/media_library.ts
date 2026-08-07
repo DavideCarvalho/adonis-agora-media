@@ -144,6 +144,12 @@ export interface OwnerMediaBinding {
 interface AttachContext {
   config: MediaCollectionConfig;
   ownerId: string;
+  /**
+   * MIME type the record will carry. Usually the declared type; when that is generic/truncated
+   * (a bare top-level type like `"text"`) or not whitelisted, it is normalized from the file
+   * extension — see {@link resolveDeclaredMimeType}. Still gated by the collection whitelist.
+   */
+  mimeType: string;
   /** Records a `single: true` collection will replace, captured before the new object lands. */
   previous: MediaRecord[];
   disk: string;
@@ -210,7 +216,7 @@ export class MediaLibrary {
 
   async attach(input: AttachInput): Promise<MediaRecord> {
     const context = await this.#prepare(input);
-    const { config, ownerId, disk, id, target } = context;
+    const { config, ownerId, disk, id, target, mimeType } = context;
     const path = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
     const hasConversions = (config.conversions ?? []).length > 0;
 
@@ -220,12 +226,7 @@ export class MediaLibrary {
     if (config.acceptsMimeTypes) {
       const peeked = await peekContents(input.contents, SIGNATURE_HEAD_BYTES);
       contents = peeked.contents;
-      this.#assertContentMatches(
-        config.acceptsMimeTypes,
-        input.collection,
-        input.mimeType,
-        peeked.head,
-      );
+      this.#assertContentMatches(config.acceptsMimeTypes, input.collection, mimeType, peeked.head);
     }
 
     // Stream large uploads straight through (no in-memory buffer) when we can: a Readable with a
@@ -239,15 +240,15 @@ export class MediaLibrary {
       // `input.size` is forwarded, not dropped: it is the very thing that makes this path
       // eligible (see `canStream`), and S3's putStream cannot write without it.
       await target.putStream?.(path, contents as Readable, {
-        contentType: input.mimeType,
+        contentType: mimeType,
         contentLength: input.size as number,
       });
     } else {
       const bytes = await toBytes(contents);
-      await target.put(path, bytes, { contentType: input.mimeType });
+      await target.put(path, bytes, { contentType: mimeType });
     }
 
-    return this.#commit(context, { ...input, path, ownsObject: true });
+    return this.#commit(context, { ...input, mimeType, path, ownsObject: true });
   }
 
   /**
@@ -272,7 +273,7 @@ export class MediaLibrary {
    */
   async attachExisting(input: AttachExistingInput): Promise<MediaRecord> {
     const context = await this.#prepare(input);
-    const { ownerId, disk, id, target } = context;
+    const { ownerId, disk, id, target, mimeType } = context;
 
     if (!(await target.exists(input.key))) {
       throw new MediaObjectMissingError(disk, input.key);
@@ -283,12 +284,7 @@ export class MediaLibrary {
     // exists to avoid.
     if (context.config.acceptsMimeTypes) {
       const head = await peekStream(await target.getStream(input.key), SIGNATURE_HEAD_BYTES);
-      this.#assertContentMatches(
-        context.config.acceptsMimeTypes,
-        input.collection,
-        input.mimeType,
-        head,
-      );
+      this.#assertContentMatches(context.config.acceptsMimeTypes, input.collection, mimeType, head);
     }
 
     let path = input.key;
@@ -301,7 +297,12 @@ export class MediaLibrary {
       path = layout;
     }
 
-    return this.#commit(context, { ...input, path, ownsObject: input.moveIntoLayout === true });
+    return this.#commit(context, {
+      ...input,
+      mimeType,
+      path,
+      ownsObject: input.moveIntoLayout === true,
+    });
   }
 
   /**
@@ -349,8 +350,9 @@ export class MediaLibrary {
 
   /**
    * Everything both attach paths do BEFORE the object exists: resolve the collection, enforce its
-   * MIME whitelist against the DECLARED type, capture the records a `single: true` collection will
-   * replace, and pick the disk and record id.
+   * MIME whitelist against the declared type (normalizing generic/truncated declarations from the
+   * file extension first), capture the records a `single: true` collection will replace, and pick
+   * the disk and record id.
    *
    * The declared-type check is only the cheap first gate — it rejects without touching a byte. Each
    * attach path then proves the content itself with {@link #assertContentMatches}.
@@ -363,6 +365,7 @@ export class MediaLibrary {
     ownerType: string;
     ownerId: string | number;
     collection: string;
+    fileName: string;
     mimeType: string;
     disk?: string | undefined;
     id?: string | undefined;
@@ -370,8 +373,17 @@ export class MediaLibrary {
     const config = this.collections.get(input.collection);
     const ownerId = String(input.ownerId);
 
-    if (config.acceptsMimeTypes && !config.acceptsMimeTypes.includes(input.mimeType)) {
-      throw new MimeNotAllowedError(input.collection, input.mimeType);
+    const mimeType = resolveDeclaredMimeType(
+      input.mimeType,
+      input.fileName,
+      config.acceptsMimeTypes,
+    );
+    if (mimeType === undefined) {
+      throw new MimeNotAllowedError(
+        input.collection,
+        input.mimeType,
+        config.acceptsMimeTypes ?? [],
+      );
     }
 
     const previous = config.single
@@ -382,6 +394,7 @@ export class MediaLibrary {
     return {
       config,
       ownerId,
+      mimeType,
       previous,
       disk,
       target: this.storage.disk(disk),
@@ -865,6 +878,56 @@ export class MediaLibrary {
 function stripExtension(fileName: string): string {
   const dot = fileName.lastIndexOf('.');
   return dot > 0 ? fileName.slice(0, dot) : fileName;
+}
+
+/**
+ * Small built-in extension → MIME map. Used ONLY as a fallback when the caller's declared MIME type
+ * is ambiguous — a bare top-level type like `"text"` from a truncated multipart header — or not on
+ * the collection's whitelist. The whitelist stays authoritative: a type resolved from here is used
+ * only if it is itself whitelisted, so nothing is loosened.
+ */
+const EXTENSION_MIME_TYPES: Readonly<Record<string, string>> = {
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  txt: 'text/plain',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  json: 'application/json',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  pdf: 'application/pdf',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+};
+
+/**
+ * Resolve the MIME type an attach path records. The declared type stands whenever the collection
+ * accepts it (or declares no whitelist at all). Otherwise — a bare top-level type with no `/`, or a
+ * concrete type the whitelist rejects — fall back to the file extension: if the extension pins a
+ * concrete MIME the collection DOES accept, that value is used (and stored on the record). Returns
+ * `undefined` when nothing resolvable is whitelisted, which the caller reports as
+ * {@link MimeNotAllowedError} with the allowed list.
+ */
+function resolveDeclaredMimeType(
+  declared: string,
+  fileName: string,
+  accepted: readonly string[] | undefined,
+): string | undefined {
+  if (accepted === undefined || accepted.includes(declared)) return declared;
+
+  const dot = fileName.lastIndexOf('.');
+  if (dot <= 0) return undefined;
+  const extension = fileName.slice(dot + 1).toLowerCase();
+  const resolved = EXTENSION_MIME_TYPES[extension];
+  if (resolved === undefined || !accepted.includes(resolved)) return undefined;
+  return resolved;
 }
 
 /**

@@ -53,6 +53,16 @@ await media.library.attach({
 
 The check is an exact string match against the `mimeType` you pass — there's no wildcard expansion, so list each type you accept (`'image/png'`, `'image/jpeg'`, `'image/webp'`, …).
 
+The whitelist is authoritative, but a *generic* declaration isn't a hard stop. If the declared `mimeType` is a bare top-level type (`'text'`, `'application'` — some multipart parsers truncate the header) or simply isn't on the list, `attach` / `attachExisting` first try to pin a concrete MIME from the file extension (a small built-in map: `.csv` → `text/csv`, `.tsv`, `.txt`, `.xlsx`/`.xls`, `.json`, raster images, `.svg`, `.pdf`, …). If the extension resolves to a type **on** the whitelist, that normalized value is what the record stores. If it still resolves to nothing acceptable, the rejection lists what the collection accepts:
+
+```ts
+// collection 'avatar' accepts only image/png
+// → throws MimeNotAllowedError:
+//   MIME type "text" is not allowed in collection "avatar". Allowed: image/png.
+```
+
+The signature check still applies after normalization — normalization only re-derives the *declared* type, never weakens what content the collection accepts.
+
 ### The content is checked too, not just the declared type
 
 The `mimeType` above is written by **your** app — very often a hardcoded constant, or a `Content-Type` header the client chose. Checking only that whitelists nothing about the bytes themselves: a user renames `payload.png` to `report.pdf`, your controller declares `'application/pdf'`, and the whitelist waves it through.

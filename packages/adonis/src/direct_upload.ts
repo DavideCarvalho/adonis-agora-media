@@ -207,7 +207,7 @@ export class DirectUploadManager {
     if (input.collection !== undefined && this.collections !== undefined) {
       const accepts = this.collections.get(input.collection).acceptsMimeTypes;
       if (accepts && input.contentType !== undefined && !accepts.includes(input.contentType)) {
-        throw new MimeNotAllowedError(input.collection, input.contentType);
+        throw new MimeNotAllowedError(input.collection, input.contentType, accepts);
       }
     }
 

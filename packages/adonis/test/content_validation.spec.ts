@@ -276,7 +276,8 @@ describe('MediaLibrary.attach — real content validation', () => {
     const { manager } = makeManager(collections);
 
     await expect(
-      attach(manager, { mimeType: 'image/png', contents: samples.png }),
+      // `scan.bin` cannot be normalized from the extension, so the declared type stands alone.
+      attach(manager, { mimeType: 'image/png', fileName: 'scan.bin', contents: samples.png }),
     ).rejects.toBeInstanceOf(MimeNotAllowedError);
   });
 

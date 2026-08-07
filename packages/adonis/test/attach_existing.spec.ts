@@ -126,6 +126,22 @@ describe('MediaLibrary.attachExisting', () => {
     expect(disks.fs.files.has('incoming/note.txt')).toBe(true);
   });
 
+  it('normalizes a truncated top-level MIME from the file extension on this path too', async () => {
+    const { manager, disks } = makeManager([{ name: 'exams', acceptsMimeTypes: ['text/csv'] }]);
+    await landObject(disks, 'incoming/rows.csv');
+
+    const record = await manager.library.attachExisting({
+      ownerType: 'Patient',
+      ownerId: '7',
+      collection: 'exams',
+      key: 'incoming/rows.csv',
+      fileName: 'rows.csv',
+      mimeType: 'text', // a truncated multipart header — normalized from the .csv extension
+    });
+
+    expect(record.mimeType).toBe('text/csv');
+  });
+
   it('replaces the previous media of a single-file collection and drops its object', async () => {
     const { manager, store, disks } = makeManager([{ name: 'avatar', single: true }]);
     await landObject(disks, 'incoming/first.png', Buffer.from('first'));

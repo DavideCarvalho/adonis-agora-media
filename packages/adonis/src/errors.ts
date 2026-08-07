@@ -1,7 +1,13 @@
 export class MimeNotAllowedError extends Error {
   readonly code = 'E_MEDIA_MIME_NOT_ALLOWED';
-  constructor(collection: string, mimeType: string) {
-    super(`MIME type "${mimeType}" is not allowed in collection "${collection}"`);
+  constructor(
+    readonly collection: string,
+    readonly mimeType: string,
+    readonly accepted: readonly string[],
+  ) {
+    super(
+      `MIME type "${mimeType}" is not allowed in collection "${collection}". Allowed: ${accepted.join(', ')}.`,
+    );
     this.name = 'MimeNotAllowedError';
   }
 }
