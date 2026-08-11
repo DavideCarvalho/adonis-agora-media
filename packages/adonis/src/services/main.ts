@@ -1,5 +1,5 @@
+import app from '@adonisjs/core/services/app';
 import { MediaManager } from '../media_manager.js';
-import { getBootedApp } from './booted_app.js';
 
 /**
  * Service-singleton for the {@link MediaManager}, resolved from the container once the app has
@@ -11,22 +11,22 @@ import { getBootedApp } from './booted_app.js';
  * await media.library.attach({ ownerType: 'Post', ownerId: '1', collection: 'gallery', ... })
  * ```
  *
- * The app is read from the provider-captured booted instance ({@link getBootedApp}) rather than
- * `@adonisjs/core/services/app` — see `./booted_app.js` for why that import is unreliable under a
- * duplicated `@adonisjs/core` tree (pnpm dual-package hazard).
+ * Same pattern as `@adonisjs/lucid/services/db`, `@adonisjs/drive/services/main` and
+ * `@adonisjs/queue/services/main`: read the app from `@adonisjs/core/services/app` (whose binding is
+ * set by `bin/server`/`bin/console` before any command/route module is imported) and capture the
+ * manager inside `app.booted(...)`. This makes importing this module safe at ANY time — including
+ * the ace command loader reading command metadata before the app boots.
  *
- * This module's top-level `await` runs at import time, so importing it requires
- * `MediaProvider.register()` to already have run. In the previous `@adonisjs/core/services/app`
- * import this "just worked" in a single-copy tree (that module's `app` binding is set very early,
- * long before any provider registers) but threw an opaque `Cannot read properties of undefined
- * (reading 'booted')` in a duplicated-`@adonisjs/core` tree — the exact class of crash this file
- * exists to fix. Importing this module before `MediaProvider.register()` has run now throws the same
- * clear, actionable error {@link getBootedApp} gives everywhere else in this package.
+ * (Historical note: this module used a provider-captured `getBootedApp()` instead, because under a
+ * duplicated `@adonisjs/core` tree (pnpm dual-package hazard) `services/app`'s binding could resolve
+ * to a non-booted copy and stay `undefined`. That hazard is solved at the app level — the Lumen
+ * workspace pins `@adonisjs/core` to a single copy via `pnpm.overrides` — and the ecosystem-standard
+ * `services/app` pattern is what `lucid`/`drive`/`queue` use, so we align with it.)
  */
 let media: MediaManager;
 
-await getBootedApp().booted(async () => {
-  media = await getBootedApp().container.make(MediaManager);
+await app.booted(async () => {
+  media = await app.container.make(MediaManager);
 });
 
 export { media as default };
