@@ -1,6 +1,6 @@
 {
   "name": "@adonis-agora/media",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Media-library for AdonisJS — owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
