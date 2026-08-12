@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DiskListResponse, ObjectListResponse, Topology } from '../../types';
 import { renderView } from '../testkit';
@@ -45,11 +45,12 @@ describe('LibraryBrowseView', () => {
     const client = baseClient();
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('a.txt')).toBeTruthy());
+    const fileRow = within(screen.getByText('a.txt').closest('tr') as HTMLElement);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy to…' }));
-    const keyInput = (await screen.findByLabelText('Destination key')) as HTMLInputElement;
-    expect(keyInput.value).toBe('a.txt');
-    fireEvent.change(keyInput, { target: { value: 'copies/a.txt' } });
+    fireEvent.click(fileRow.getByRole('button', { name: 'Copy to…' }));
+    const nameInput = (await screen.findByLabelText('Name')) as HTMLInputElement;
+    expect(nameInput.value).toBe('a.txt');
+    fireEvent.change(nameInput, { target: { value: 'copies/a.txt' } });
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
     await waitFor(() =>
@@ -66,8 +67,11 @@ describe('LibraryBrowseView', () => {
     const client = baseClient();
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('a.txt')).toBeTruthy());
+    const fileRow = within(screen.getByText('a.txt').closest('tr') as HTMLElement);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(fileRow.getByRole('button', { name: 'Delete' }));
+    // The confirm dialog's own "Delete" button is the last on the page (the two row-level "Delete"
+    // buttons — folder and file — plus the dialog's).
     const confirmButtons = await screen.findAllByRole('button', { name: 'Delete' });
     fireEvent.click(confirmButtons[confirmButtons.length - 1]);
 

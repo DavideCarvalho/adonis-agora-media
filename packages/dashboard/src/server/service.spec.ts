@@ -396,4 +396,228 @@ describe('DashboardService', () => {
     });
     await expect(svc.objects('s3')).rejects.toMatchObject({ status: 400 });
   });
+
+  it('streams an object with its content type and size for the inline preview proxy', async () => {
+    const disk = fakeDisk({ getStream: vi.fn(async () => 'the-stream' as never) });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const result = await svc.objectStream('s3', 'a.txt');
+    expect(result).toMatchObject({ stream: 'the-stream', contentType: 'text/plain', size: 42 });
+  });
+
+  it('returns empty insights when no providers are registered', async () => {
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(svc.objectInsights('s3', 'a.txt')).resolves.toEqual({ insights: [] });
+  });
+
+  it('collects insights from every registered provider, dropping ones that throw', async () => {
+    const svc = new DashboardService(
+      managerWith({ s3: fakeDisk() }),
+      { diskNames: ['s3'], actions: false },
+      [
+        {
+          id: 'good',
+          resolve: async () => ({ title: 'RAG', facts: [{ label: 'k', value: 'v' }] }),
+        },
+        {
+          id: 'bad',
+          resolve: async () => {
+            throw new Error('boom');
+          },
+        },
+        { id: 'nothing-to-say', resolve: () => null },
+      ],
+    );
+    const result = await svc.objectInsights('s3', 'a.txt');
+    expect(result.insights).toEqual([{ title: 'RAG', facts: [{ label: 'k', value: 'v' }] }]);
+  });
+
+  it('sanitizes unsafe insight links (javascript:, protocol-relative) while keeping safe ones', async () => {
+    const svc = new DashboardService(
+      managerWith({ s3: fakeDisk() }),
+      { diskNames: ['s3'], actions: false },
+      [
+        {
+          id: 'p',
+          resolve: () => ({
+            title: 'RAG',
+            links: [
+              { label: 'safe relative', href: '/app/docs/1' },
+              { label: 'safe absolute', href: 'https://example.com' },
+              { label: 'protocol-relative', href: '//evil.example' },
+              { label: 'javascript', href: 'javascript:alert(1)' },
+            ],
+          }),
+        },
+      ],
+    );
+    const result = await svc.objectInsights('s3', 'a.txt');
+    expect(result.insights[0]?.links?.map((l) => l.label)).toEqual([
+      'safe relative',
+      'safe absolute',
+    ]);
+  });
+
+  it('uploadDetail finds the session by id and returns its recorded parts', async () => {
+    const resumable = {
+      list: vi.fn(async () => [{ id: 'u1', disk: 's3', key: 'a', offset: 5, size: 10, parts: 1 }]),
+      abort: vi.fn(async () => {}),
+      listParts: vi.fn(async () => [{ partNumber: 1, etag: 'e1' }]),
+    };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const result = await svc.uploadDetail('u1');
+    expect(result.upload).toMatchObject({ id: 'u1', percent: 50 });
+    expect(result.parts).toEqual([{ partNumber: 1, etag: 'e1' }]);
+  });
+
+  it('uploadDetail 404s for an unknown id, and when no upload store is configured', async () => {
+    const resumable = { list: vi.fn(async () => []), abort: vi.fn(), listParts: vi.fn() };
+    const withStore = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(withStore.uploadDetail('missing')).rejects.toMatchObject({ status: 404 });
+
+    const withoutStore = new DashboardService(managerWith({ s3: fakeDisk() }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(withoutStore.uploadDetail('u1')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('abortUpload delegates to the resumable manager and is actions-gated', async () => {
+    const resumable = {
+      list: vi.fn(async () => []),
+      abort: vi.fn(async () => {}),
+      listParts: vi.fn(),
+    };
+    const gated = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(gated.abortUpload('u1')).rejects.toMatchObject({ status: 403 });
+    expect(resumable.abort).not.toHaveBeenCalled();
+
+    const allowed = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await allowed.abortUpload('u1');
+    expect(resumable.abort).toHaveBeenCalledWith('u1');
+  });
+
+  it('collectionsSummary rolls up count + total size per collection across pages', async () => {
+    const pages = [
+      { items: [mediaRecord({ id: 'a', collection: 'gallery', size: 100 })], nextCursor: 'p2' },
+      {
+        items: [
+          mediaRecord({ id: 'b', collection: 'gallery', size: 50 }),
+          mediaRecord({ id: 'c', collection: 'docs', size: 10 }),
+        ],
+        nextCursor: null,
+      },
+    ];
+    let call = 0;
+    const store = { list: vi.fn(async () => pages[call++]) };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const result = await svc.collectionsSummary();
+    expect(result.collections).toEqual(
+      expect.arrayContaining([
+        { key: 'gallery', count: 2, sumSize: 150 },
+        { key: 'docs', count: 1, sumSize: 10 },
+      ]),
+    );
+  });
+
+  it('mediaRecord returns signed variant URLs only for conversions with a concrete artifact', async () => {
+    const disk = fakeDisk({ getSignedUrl: vi.fn(async () => 'https://signed.example/thumb.jpg') });
+    const store = {
+      find: vi.fn(async () =>
+        mediaRecord({
+          conversions: {
+            thumb: { path: 't.jpg', disk: 's3' },
+            probe: { meta: { duration: 12 } }, // no path/disk — metadata-only, not linkable
+          },
+        }),
+      ),
+      delete: vi.fn(),
+    };
+    const svc = new DashboardService(managerWith({ s3: disk }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const result = await svc.mediaRecord('m1');
+    expect(result.variants).toEqual([{ name: 'thumb', url: 'https://signed.example/thumb.jpg' }]);
+  });
+
+  it('mediaRecord 404s for an unknown id', async () => {
+    const store = { find: vi.fn(async () => null), delete: vi.fn() };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(svc.mediaRecord('missing')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('putObject buffers the stream and writes it, and is actions-gated', async () => {
+    const disk = fakeDisk({ put: vi.fn(async () => {}) });
+    async function* body() {
+      yield new Uint8Array([1, 2]);
+      yield new Uint8Array([3]);
+    }
+    const gated = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(gated.putObject('s3', 'a.txt', body())).rejects.toMatchObject({ status: 403 });
+
+    const allowed = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await allowed.putObject('s3', 'a.txt', body(), 'text/plain');
+    expect(disk.put).toHaveBeenCalledWith('a.txt', new Uint8Array([1, 2, 3]), {
+      contentType: 'text/plain',
+    });
+  });
+
+  it('putObject rejects a stream over the console upload cap', async () => {
+    const disk = fakeDisk({ put: vi.fn(async () => {}) });
+    async function* bigBody() {
+      yield new Uint8Array(101 * 1024 * 1024);
+    }
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await expect(svc.putObject('s3', 'a.txt', bigBody())).rejects.toMatchObject({ status: 413 });
+  });
+
+  it('deleteMediaRecord is actions-gated and 404s for an unknown id', async () => {
+    const store = { find: vi.fn(async () => mediaRecord()), delete: vi.fn(async () => {}) };
+    const gated = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(gated.deleteMediaRecord('m1')).rejects.toMatchObject({ status: 403 });
+    expect(store.delete).not.toHaveBeenCalled();
+
+    const allowed = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: true,
+    });
+    await allowed.deleteMediaRecord('m1');
+    expect(store.delete).toHaveBeenCalledWith('m1');
+  });
 });

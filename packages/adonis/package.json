@@ -87,7 +87,7 @@
   "peerDependencies": {
     "@adonis-agora/telescope": "^0.4.0",
     "@adonisjs/core": "^7.3.0",
-    "@adonisjs/drive": "^3.0.0",
+    "@adonisjs/drive": "^3.0.0 || ^4.0.0",
     "@adonisjs/lucid": "^22.4.0",
     "@aws-sdk/client-s3": "^3.0.0",
     "mediabunny": "^1.45.4",
@@ -112,21 +112,21 @@
   },
   "devDependencies": {
     "@adonisjs/assembler": "^8.4.0",
-    "@adonisjs/core": "^7.3.0",
-    "@adonisjs/drive": "^3.0.0",
+    "@adonisjs/core": "7.4.0",
+    "@adonisjs/drive": "^4.0.0",
     "@adonisjs/lucid": "^22.4.0",
-    "@aws-sdk/client-s3": "^3.726.1",
+    "@aws-sdk/client-s3": "3.1107.0",
     "@smithy/util-stream": "^3.3.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.0.0",
     "aws-sdk-client-mock": "^4.1.0",
     "better-sqlite3": "^11.0.0",
     "luxon": "^3.4.0",
-    "mediabunny": "^1.50.9",
+    "mediabunny": "1.53.0",
     "sharp": "^0.33.0",
     "tempura": "0.4.1",
     "typescript": "^5.4.0",
-    "vitest": "^3.0.0"
+    "vitest": "3.2.7"
   },
   "engines": {
     "node": ">=20.6.0"

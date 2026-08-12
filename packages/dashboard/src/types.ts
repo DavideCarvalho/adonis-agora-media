@@ -139,3 +139,87 @@ export interface FolderBody {
   disk: string;
   prefix: string;
 }
+
+/** One resumable part recorded for an in-progress upload session. */
+export interface UploadPart {
+  partNumber: number;
+  etag: string;
+}
+
+/** Full detail of one resumable upload session, plus its recorded parts. */
+export interface UploadDetailResponse {
+  upload: UploadInfo;
+  parts: UploadPart[];
+}
+
+/** One generated conversion/variant of a stored `MediaRecord`, with a short-lived signed URL. */
+export interface MediaVariant {
+  name: string;
+  url: string;
+}
+
+/** Full detail of one stored `MediaRecord`, plus its generated conversions. */
+export interface MediaDetailResponse {
+  record: MediaEntry;
+  variants: MediaVariant[];
+}
+
+/** Per-collection rollup (count + total bytes), for the console's collection chips. */
+export interface CollectionSummary {
+  key: string;
+  count: number;
+  sumSize: number;
+}
+
+export interface CollectionsSummaryResponse {
+  collections: CollectionSummary[];
+}
+
+/** One label/value row of an {@link ObjectInsight}. Rendered verbatim as text — no markup. */
+export interface ObjectInsightFact {
+  label: string;
+  value: string;
+}
+
+/** A link out to the host's own screens, rendered as an anchor. */
+export interface ObjectInsightLink {
+  label: string;
+  href: string;
+}
+
+/**
+ * Host-supplied context about one disk object, rendered in the console preview.
+ *
+ * The console can describe a file only as storage sees it (key, size, type). This is what the HOST
+ * knows about it — which knowledge base indexed it, which work order it belongs to — handed over as
+ * data, because the console ships as a prebuilt bundle a host cannot inject components into.
+ */
+export interface ObjectInsight {
+  /** Section heading, e.g. `Knowledge base`. */
+  title: string;
+  facts?: ObjectInsightFact[];
+  links?: ObjectInsightLink[];
+  /** One line of prose under the facts — a caveat, a status explanation. */
+  note?: string;
+}
+
+/** What `GET /object/insights` returns. Empty when the host registered no providers. */
+export interface ObjectInsightsResponse {
+  insights: ObjectInsight[];
+}
+
+/** A signed-in console user, carried by the session cookie and returned by `/me`. */
+export interface ConsoleSessionUserInfo {
+  id: string;
+  name?: string;
+  roles: string[];
+}
+
+/** Response of `GET /me`: the console SPA renders the login screen or the console from this. */
+export type MeResponse = { authRequired: false } | { user: ConsoleSessionUserInfo };
+
+/** Body for `POST /login`. */
+export interface LoginBody {
+  username: string;
+  password: string;
+}

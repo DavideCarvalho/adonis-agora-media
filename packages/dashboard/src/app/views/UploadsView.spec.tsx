@@ -23,7 +23,7 @@ describe('UploadsView', () => {
         ],
       })),
     };
-    renderView(<UploadsView />, client);
+    renderView(<UploadsView route={{ tab: 'uploads' }} />, client);
     await waitFor(() => expect(screen.getByText('videos/big.mp4')).toBeTruthy());
     expect(screen.getByText(/50% ·/)).toBeTruthy();
     expect(client.uploads).toHaveBeenCalled();
@@ -31,7 +31,7 @@ describe('UploadsView', () => {
 
   it('shows an empty state when there are no sessions', async () => {
     const client = { uploads: vi.fn(async () => ({ uploads: [] })) };
-    renderView(<UploadsView />, client);
+    renderView(<UploadsView route={{ tab: 'uploads' }} />, client);
     await waitFor(() => expect(screen.getByText('No resumable uploads in progress.')).toBeTruthy());
   });
 });

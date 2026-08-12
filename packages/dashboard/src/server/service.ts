@@ -1,26 +1,36 @@
+import type { Readable } from 'node:stream';
 import { isExtendedDisk } from '@adonis-agora/media';
 import type {
   Disk,
   ExtendedDisk,
+  MediaConversion,
   MediaListOptions,
   MediaListPage,
   MediaRecord,
+  MultipartPart,
   UploadSession,
 } from '@adonis-agora/media';
 import type {
   CollectionFilter,
   CollectionListResponse,
+  CollectionsSummaryResponse,
   DiskInfo,
   DiskListResponse,
+  MediaDetailResponse,
   MediaEntry,
   ObjectDetailResponse,
   ObjectEntry,
   ObjectFolder,
+  ObjectInsight,
+  ObjectInsightsResponse,
   ObjectListResponse,
   Topology,
+  UploadDetailResponse,
   UploadInfo,
   UploadListResponse,
 } from '../types.js';
+import type { ObjectInsightProvider } from './object_insights.js';
+import { sanitizeInsight } from './object_insights.js';
 
 /** TTL of the signed URLs handed to the browser for object preview/download. */
 export const URL_TTL_SECONDS = 300;
@@ -30,6 +40,17 @@ export const MAX_TRANSFER_BYTES = 100 * 1024 * 1024;
 
 /** Page size for the flat sweep that recursive folder delete/copy/move paginates over. */
 export const FOLDER_SWEEP_LIMIT = 1000;
+
+/** Page size for the client-side scan behind {@link DashboardService.collectionsSummary}. */
+export const COLLECTIONS_SUMMARY_PAGE_SIZE = 200;
+
+/** Hard cap on records scanned by {@link DashboardService.collectionsSummary} — beyond this the
+ *  rollup is partial rather than unbounded. */
+export const COLLECTIONS_SUMMARY_SCAN_LIMIT = 5000;
+
+/** Ceiling for a console (direct) upload — buffered in memory, so bounded to protect the process
+ *  heap. Larger files belong on the resumable (TUS) upload path, not this convenience upload. */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 /** Strip leading and trailing slashes — a folder prefix normalized to its bare path (no delimiter). */
 function normalizeFolder(prefix: string): string {
@@ -42,9 +63,18 @@ export interface MediaManagerLike {
   readonly hasResumable: boolean;
   readonly resumable: {
     list(filter?: { disk?: string; keyPrefix?: string }): Promise<UploadSession[]>;
+    /** Discard an in-flight session (native multipart + buffered parts), then drop its record. */
+    abort(id: string): Promise<void>;
+    /** All recorded parts for a session (multipart-capable disks); empty for a buffered session. */
+    listParts(id: string): Promise<MultipartPart[]>;
   };
-  /** The persistence SPI — the console reads stored records via the cross-owner `list`. */
-  readonly store: { list(options?: MediaListOptions): Promise<MediaListPage> };
+  /** The persistence SPI — the console reads stored records via the cross-owner `list`, and a single
+   *  record (+ delete) for the record-detail drill-in. */
+  readonly store: {
+    list(options?: MediaListOptions): Promise<MediaListPage>;
+    find(id: string): Promise<MediaRecord | null>;
+    delete(id: string): Promise<void>;
+  };
 }
 
 export interface DashboardServiceOptions {
@@ -75,6 +105,8 @@ export class DashboardService {
   constructor(
     private readonly manager: MediaManagerLike,
     private readonly options: DashboardServiceOptions,
+    /** Host-registered {@link ObjectInsightProvider}s, from `config/media_dashboard.ts`'s `objectInsights`. */
+    private readonly insightProviders: ObjectInsightProvider[] = [],
   ) {}
 
   /** Coarse capability topology for the SPA to enable/disable affordances. */
@@ -143,6 +175,53 @@ export class DashboardService {
     };
   }
 
+  /**
+   * The object's raw byte stream plus the metadata the provider needs to serve it inline. Backs the
+   * console's same-origin preview proxy so text/PDF render in the browser instead of downloading
+   * (and so a CORS-locked bucket is still previewable).
+   */
+  async objectStream(
+    diskName: string,
+    key: string,
+  ): Promise<{ stream: Readable; contentType: string; size: number }> {
+    if (!key) throw new DashboardError('key is required', 400);
+    const disk = this.manager.storage.disk(diskName);
+    const stat = isExtendedDisk(disk) ? await disk.stat(key) : await metaAsStat(disk, key);
+    const stream = await disk.getStream(key);
+    return { stream, contentType: stat.contentType ?? 'application/octet-stream', size: stat.size };
+  }
+
+  /**
+   * What the HOST knows about this object, from every registered `objectInsights` provider (see
+   * `config/media_dashboard.ts`). `{ insights: [] }` when none are registered. A provider that
+   * throws is skipped and logged — annotation must never be able to stop an admin opening a file, and
+   * providers run concurrently so one host lookup being slow doesn't serialize the others.
+   */
+  async objectInsights(diskName: string, key: string): Promise<ObjectInsightsResponse> {
+    if (this.insightProviders.length === 0) return { insights: [] };
+    // Validates the disk the same way every other object read does, so an unknown disk 404s here too.
+    this.manager.storage.disk(diskName);
+    const settled = await Promise.all(
+      this.insightProviders.map(async (provider): Promise<ObjectInsight | null> => {
+        try {
+          return await provider.resolve({ disk: diskName, key });
+        } catch (error) {
+          console.warn(
+            `[media-dashboard] object-insight provider "${provider.id}" failed for ${diskName}:${key} — ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return null;
+        }
+      }),
+    );
+    return {
+      insights: settled
+        .filter((insight): insight is ObjectInsight => insight !== null)
+        .map(sanitizeInsight),
+    };
+  }
+
   /** In-progress resumable uploads, projected from the session store (empty when unconfigured). */
   async uploads(filter: { disk?: string; prefix?: string } = {}): Promise<UploadListResponse> {
     if (!this.manager.hasResumable) return { uploads: [] };
@@ -151,6 +230,26 @@ export class DashboardService {
       ...(filter.prefix !== undefined ? { keyPrefix: filter.prefix } : {}),
     });
     return { uploads: sessions.map(toUploadInfo) };
+  }
+
+  /** Full detail (+ recorded parts) of one resumable upload session. */
+  async uploadDetail(id: string): Promise<UploadDetailResponse> {
+    if (!this.manager.hasResumable) throw new DashboardError('no upload store configured', 404);
+    const sessions = await this.manager.resumable.list();
+    const session = sessions.find((candidate) => candidate.id === id);
+    if (!session) throw new DashboardError(`unknown upload: ${id}`, 404);
+    const parts = await this.manager.resumable.listParts(id);
+    return { upload: toUploadInfo(session), parts };
+  }
+
+  /**
+   * Cancels a resumable session: discards its native multipart upload (or buffered parts) and drops
+   * its record, so it stops appearing as in-progress. Actions-gated.
+   */
+  async abortUpload(id: string): Promise<void> {
+    this.assertActions();
+    if (!this.manager.hasResumable) throw new DashboardError('no upload store configured', 404);
+    await this.manager.resumable.abort(id);
   }
 
   /**
@@ -171,6 +270,65 @@ export class DashboardService {
     return { items: page.items.map(toMediaEntry), nextCursor: page.nextCursor };
   }
 
+  /**
+   * Per-collection rollup (record count + total bytes) for the console's collection chips.
+   * `MediaStore` has no aggregate query, so this walks `list()` in batches and sums client-side —
+   * bounded at {@link COLLECTIONS_SUMMARY_SCAN_LIMIT} records so a very large library degrades to a
+   * partial (still useful) summary instead of an unbounded scan.
+   */
+  async collectionsSummary(): Promise<CollectionsSummaryResponse> {
+    const totals = new Map<string, { count: number; sumSize: number }>();
+    let cursor: string | undefined;
+    let scanned = 0;
+    do {
+      const page = await this.manager.store.list({
+        limit: COLLECTIONS_SUMMARY_PAGE_SIZE,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      for (const record of page.items) {
+        const bucket = totals.get(record.collection) ?? { count: 0, sumSize: 0 };
+        bucket.count += 1;
+        bucket.sumSize += record.size;
+        totals.set(record.collection, bucket);
+      }
+      scanned += page.items.length;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined && scanned < COLLECTIONS_SUMMARY_SCAN_LIMIT);
+    return {
+      collections: Array.from(totals.entries()).map(([key, agg]) => ({ key, ...agg })),
+    };
+  }
+
+  /**
+   * Full detail of one stored `MediaRecord`, plus signed URLs for its generated conversions. Only
+   * conversions carrying a concrete `{disk, path}` artifact get a link — a metadata-only conversion
+   * (probe results with no output file) has nothing to preview.
+   */
+  async mediaRecord(id: string): Promise<MediaDetailResponse> {
+    const record = await this.manager.store.find(id);
+    if (!record) throw new DashboardError(`unknown media record: ${id}`, 404);
+    const linkable = Object.entries(record.conversions).filter(
+      (entry): entry is [string, MediaConversion & { disk: string; path: string }] =>
+        typeof entry[1].disk === 'string' && typeof entry[1].path === 'string',
+    );
+    const variants = await Promise.all(
+      linkable.map(async ([name, conversion]) => {
+        const disk = this.manager.storage.disk(conversion.disk);
+        const url = await disk.getSignedUrl(conversion.path, { expiresIn: URL_TTL_SECONDS });
+        return { name, url };
+      }),
+    );
+    return { record: toMediaEntry(record), variants };
+  }
+
+  /** Deletes a stored `MediaRecord`. Actions-gated (does not touch its underlying disk object). */
+  async deleteMediaRecord(id: string): Promise<void> {
+    this.assertActions();
+    const record = await this.manager.store.find(id);
+    if (!record) throw new DashboardError(`unknown media record: ${id}`, 404);
+    await this.manager.store.delete(id);
+  }
+
   /** Server-side copy (same disk) or streamed cross-disk copy. Original is kept. */
   async copy(body: { disk: string; from: string; to: string; toDisk?: string }): Promise<void> {
     await this.transfer(body, false);
@@ -187,6 +345,36 @@ export class DashboardService {
     if (body.keys.length === 0) return;
     const disk = this.extended(body.disk);
     await disk.deleteMany(body.keys);
+  }
+
+  /**
+   * Writes an object from a byte stream (a browser upload) — the console's convenience upload,
+   * distinct from the resumable TUS path. The caller supplies the full key (prefix + filename).
+   * Bounded at {@link MAX_UPLOAD_BYTES} so a runaway upload can't exhaust the process heap. Actions-gated.
+   */
+  async putObject(
+    diskName: string,
+    key: string,
+    body: AsyncIterable<Uint8Array>,
+    contentType?: string,
+  ): Promise<void> {
+    this.assertActions();
+    if (!key) throw new DashboardError('key is required', 400);
+    const disk = this.manager.storage.disk(diskName);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of body) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.length;
+      if (total > MAX_UPLOAD_BYTES) {
+        throw new DashboardError(
+          `upload exceeds the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB console limit`,
+          413,
+        );
+      }
+      chunks.push(buffer);
+    }
+    await disk.put(key, new Uint8Array(Buffer.concat(chunks)), contentType ? { contentType } : {});
   }
 
   /**

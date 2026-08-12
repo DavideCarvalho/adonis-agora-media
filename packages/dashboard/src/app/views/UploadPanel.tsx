@@ -13,7 +13,8 @@ interface QueueItem {
 /**
  * Upload panel — reuses `@adonis-agora/media-react`'s `useMediaUpload` (resumable TUS) against the
  * core upload routes. Files dropped or picked are uploaded sequentially into the chosen disk; on
- * completion the library/uploads queries are invalidated so the new objects appear.
+ * completion the library/uploads queries are invalidated so the new objects appear. Styled to match
+ * the console's other dialogs' dropzone (see `UploadDialog` in `LibraryBrowseView.tsx`).
  */
 export function UploadPanel() {
   const { bootstrap } = useDashboard();
@@ -59,81 +60,94 @@ export function UploadPanel() {
   };
 
   return (
-    <Panel title="Upload">
-      <div className="stack">
-        <div className="field" style={{ maxWidth: 260 }}>
-          <label htmlFor="upload-disk">Destination disk</label>
-          <select
-            id="upload-disk"
-            className="input"
-            value={targetDisk}
-            onChange={(e) => setDisk(e.target.value)}
+    <section className="rise mx-auto max-w-xl">
+      <Panel className="p-4">
+        <h3 className="mono mb-3 text-[10px] uppercase tracking-wider text-zinc-600">Upload</h3>
+        <div className="flex flex-col gap-3">
+          <label
+            htmlFor="upload-disk"
+            className="mono flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-600"
           >
-            {browsable.length === 0 && <option value="">(no disks)</option>}
-            {browsable.map((d) => (
-              <option key={d.name} value={d.name}>
-                {d.name}
-                {d.default ? ' (default)' : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+            Destination disk
+            <select
+              id="upload-disk"
+              value={targetDisk}
+              onChange={(e) => setDisk(e.target.value)}
+              className="mono max-w-xs rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-none"
+            >
+              {browsable.length === 0 && <option value="">(no disks)</option>}
+              {browsable.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.name}
+                  {d.default ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <button
-          type="button"
-          className={`dropzone${over ? ' over' : ''}`}
-          onClick={() => inputRef.current?.click()}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setOver(true);
-          }}
-          onDragLeave={() => setOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setOver(false);
-            const files = Array.from(e.dataTransfer.files);
-            if (files.length) void handleFiles(files);
-          }}
-        >
-          Drop files here, or click to choose
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length) void handleFiles(files);
-              e.target.value = '';
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: click opens the native file picker; keyboard users reach it via the hidden input's label semantics */}
+          <div
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOver(true);
             }}
-          />
-        </button>
-
-        {active && (
-          <div className="upload-item">
-            <span className="mono" style={{ minWidth: 140 }}>
-              {active}
-            </span>
-            <Bar percent={Math.round(uploader.progress * 100)} />
-            <span className="muted tnum">{Math.round(uploader.progress * 100)}%</span>
+            onDragLeave={() => setOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setOver(false);
+              const files = Array.from(e.dataTransfer.files);
+              if (files.length) void handleFiles(files);
+            }}
+            className={`mono cursor-pointer rounded-md border border-dashed px-3 py-8 text-center text-xs transition-colors ${
+              over
+                ? 'border-accent/50 bg-accent/5 text-accent'
+                : 'border-border text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Drop files here, or click to choose
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                if (files.length) void handleFiles(files);
+                e.target.value = '';
+              }}
+            />
           </div>
-        )}
 
-        {queue.length === 0 && !active ? (
-          <Empty>No uploads yet.</Empty>
-        ) : (
-          queue.map((item, i) => (
-            <div key={`${item.name}-${i}`} className="upload-item">
-              <span className="mono" style={{ minWidth: 140 }}>
-                {item.name}
-              </span>
-              <span className={item.status === 'done' ? 'muted' : 'danger'}>
-                {item.status === 'done' ? 'Uploaded' : 'Failed'}
+          {active && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="mono min-w-0 flex-1 truncate text-zinc-300">{active}</span>
+              <Bar percent={Math.round(uploader.progress * 100)} />
+              <span className="mono tnum shrink-0 text-[10px] text-zinc-500">
+                {Math.round(uploader.progress * 100)}%
               </span>
             </div>
-          ))
-        )}
-      </div>
-    </Panel>
+          )}
+
+          {queue.length === 0 && !active ? (
+            <Empty>No uploads yet.</Empty>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {queue.map((item, i) => (
+                <li
+                  key={`${item.name}-${i}`}
+                  className="mono flex items-center justify-between gap-2 rounded border border-border px-2 py-1 text-[11px]"
+                >
+                  <span className="min-w-0 flex-1 truncate text-zinc-300">{item.name}</span>
+                  <span className={item.status === 'done' ? 's-ok' : 's-error'}>
+                    {item.status === 'done' ? 'Uploaded' : 'Failed'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Panel>
+    </section>
   );
 }

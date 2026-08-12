@@ -4,15 +4,20 @@ import type {
   CollectionFilter,
   CopyMoveBody,
   DeleteBody,
+  FolderBody,
   MediaEntry,
   ObjectEntry,
   ObjectFolder,
 } from '../types';
 import { useDashboard } from './context';
 
-export function useTopology() {
+export function useTopology(options: { enabled?: boolean } = {}) {
   const { client } = useDashboard();
-  return useQuery({ queryKey: ['topology'], queryFn: () => client.topology() });
+  return useQuery({
+    queryKey: ['topology'],
+    queryFn: () => client.topology(),
+    enabled: options.enabled ?? true,
+  });
 }
 
 export function useDisks() {
@@ -112,5 +117,142 @@ export function useDelete() {
   return useMutation({
     mutationFn: (body: DeleteBody) => client.remove(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+/** The console's convenience direct upload (bounded, buffered) — distinct from the resumable TUS
+ *  uploader on the Upload tab. Used by the disk browser's "Upload" dialog. */
+export function useUploadObject() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ disk, key, file }: { disk: string; key: string; file: File }) =>
+      client.uploadObject(disk, key, file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+export function useCreateFolder() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FolderBody) => client.createFolder(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+export function useDeleteFolder() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: FolderBody) => client.deleteFolder(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+export function useCopyFolder() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CopyMoveBody) => client.copyFolder(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+export function useMoveFolder() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CopyMoveBody) => client.moveFolder(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['objects'] }),
+  });
+}
+
+/** Object metadata + a short-lived signed URL, fetched on demand when a preview opens. */
+export function useObjectDetail() {
+  const { client } = useDashboard();
+  return useMutation({
+    mutationFn: ({ disk, key }: { disk: string; key: string }) => client.object(disk, key),
+  });
+}
+
+export function useObjectInsights(disk: string | undefined, key: string | undefined) {
+  const { client } = useDashboard();
+  return useQuery({
+    queryKey: ['object-insights', disk ?? '', key ?? ''],
+    queryFn: () => client.objectInsights(disk as string, key as string),
+    enabled: Boolean(disk && key),
+    staleTime: 30_000,
+  });
+}
+
+export function useUploadDetail(id: string | undefined) {
+  const { client } = useDashboard();
+  return useQuery({
+    queryKey: ['upload', id ?? ''],
+    queryFn: () => client.uploadDetail(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+export function useAbortUpload() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client.abortUpload(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['uploads'] }),
+  });
+}
+
+export function useCollectionsSummary() {
+  const { client } = useDashboard();
+  return useQuery({
+    queryKey: ['collections-summary'],
+    queryFn: () => client.collectionsSummary(),
+  });
+}
+
+export function useMediaRecord(id: string | undefined) {
+  const { client } = useDashboard();
+  return useQuery({
+    queryKey: ['media-record', id ?? ''],
+    queryFn: () => client.mediaRecord(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+export function useDeleteMediaRecord() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client.deleteMediaRecord(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['collections'] });
+      qc.invalidateQueries({ queryKey: ['collections-summary'] });
+    },
+  });
+}
+
+export function useMe() {
+  const { client } = useDashboard();
+  return useQuery({ queryKey: ['me'], queryFn: () => client.me() });
+}
+
+export function useLogin() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ username, password }: { username: string; password: string }) =>
+      client.login(username, password),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+}
+
+export function useLogout() {
+  const { client } = useDashboard();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.logout(),
+    onSuccess: () => qc.invalidateQueries(),
   });
 }

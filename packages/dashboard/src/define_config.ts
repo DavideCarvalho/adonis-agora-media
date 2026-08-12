@@ -1,4 +1,6 @@
 import type { HttpContext } from '@adonisjs/core/http';
+import type { ConsoleAuthOptions } from './server/auth.js';
+import type { ObjectInsightProvider } from './server/object_insights.js';
 
 /** A minimal middleware handler shape (host auth guard) applied to the console routes. */
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
@@ -29,6 +31,20 @@ export interface MediaDashboardConfig {
   tusPrefix?: string;
   /** Host middleware (auth) applied to the whole console — SPA and API. */
   middleware?: DashboardMiddleware | DashboardMiddleware[];
+  /**
+   * Gate the console's JSON API behind a built-in session-cookie login, mirroring the NestJS sibling
+   * console. Omit to leave the API open (front it with your own `middleware`). When set, the SPA
+   * renders a login screen until a valid cookie exists; supply a `login(username, password)` and/or
+   * `session(request)` hook that returns a session user (or `null` to deny) — see
+   * {@link ConsoleAuthOptions}. Independent of, and composable with, `middleware`.
+   */
+  auth?: ConsoleAuthOptions;
+  /**
+   * Host-supplied context about a disk object, rendered in the console's preview — see
+   * {@link ObjectInsightProvider}. The console can only describe a file as storage sees it; this is
+   * how it learns what the file *means* to your app. Omit for no annotation (the default).
+   */
+  objectInsights?: ObjectInsightProvider[];
 }
 
 /** Identity helper for authoring a typed `config/media_dashboard.ts`. */

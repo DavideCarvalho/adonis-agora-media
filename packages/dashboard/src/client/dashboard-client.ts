@@ -1,13 +1,19 @@
 import type {
   CollectionFilter,
   CollectionListResponse,
+  CollectionsSummaryResponse,
   CopyMoveBody,
   DeleteBody,
   DiskListResponse,
   FolderBody,
+  LoginBody,
+  MeResponse,
+  MediaDetailResponse,
   ObjectDetailResponse,
+  ObjectInsightsResponse,
   ObjectListResponse,
   Topology,
+  UploadDetailResponse,
   UploadListResponse,
 } from '../types.js';
 
@@ -50,6 +56,14 @@ function withQuery(base: string, params: Record<string, string | number | undefi
   const qs = query.toString();
   return qs ? `${base}?${qs}` : base;
 }
+
+/** A signed-in console user, or a prompt to log in, or "no auth configured" (open console) — the
+ *  SPA's own gate, distinct from the server's {@link MeResponse} (which has no `login` case: a 401 IS
+ *  the login case, resolved here). */
+export type ConsoleAuthState =
+  | { state: 'open' }
+  | { state: 'authenticated'; user: { id: string; name?: string; roles: string[] } }
+  | { state: 'login'; modes: string[] };
 
 /**
  * Framework-free fetch client for the dashboard JSON API. Every call consumes the *real* provider
@@ -164,5 +178,134 @@ export class DashboardClient {
 
   moveFolder(body: CopyMoveBody): Promise<void> {
     return this.post('/folder/move', body);
+  }
+
+  /** Upload a file to `key` on the disk (raw bytes; MIME preserved via the `type` query param). The
+   *  console's convenience upload — bounded server-side; large files belong on the resumable path. */
+  async uploadObject(disk: string, key: string, file: Blob & { type: string }): Promise<void> {
+    const res = await this.fetchImpl(
+      withQuery(`${this.apiBase}/object`, { disk, key, ...(file.type ? { type: file.type } : {}) }),
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: file,
+      },
+    );
+    await this.parse<unknown>(res);
+  }
+
+  /** Same-origin URL that streams the object bytes inline (`Content-Disposition: inline`) — used to
+   *  embed previews (PDF, text, images) that a signed URL might download or that CORS would block. */
+  objectRawUrl(disk: string, key: string): string {
+    return withQuery(`${this.apiBase}/object/raw`, { disk, key });
+  }
+
+  /** What the host knows about this object, from its registered `objectInsights` providers.
+   *  `{ insights: [] }` when the host registered none. */
+  objectInsights(disk: string, key: string): Promise<ObjectInsightsResponse> {
+    return this.get<ObjectInsightsResponse>('/object/insights', { disk, key });
+  }
+
+  /**
+   * Read up to `maxBytes` of an object as text through the inline proxy, aborting the stream once the
+   * budget is reached — so a many-MB CSV/text file is *sampled* (its head) without downloading the
+   * whole thing. Falls back to a full read when the runtime can't stream a response body.
+   */
+  async objectTextHead(
+    disk: string,
+    key: string,
+    maxBytes: number,
+  ): Promise<{ text: string; bytesRead: number }> {
+    const res = await this.fetchImpl(this.objectRawUrl(disk, key), { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`request failed (${res.status})`);
+    if (!res.body) {
+      const text = await res.text();
+      return { text, bytesRead: text.length };
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytesRead = 0;
+    while (bytesRead < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      bytesRead += value.length;
+    }
+    if (bytesRead >= maxBytes) await reader.cancel();
+    const merged = new Uint8Array(bytesRead);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return { text: new TextDecoder().decode(merged), bytesRead };
+  }
+
+  /** Full detail (+ recorded parts) of one resumable upload session. */
+  uploadDetail(id: string): Promise<UploadDetailResponse> {
+    return this.get<UploadDetailResponse>(`/uploads/${encodeURIComponent(id)}`);
+  }
+
+  /** Cancels a resumable session (actions-gated). */
+  abortUpload(id: string): Promise<void> {
+    return this.post(`/uploads/${encodeURIComponent(id)}/abort`, undefined);
+  }
+
+  /** Per-collection rollup (record count + total bytes) for the collection chips. */
+  collectionsSummary(): Promise<CollectionsSummaryResponse> {
+    return this.get<CollectionsSummaryResponse>('/collections/summary');
+  }
+
+  /** Full detail of one stored `MediaRecord`, plus its generated conversions. */
+  mediaRecord(id: string): Promise<MediaDetailResponse> {
+    return this.get<MediaDetailResponse>('/media-record', { id });
+  }
+
+  /** Deletes a stored `MediaRecord` (actions-gated; does not touch its underlying disk object). */
+  deleteMediaRecord(id: string): Promise<void> {
+    return this.post('/media-record/delete', { id });
+  }
+
+  /** Who am I? Resolves the console's gate: open (no auth), authenticated, or "show login". */
+  async me(): Promise<ConsoleAuthState> {
+    const res = await this.fetchImpl(`${this.apiBase}/me`, {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+    });
+    if (res.status === 401) {
+      const body: unknown = await res.json().catch(() => null);
+      const modes =
+        typeof body === 'object' && body !== null && 'auth' in body
+          ? ((body as { auth?: { modes?: string[] } }).auth?.modes ?? ['login'])
+          : ['login'];
+      return { state: 'login', modes };
+    }
+    const body = await this.parse<MeResponse>(res);
+    return 'user' in body ? { state: 'authenticated', user: body.user } : { state: 'open' };
+  }
+
+  /** Submit credentials to the built-in login; sets the session cookie on success (else throws). */
+  async login(username: string, password: string): Promise<void> {
+    const body: LoginBody = { username, password };
+    const res = await this.fetchImpl(`${this.apiBase}/login`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(
+        res.status === 401 ? 'Invalid credentials' : `request failed (${res.status})`,
+      );
+    }
+  }
+
+  /** Clears the session cookie. */
+  async logout(): Promise<void> {
+    await this.fetchImpl(`${this.apiBase}/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
   }
 }

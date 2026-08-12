@@ -6,7 +6,11 @@ import type { HttpContext } from '@adonisjs/core/http';
 import router from '@adonisjs/core/services/router';
 import type { ApplicationService } from '@adonisjs/core/types';
 import type { MediaDashboardConfig } from '../define_config.js';
+import type { ConsoleSession, ConsoleSessionUser, ResolvedConsoleAuth } from '../server/auth.js';
+import { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from '../server/auth.js';
+import { SESSION_COOKIE_NAME, parseCookieHeader, serializeSetCookie } from '../server/cookie.js';
 import { DashboardError, DashboardService } from '../server/service.js';
+import type { LoginBody, MeResponse } from '../types.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from './serve.js';
 
 /**
@@ -22,6 +26,13 @@ function spaDirectory(): string {
   spaDir ??= fileURLToPath(new URL('../spa/', import.meta.url));
   return spaDir;
 }
+
+/** Cookie `Path` for the built-in session — deliberately `/`, not scoped to `apiBase`: the SPA's
+ *  `basePath` and its `apiBase` are independently configurable and can live at unrelated paths, and a
+ *  cookie scoped to just one would be withheld on a full-page navigation to the other. The cookie is
+ *  HttpOnly + HMAC-signed + short-lived, so the broader scope is a reasonable trade. Matches the
+ *  NestJS sibling console's own `cookiePath: '/'` for the identical reason. */
+const SESSION_COOKIE_PATH = '/';
 
 /**
  * Mounts the media-management console: a React SPA plus a JSON API, both under a configurable path and
@@ -60,19 +71,95 @@ export default class MediaDashboardProvider {
         ? config.middleware
         : [config.middleware]
       : [];
+    // Built-in session-cookie login (Mode A/B), independent of `middleware` — see auth.ts. `null`
+    // when unconfigured, in which case every gate below is a no-op and the API stays open.
+    const auth = resolveConsoleAuth(config.auth);
+    const objectInsights = config.objectInsights ?? [];
 
     const service = async () =>
-      new DashboardService(await this.app.container.make(MediaManager), { diskNames, actions });
+      new DashboardService(
+        await this.app.container.make(MediaManager),
+        { diskNames, actions },
+        objectInsights,
+      );
 
-    this.#mountApi(apiBase, service, actions, middleware);
+    this.#mountAuthRoutes(apiBase, auth);
+    this.#mountApi(apiBase, service, middleware, auth);
     this.#mountSpa(basePath, { apiBase, uploadsBase, tusBase, actions }, middleware);
+  }
+
+  /**
+   * Mints/clears the console session cookie: `GET /me`, `POST /login`, `POST /session`,
+   * `POST /logout`. Deliberately NOT gated by `middleware` NOR the session guard below — these
+   * routes CREATE the session the guard checks for (mirroring the NestJS sibling console's
+   * `MediaConsoleAuthController`, which is likewise excluded from both its own session guard and any
+   * host-supplied `guards`). A host `session` hook reads its OWN auth directly off the raw request,
+   * so it needs no help from `middleware` here. When `auth` is unset, `/me` reports
+   * `authRequired: false` and login/session/logout 404 (nothing to mint or clear).
+   */
+  #mountAuthRoutes(apiBase: string, auth: ResolvedConsoleAuth | null) {
+    const group = router.group(() => {
+      router
+        .get('/me', async (ctx: HttpContext) => {
+          if (!auth) {
+            const body: MeResponse = { authRequired: false };
+            return ctx.response.status(200).json(body);
+          }
+          const session = sessionFromRequest(ctx, auth);
+          // The UNauthenticated SPA learns which login mode(s) to offer from this 401 body.
+          if (!session) return ctx.response.status(401).json({ auth: { modes: auth.modes } });
+          const body: MeResponse = { user: userInfoFromSession(session) };
+          return ctx.response.status(200).json(body);
+        })
+        .as('media.dashboard.me');
+
+      router
+        .post('/login', async (ctx: HttpContext) => {
+          if (!auth || !auth.login) return ctx.response.status(404).send('');
+          const raw = ctx.request.body() as Partial<LoginBody>;
+          if (typeof raw.username !== 'string' || typeof raw.password !== 'string') {
+            return ctx.response
+              .status(400)
+              .json({ error: 'body must include string username and password' });
+          }
+          const user = await runAuthHook(() =>
+            auth.login?.(raw.username as string, raw.password as string),
+          );
+          // Uniform 401 for unknown user / bad password — no user-enumeration.
+          if (!user) return ctx.response.status(401).json({ error: 'invalid credentials' });
+          issueSessionCookie(ctx, user, auth);
+          const body: MeResponse = { user: userInfoFromUser(user) };
+          return ctx.response.status(200).json(body);
+        })
+        .as('media.dashboard.login');
+
+      router
+        .post('/session', async (ctx: HttpContext) => {
+          if (!auth || !auth.session) return ctx.response.status(404).send('');
+          const user = await runAuthHook(() => auth.session?.(ctx.request.request));
+          if (!user) return ctx.response.status(401).json({ error: 'unauthorized' });
+          issueSessionCookie(ctx, user, auth);
+          const body: MeResponse = { user: userInfoFromUser(user) };
+          return ctx.response.status(200).json(body);
+        })
+        .as('media.dashboard.session');
+
+      router
+        .post('/logout', async (ctx: HttpContext) => {
+          // Best-effort: even without auth configured, clearing is harmless.
+          clearSessionCookie(ctx);
+          return ctx.response.status(204).send('');
+        })
+        .as('media.dashboard.logout');
+    });
+    group.prefix(apiBase);
   }
 
   #mountApi(
     apiBase: string,
     service: () => Promise<DashboardService>,
-    actions: boolean,
     middleware: unknown[],
+    auth: ResolvedConsoleAuth | null,
   ) {
     const json = (
       handler: (svc: DashboardService, ctx: HttpContext) => Promise<unknown>,
@@ -133,6 +220,59 @@ export default class MediaDashboardProvider {
         )
         .as('media.dashboard.object');
       router
+        .post('/object', async (ctx: HttpContext) => {
+          // Raw bytes as `application/octet-stream` so the host's JSON/urlencoded body parsers never
+          // consume the stream; `ctx.request.request` is still the untouched Node request stream for
+          // any content type the app's bodyparser wasn't configured to parse. The real MIME rides as
+          // the `type` query param and becomes the stored object's Content-Type.
+          try {
+            const disk = str(ctx, 'disk');
+            const key = str(ctx, 'key');
+            const type = str(ctx, 'type');
+            if (!disk) throw new DashboardError('disk is required', 400);
+            if (!key) throw new DashboardError('key is required', 400);
+            await (await service()).putObject(disk, key, ctx.request.request, type);
+            return ctx.response.status(204).send('');
+          } catch (error) {
+            const status = error instanceof DashboardError ? error.status : 500;
+            const message = error instanceof Error ? error.message : 'dashboard error';
+            return ctx.response.status(status).json({ error: message });
+          }
+        })
+        .as('media.dashboard.object.upload');
+      router
+        .get('/object/raw', async (ctx: HttpContext) => {
+          try {
+            const disk = str(ctx, 'disk');
+            const key = str(ctx, 'key');
+            if (!disk) throw new DashboardError('disk is required', 400);
+            const { stream, contentType, size } = await (await service()).objectStream(
+              disk,
+              key ?? '',
+            );
+            ctx.response.header('content-type', contentType);
+            ctx.response.header('content-disposition', 'inline');
+            if (Number.isFinite(size)) ctx.response.header('content-length', String(size));
+            return ctx.response.stream(stream);
+          } catch (error) {
+            const status = error instanceof DashboardError ? error.status : 500;
+            const message = error instanceof Error ? error.message : 'dashboard error';
+            return ctx.response.status(status).json({ error: message });
+          }
+        })
+        .as('media.dashboard.object.raw');
+      router
+        .get(
+          '/object/insights',
+          json(async (svc, ctx) => {
+            const disk = str(ctx, 'disk');
+            const key = str(ctx, 'key');
+            if (!disk) throw new DashboardError('disk is required', 400);
+            return svc.objectInsights(disk, key ?? '');
+          }),
+        )
+        .as('media.dashboard.object.insights');
+      router
         .get(
           '/uploads',
           json(async (svc, ctx) => {
@@ -145,6 +285,20 @@ export default class MediaDashboardProvider {
           }),
         )
         .as('media.dashboard.uploads');
+      router
+        .get(
+          '/uploads/:id',
+          json(async (svc, ctx) => svc.uploadDetail(String(ctx.params.id))),
+        )
+        .as('media.dashboard.uploads.show');
+      router
+        .post(
+          '/uploads/:id/abort',
+          json(async (svc, ctx) => {
+            await svc.abortUpload(String(ctx.params.id));
+          }),
+        )
+        .as('media.dashboard.uploads.abort');
       router
         .get(
           '/collections',
@@ -166,73 +320,101 @@ export default class MediaDashboardProvider {
           }),
         )
         .as('media.dashboard.collections');
+      router
+        .get(
+          '/collections/summary',
+          json(async (svc) => svc.collectionsSummary()),
+        )
+        .as('media.dashboard.collections.summary');
+      router
+        .get(
+          '/media-record',
+          json(async (svc, ctx) => {
+            const id = str(ctx, 'id');
+            if (!id) throw new DashboardError('id is required', 400);
+            return svc.mediaRecord(id);
+          }),
+        )
+        .as('media.dashboard.media_record');
+      router
+        .post(
+          '/media-record/delete',
+          json(async (svc, ctx) => {
+            const body = ctx.request.body() as { id?: string };
+            if (!body.id) throw new DashboardError('id is required', 400);
+            await svc.deleteMediaRecord(body.id);
+          }),
+        )
+        .as('media.dashboard.media_record.delete');
 
-      if (actions) {
-        router
-          .post(
-            '/copy',
-            json(async (svc, ctx) => {
-              await svc.copy(copyMoveBody(ctx));
-            }),
-          )
-          .as('media.dashboard.copy');
-        router
-          .post(
-            '/move',
-            json(async (svc, ctx) => {
-              await svc.move(copyMoveBody(ctx));
-            }),
-          )
-          .as('media.dashboard.move');
-        router
-          .post(
-            '/delete',
-            json(async (svc, ctx) => {
-              const body = ctx.request.body() as { disk?: string; keys?: string[] };
-              if (!body.disk) throw new DashboardError('disk is required', 400);
-              await svc.remove({
-                disk: body.disk,
-                keys: Array.isArray(body.keys) ? body.keys : [],
-              });
-            }),
-          )
-          .as('media.dashboard.delete');
-        router
-          .post(
-            '/folder',
-            json(async (svc, ctx) => {
-              await svc.createFolder(folderBody(ctx));
-            }),
-          )
-          .as('media.dashboard.folder.create');
-        router
-          .post(
-            '/folder/delete',
-            json(async (svc, ctx) => {
-              await svc.deleteFolder(folderBody(ctx));
-            }),
-          )
-          .as('media.dashboard.folder.delete');
-        router
-          .post(
-            '/folder/copy',
-            json(async (svc, ctx) => {
-              await svc.copyFolder(copyMoveBody(ctx));
-            }),
-          )
-          .as('media.dashboard.folder.copy');
-        router
-          .post(
-            '/folder/move',
-            json(async (svc, ctx) => {
-              await svc.moveFolder(copyMoveBody(ctx));
-            }),
-          )
-          .as('media.dashboard.folder.move');
-      }
+      router
+        .post(
+          '/copy',
+          json(async (svc, ctx) => {
+            await svc.copy(copyMoveBody(ctx));
+          }),
+        )
+        .as('media.dashboard.copy');
+      router
+        .post(
+          '/move',
+          json(async (svc, ctx) => {
+            await svc.move(copyMoveBody(ctx));
+          }),
+        )
+        .as('media.dashboard.move');
+      router
+        .post(
+          '/delete',
+          json(async (svc, ctx) => {
+            const body = ctx.request.body() as { disk?: string; keys?: string[] };
+            if (!body.disk) throw new DashboardError('disk is required', 400);
+            await svc.remove({
+              disk: body.disk,
+              keys: Array.isArray(body.keys) ? body.keys : [],
+            });
+          }),
+        )
+        .as('media.dashboard.delete');
+      router
+        .post(
+          '/folder',
+          json(async (svc, ctx) => {
+            await svc.createFolder(folderBody(ctx));
+          }),
+        )
+        .as('media.dashboard.folder.create');
+      router
+        .post(
+          '/folder/delete',
+          json(async (svc, ctx) => {
+            await svc.deleteFolder(folderBody(ctx));
+          }),
+        )
+        .as('media.dashboard.folder.delete');
+      router
+        .post(
+          '/folder/copy',
+          json(async (svc, ctx) => {
+            await svc.copyFolder(copyMoveBody(ctx));
+          }),
+        )
+        .as('media.dashboard.folder.copy');
+      router
+        .post(
+          '/folder/move',
+          json(async (svc, ctx) => {
+            await svc.moveFolder(copyMoveBody(ctx));
+          }),
+        )
+        .as('media.dashboard.folder.move');
     });
     group.prefix(apiBase);
-    applyMiddleware(group, middleware);
+    // Host `middleware` first (e.g. an admin check), then the built-in session guard (when `auth` is
+    // configured) — a request must pass both. The mutating routes above are further gated at the
+    // service layer by `actions` (unconditionally mounted; `DashboardService` 403s when disabled), so
+    // read-only hosts can leave them mounted without enabling `actions`.
+    applyMiddleware(group, auth ? [...middleware, sessionGuardMiddleware(auth)] : middleware);
   }
 
   #mountSpa(
@@ -326,4 +508,117 @@ function folderBody(ctx: HttpContext): { disk: string; prefix: string } {
 function applyMiddleware(group: ReturnType<typeof router.group>, middleware: unknown[]): void {
   if (middleware.length === 0) return;
   (group.use as (m: unknown) => unknown)(middleware);
+}
+
+/* Session-cookie helpers ---------------------------------------------------------------------- */
+
+/** Run a host hook (login/session) defensively: a throw is a denial (null), never a 500. */
+async function runAuthHook(
+  run: () => Promise<ConsoleSessionUser | null> | ConsoleSessionUser | null | undefined,
+): Promise<ConsoleSessionUser | null> {
+  try {
+    return (await run()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function sessionFromRequest(ctx: HttpContext, auth: ResolvedConsoleAuth): ConsoleSession | null {
+  const cookieValue = parseCookieHeader(ctx.request.header('cookie'))[SESSION_COOKIE_NAME];
+  if (cookieValue === undefined) return null;
+  return verifySessionCookie(cookieValue, { secret: auth.secret });
+}
+
+function userInfoFromSession(session: ConsoleSession): {
+  id: string;
+  name?: string;
+  roles: string[];
+} {
+  return {
+    id: session.sub,
+    ...(session.name !== undefined ? { name: session.name } : {}),
+    roles: session.roles,
+  };
+}
+
+function userInfoFromUser(user: ConsoleSessionUser): {
+  id: string;
+  name?: string;
+  roles: string[];
+} {
+  return {
+    id: user.id,
+    ...(user.name !== undefined ? { name: user.name } : {}),
+    roles: user.roles ?? [],
+  };
+}
+
+function issueSessionCookie(
+  ctx: HttpContext,
+  user: ConsoleSessionUser,
+  auth: ResolvedConsoleAuth,
+  now?: number,
+): void {
+  const value = signSessionCookie(user, {
+    secret: auth.secret,
+    ttlMs: auth.ttlMs,
+    ...(now !== undefined ? { now } : {}),
+  });
+  ctx.response.append(
+    'set-cookie',
+    serializeSetCookie(SESSION_COOKIE_NAME, value, {
+      path: SESSION_COOKIE_PATH,
+      maxAgeSeconds: Math.floor(auth.ttlMs / 1000),
+      secure: ctx.request.secure(),
+    }),
+  );
+}
+
+function clearSessionCookie(ctx: HttpContext): void {
+  ctx.response.append(
+    'set-cookie',
+    serializeSetCookie(SESSION_COOKIE_NAME, '', {
+      path: SESSION_COOKIE_PATH,
+      maxAgeSeconds: 0,
+      secure: ctx.request.secure(),
+      clear: true,
+    }),
+  );
+}
+
+/**
+ * Gates a route group on a valid session cookie. Sliding renewal + revalidation mirrors the NestJS
+ * sibling console's `MediaConsoleGuard`: past half the TTL, the host's `revalidate` hook (if any)
+ * re-checks the user before a fresh cookie is issued, so a deactivated operator loses access instead
+ * of riding a self-renewing cookie.
+ */
+function sessionGuardMiddleware(auth: ResolvedConsoleAuth) {
+  return async (ctx: HttpContext, next: () => Promise<void>) => {
+    const session = sessionFromRequest(ctx, auth);
+    // Absent/invalid/expired cookie => 401 with the login modes, same shape as `/me`'s refusal.
+    if (!session) return ctx.response.status(401).json({ auth: { modes: auth.modes } });
+    const now = Date.now();
+    if (now - session.iat > auth.ttlMs / 2) {
+      const user = userInfoFromSession(session);
+      if (auth.revalidate) {
+        const allowed = await runAuthHookBoolean(() => auth.revalidate?.(user));
+        if (!allowed) {
+          clearSessionCookie(ctx);
+          return ctx.response.status(401).json({ auth: { modes: auth.modes } });
+        }
+      }
+      issueSessionCookie(ctx, user, auth, now);
+    }
+    return next();
+  };
+}
+
+async function runAuthHookBoolean(
+  run: () => Promise<boolean> | boolean | undefined,
+): Promise<boolean> {
+  try {
+    return (await run()) ?? false;
+  } catch {
+    return false; // Fail closed.
+  }
 }

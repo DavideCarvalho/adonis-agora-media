@@ -29,6 +29,8 @@ const PAGE: CollectionListResponse = { items: [entry()], nextCursor: null };
 function baseClient(overrides: Record<string, unknown> = {}) {
   return {
     collections: vi.fn(async () => PAGE),
+    collectionsSummary: vi.fn(async () => ({ collections: [] })),
+    topology: vi.fn(async () => ({ disks: 1, hasUploads: false, actions: true })),
     ...overrides,
   };
 }
@@ -36,7 +38,7 @@ function baseClient(overrides: Record<string, unknown> = {}) {
 describe('CollectionsView', () => {
   it('lists stored records with owner, collection and conversion chips', async () => {
     const client = baseClient();
-    renderView(<CollectionsView />, client);
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
     await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
     expect(screen.getByText('gallery')).toBeTruthy();
     expect(screen.getByText('thumb')).toBeTruthy();
@@ -46,7 +48,7 @@ describe('CollectionsView', () => {
 
   it('applies the owner/collection filters on submit', async () => {
     const client = baseClient();
-    renderView(<CollectionsView />, client);
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
     await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText('Owner type'), { target: { value: 'User' } });
@@ -64,7 +66,7 @@ describe('CollectionsView', () => {
     const client = baseClient({
       collections: vi.fn(async () => ({ items: [], nextCursor: null }) as CollectionListResponse),
     });
-    renderView(<CollectionsView />, client);
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
     await waitFor(() =>
       expect(screen.getByText('No media records match this filter.')).toBeTruthy(),
     );
@@ -75,7 +77,10 @@ describe('CollectionsView', () => {
       .fn()
       .mockResolvedValueOnce({ items: [entry({ id: 'm1', name: 'first' })], nextCursor: 'c2' })
       .mockResolvedValueOnce({ items: [entry({ id: 'm2', name: 'second' })], nextCursor: null });
-    renderView(<CollectionsView />, { collections });
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, {
+      collections,
+      collectionsSummary: vi.fn(async () => ({ collections: [] })),
+    });
     await waitFor(() => expect(screen.getByText('first')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
