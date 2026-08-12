@@ -45,7 +45,7 @@
     "@adonis-agora/media": "workspace:*",
     "@adonis-agora/media-react": "workspace:*",
     "@adonisjs/core": "7.4.0",
-    "@base-ui-components/react": "1.0.0-rc.0",
+    "@base-ui/react": "1.0.0",
     "@tanstack/react-query": "5.101.4",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^20.0.0",
