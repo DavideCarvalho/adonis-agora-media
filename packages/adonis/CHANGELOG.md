@@ -1,5 +1,13 @@
 # @adonis-agora/media
 
+## 0.10.4
+
+### Patch Changes
+
+- [`a06b2df`](https://github.com/DavideCarvalho/adonis-media/commit/a06b2df5194259be83fa08e8af15e7f9b07c48b3) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Widen the `@adonisjs/drive` peer dependency from `^3.0.0` to `^3.0.0 || ^4.0.0`.
+
+  Verified compatible by running the real test suite against `@adonisjs/drive@4` (the package's dev dependency is bumped accordingly). No source changes were needed — this is a non-breaking relaxation of the accepted peer range, so consumers can adopt Drive v4 without waiting on a major bump here.
+
 ## 0.10.3
 
 ### Patch Changes
