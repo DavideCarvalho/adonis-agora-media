@@ -9,11 +9,11 @@ you reuse your existing `local` / `s3` / `gcs` disks — this package never reim
 
 This is the **core library**: `MediaLibrary`, `AttachmentManager`, the `MediaStore` SPI (in-memory +
 Lucid), the `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable
-uploads, configurable delivery, the provider + `defineConfig`, and a testing kit. Pair it with
+uploads, configurable delivery, the provider + `defineConfig`, and a testing kit. The management
+**console ships embedded** — registering `@adonis-agora/media/dashboard_provider` is all a consuming
+app needs (see [Dashboard](#dashboard) below); no separate install. Pair it with
 [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react)
-for a browser upload client, or
-[`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard)
-for a management console.
+for a browser upload client.
 
 ## Subpath exports
 
@@ -23,6 +23,8 @@ The package uses **subpath exports** (the Agora idiom), so heavy backends stay o
 |---|---|
 | `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, `MediaDeliveryHandler`, SPIs, errors |
 | `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
+| `@adonis-agora/media/dashboard_provider` | the embedded management-console provider (React SPA + JSON API) |
+| `@adonis-agora/media/dashboard` | `defineConfig` + types for `config/media_dashboard.ts`, `DashboardService`, the session-auth helpers, `ObjectInsightProvider` |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/single-file` | `storeSingleFile` / `removeSingleFile` / `isSingleFileStoreAvailable` — lets other packages delegate single-file uploads (e.g. avatars) to media without a hard dependency |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
@@ -41,8 +43,10 @@ npm i @adonis-agora/media
 node ace configure @adonis-agora/media
 ```
 
-`configure` registers the provider, publishes `config/media.ts`, and publishes the `media` table
-migration (delete it if you only use the in-memory store; otherwise `node ace migration:run`).
+`configure` registers the media provider **and the dashboard provider**, publishes `config/media.ts`
+and `config/media_dashboard.ts`, and publishes the `media` table migration (delete it if you only use
+the in-memory store; otherwise `node ace migration:run`). The management console is live at
+`/media/dashboard` the moment your app boots — see [Dashboard](#dashboard).
 
 Optional peers, loaded lazily only when selected:
 
@@ -166,6 +170,42 @@ route before calling `handle`.
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
 [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react).
+
+## Dashboard
+
+A management console — browse buckets, watch resumable uploads in progress, upload objects, and
+copy/move/delete across buckets — ships **embedded** in this package: registering
+`@adonis-agora/media/dashboard_provider` (done automatically by `node ace configure`) is all a
+consuming app needs. No separate package install, no separate provider registration.
+
+```ts
+// adonisrc.ts
+providers: [
+  () => import('@adonis-agora/media/media_provider'),
+  () => import('@adonis-agora/media/dashboard_provider'),
+]
+```
+
+```ts
+// config/media_dashboard.ts
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import { middleware } from '#start/kernel'
+
+export default defineConfig({
+  basePath: '/media/dashboard',   // where the SPA mounts (default)
+  actions: true,                  // enable copy/move/delete (default: false — read-only)
+  disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
+  middleware: middleware.auth(),  // gate the whole console — SPA + API
+})
+```
+
+The console reads/writes through the real `@adonis-agora/media` surface (disk
+`list`/`stat`/`copy`/`move`/`deleteMany`, the resumable session store, the `MediaStore`) — nothing
+about storage is reimplemented. Full config reference, routes, and folder-operations semantics are
+documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard),
+which is now the **build-time source** of the console's SPA bundle (embedded here at build time) and
+remains installable **standalone** — its own provider is a thin delegate to this one, kept for hosts
+that already register it directly. Don't register both providers in the same app.
 
 ## Diagnostics
 

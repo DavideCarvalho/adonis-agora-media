@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
+import {
+  resolveConsoleAuth,
+  signSessionCookie,
+  verifySessionCookie,
+} from '../../src/dashboard/auth.js';
 
 describe('signSessionCookie / verifySessionCookie', () => {
   it('round-trips a signed session', () => {

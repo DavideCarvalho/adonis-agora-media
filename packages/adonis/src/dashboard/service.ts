@@ -1,15 +1,11 @@
 import type { Readable } from 'node:stream';
-import { isExtendedDisk } from '@adonis-agora/media';
-import type {
-  Disk,
-  ExtendedDisk,
-  MediaConversion,
-  MediaListOptions,
-  MediaListPage,
-  MediaRecord,
-  MultipartPart,
-  UploadSession,
-} from '@adonis-agora/media';
+import { isExtendedDisk } from '../extended_disk.js';
+import type { MediaConversion, MediaRecord } from '../media_record.js';
+import type { MediaListOptions, MediaListPage } from '../media_store.js';
+import type { UploadSession } from '../resumable_upload.js';
+import type { Disk, ExtendedDisk, MultipartPart } from '../types.js';
+import type { ObjectInsightProvider } from './object_insights.js';
+import { sanitizeInsight } from './object_insights.js';
 import type {
   CollectionFilter,
   CollectionListResponse,
@@ -28,9 +24,7 @@ import type {
   UploadDetailResponse,
   UploadInfo,
   UploadListResponse,
-} from '../types.js';
-import type { ObjectInsightProvider } from './object_insights.js';
-import { sanitizeInsight } from './object_insights.js';
+} from './types.js';
 
 /** TTL of the signed URLs handed to the browser for object preview/download. */
 export const URL_TTL_SECONDS = 300;

@@ -33,6 +33,16 @@
       "import": "./dist/providers/media_provider.js",
       "default": "./dist/providers/media_provider.js"
     },
+    "./dashboard_provider": {
+      "types": "./dist/providers/dashboard_provider.d.ts",
+      "import": "./dist/providers/dashboard_provider.js",
+      "default": "./dist/providers/dashboard_provider.js"
+    },
+    "./dashboard": {
+      "types": "./dist/src/dashboard/index.d.ts",
+      "import": "./dist/src/dashboard/index.js",
+      "default": "./dist/src/dashboard/index.js"
+    },
     "./configure": {
       "types": "./dist/configure.d.ts",
       "import": "./dist/configure.js",
@@ -78,7 +88,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
-    "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations && cp stubs/config/media.stub dist/stubs/config/media.stub && cp -r stubs/database/migrations/. dist/stubs/database/migrations/",
+    "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations dist/assets && cp stubs/config/media.stub dist/stubs/config/media.stub && cp stubs/config/media_dashboard.stub dist/stubs/config/media_dashboard.stub && cp -r stubs/database/migrations/. dist/stubs/database/migrations/ && rm -rf dist/assets/spa && cp -r ../dashboard/dist/spa dist/assets/spa",
     "prepack": "pnpm run build",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
@@ -111,6 +121,7 @@
     }
   },
   "devDependencies": {
+    "@adonis-agora/media-dashboard": "workspace:*",
     "@adonisjs/assembler": "^8.4.0",
     "@adonisjs/core": "7.4.0",
     "@adonisjs/drive": "^4.0.0",

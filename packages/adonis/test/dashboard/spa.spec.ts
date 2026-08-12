@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { contentTypeFor, normalizePath, renderIndexHtml } from './serve';
+import { contentTypeFor, normalizePath, renderIndexHtml } from '../../src/dashboard/spa.js';
 
-describe('provider serve helpers', () => {
+describe('dashboard spa helpers', () => {
   it('normalises mount paths', () => {
     expect(normalizePath('/media/dashboard')).toBe('/media/dashboard');
     expect(normalizePath('media/dashboard/')).toBe('/media/dashboard');

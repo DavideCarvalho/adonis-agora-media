@@ -13,14 +13,14 @@
  * console knows how to render (facts, links, a note).
  */
 
-import type { ObjectInsight, ObjectInsightsResponse } from '../types.js';
+import type { ObjectInsight, ObjectInsightsResponse } from './types.js';
 
 export type {
   ObjectInsight,
   ObjectInsightFact,
   ObjectInsightLink,
   ObjectInsightsResponse,
-} from '../types.js';
+} from './types.js';
 
 /** Which object is being described. */
 export interface ObjectInsightContext {

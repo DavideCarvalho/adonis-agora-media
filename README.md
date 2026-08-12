@@ -13,7 +13,7 @@ you reuse your existing `local` / `s3` / `gcs` disks — this package never reim
 |---|---|
 | [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, provider + `defineConfig`, testing kit |
 | [`@adonis-agora/media-react`](./packages/react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
-| [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA + AdonisJS provider): browse buckets, watch resumable uploads, copy/move/delete objects |
+| [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
 
 The core package uses **subpath exports** (the Agora idiom), so heavy backends stay optional:
 
@@ -21,6 +21,8 @@ The core package uses **subpath exports** (the Agora idiom), so heavy backends s
 |---|---|
 | `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, `MediaDeliveryHandler`, SPIs, errors |
 | `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
+| `@adonis-agora/media/dashboard_provider` | the embedded management-console provider (React SPA + JSON API) |
+| `@adonis-agora/media/dashboard` | `defineConfig` + types for `config/media_dashboard.ts`, `DashboardService`, session-auth helpers, `ObjectInsightProvider` |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
 | `@adonis-agora/media/upload_sessions/lucid` | the Lucid resumable `UploadSessionStore` (`@adonisjs/lucid` peer) |
@@ -168,8 +170,9 @@ multipart** (the browser uploads straight to the bucket via presigned part URLs)
 in `config/media.ts`; the provider mounts the routes under `/media/uploads` and `/media/uploads/tus`.
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
-[`@adonis-agora/media-react`](./packages/react), and manage it all from
-[`@adonis-agora/media-dashboard`](./packages/dashboard).
+[`@adonis-agora/media-react`](./packages/react), and manage it all from the dashboard — embedded in
+`@adonis-agora/media` (`node ace configure` wires it up for free), with
+[`@adonis-agora/media-dashboard`](./packages/dashboard) as its standalone/advanced install.
 
 ## Roadmap (deferred)
 

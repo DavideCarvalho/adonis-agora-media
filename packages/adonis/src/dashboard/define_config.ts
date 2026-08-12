@@ -1,12 +1,16 @@
 import type { HttpContext } from '@adonisjs/core/http';
-import type { ConsoleAuthOptions } from './server/auth.js';
-import type { ObjectInsightProvider } from './server/object_insights.js';
+import type { ConsoleAuthOptions } from './auth.js';
+import type { ObjectInsightProvider } from './object_insights.js';
 
 /** A minimal middleware handler shape (host auth guard) applied to the console routes. */
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
 
 /**
- * Configuration for `@adonis-agora/media-dashboard`, read by the provider from `config/media_dashboard.ts`.
+ * Configuration for the `@adonis-agora/media` dashboard, read by `dashboard_provider.ts` from
+ * `config/media_dashboard.ts`. Same config KEY (`media_dashboard`) the standalone
+ * `@adonis-agora/media-dashboard` package's provider always read, so an existing
+ * `config/media_dashboard.ts` keeps working unchanged when a host switches from the standalone
+ * provider to this embedded one.
  *
  * The console is a read-only browser by default (`actions: false`); flip `actions` on — and gate the
  * routes with your own `middleware` (an auth guard) — to enable copy/move/delete. Storage, uploads and
@@ -14,6 +18,9 @@ export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) 
  * places the SPA + JSON API and picks which disks are browsable.
  */
 export interface MediaDashboardConfig {
+  /** Mount the dashboard at all. Default `true`. Set `false` to register the provider (so its config
+   *  type stays available) without actually exposing any route — e.g. per-environment. */
+  enabled?: boolean;
   /** Where the SPA is mounted. Default `/media/dashboard`. */
   basePath?: string;
   /** Where the JSON API is mounted. Default `<basePath>/api`. */

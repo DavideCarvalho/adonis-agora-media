@@ -6,12 +6,12 @@ icon: LayoutDashboard
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-**`@adonis-agora/media-dashboard`** is a management console for your media: browse your buckets, watch resumable uploads in progress, upload new objects, and copy / move / delete objects across buckets. It's a small React SPA served by a thin AdonisJS provider, themed to Agora design tokens (light + dark).
+**The management console** for your media: browse your buckets, watch resumable uploads in progress, upload new objects, and copy / move / delete objects across buckets. It's a small React SPA served by a thin AdonisJS provider, themed to Agora design tokens (light + dark).
 
 Nothing about storage is reimplemented: the console consumes the **real** media surface — disk `list` / `stat` / `copy` / `move` / `deleteMany` (from the [S3 disk](/docs/media/storage/s3-disk)'s extended operations) and the resumable [`UploadSessionStore.list()`](/docs/media/uploads/resumable-tus) — through provider-registered routes, and reuses [`@adonis-agora/media-react`](/docs/media/react) for the upload UI.
 
-<Callout type="info" title="Separate package">
-  `pnpm add @adonis-agora/media-dashboard`. Register its provider **after** the media provider.
+<Callout type="info" title="Ships embedded — no separate install">
+  The console is built into `@adonis-agora/media` itself. `node ace configure @adonis-agora/media` registers its provider for you — nothing else to add. `@adonis-agora/media-dashboard` still exists as a standalone package (its build is the console's source, and its own provider still works as a thin delegate) for hosts that prefer registering it explicitly — see [Standalone install](#standalone-install-legacy) below.
 </Callout>
 
 ---
@@ -21,14 +21,16 @@ Nothing about storage is reimplemented: the console consumes the **real** media 
 ```ts title="adonisrc.ts"
 providers: [
   () => import('@adonis-agora/media/media_provider'),
-  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
+  () => import('@adonis-agora/media/dashboard_provider'),
 ]
 ```
+
+`node ace configure @adonis-agora/media` does this for you automatically, alongside publishing `config/media_dashboard.ts`.
 
 ## Configure — `config/media_dashboard.ts`
 
 ```ts title="config/media_dashboard.ts"
-import { defineConfig } from '@adonis-agora/media-dashboard'
+import { defineConfig } from '@adonis-agora/media/dashboard'
 import { middleware } from '#start/kernel'
 
 export default defineConfig({
@@ -104,6 +106,26 @@ The recursive copy/move share one engine with the single-object [`/copy` · `/mo
 - **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.
 
 ---
+
+## Standalone install (legacy)
+
+`@adonis-agora/media-dashboard` is still published and still works, for hosts that already register
+it directly or prefer the console as its own explicit, separately-versioned install:
+
+```sh
+pnpm add @adonis-agora/media-dashboard
+```
+
+```ts title="adonisrc.ts"
+providers: [
+  () => import('@adonis-agora/media/media_provider'),
+  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
+]
+```
+
+Its provider is a thin delegate to the embedded one above — no logic of its own — so both entry points
+stay identical in behavior, and `config/media_dashboard.ts` is read from the same `media_dashboard` key
+either way. **Register only one of the two providers.**
 
 ## Next steps
 

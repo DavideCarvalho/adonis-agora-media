@@ -1,9 +1,15 @@
 /**
- * Pure helpers for mounting/serving the SPA — split out so they're unit-testable without booting
- * AdonisJS. The provider is a thin HTTP shell around these.
+ * Pure helpers for mounting/serving the `@adonis-agora/media-dashboard` React SPA — split out so
+ * they're unit-testable without booting AdonisJS. `dashboard_provider.ts` is a thin HTTP shell around
+ * these. Ported byte-for-byte (same placeholder, same content-type table, same `renderIndexHtml`
+ * contract) from `@adonis-agora/media-dashboard`'s own `provider/serve.ts`, which is now this
+ * package's copy of record — mirrors `@adonis-agora/durable`'s `src/dashboard/spa.ts`, so the two
+ * packages' "serve a Vite SPA from an AdonisJS provider" story stays one pattern across the Agora
+ * ecosystem.
  */
 
-/** Placeholder base Vite bakes into asset URLs; rewritten to the configured `basePath` at serve time. */
+/** Placeholder base Vite bakes into asset URLs (`packages/dashboard/vite.config.ts`); rewritten to
+ *  the configured `basePath` at serve time — the SAME built bundle mounts at any path with no rebuild. */
 export const BASE_PLACEHOLDER = '/__MEDIA_DASHBOARD__/';
 
 export const CONTENT_TYPES: Record<string, string> = {
