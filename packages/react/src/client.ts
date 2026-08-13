@@ -165,6 +165,18 @@ export interface UploadMeta {
    * server at initiate time, so this value is not sent on the direct path.
    */
   disk?: string;
+  /**
+   * Custom `Upload-Metadata` pairs appended to the TUS create (`filename`/`filetype` are sent
+   * automatically). The server's `parseTusMetadata` decodes them, so an app can carry domain
+   * fields (e.g. `{ title, examdate }`) through to its upload handler. Ignored by direct/proxy.
+   */
+  metadata?: Record<string, string>;
+  /**
+   * Per-upload TUS create path override. Useful when the server's TUS route embeds a resource id
+   * in the path (e.g. `/api/exames/tus/:uploadId`) instead of a fixed prefix. Defaults to the
+   * client's `tusPath`. Ignored by direct/proxy.
+   */
+  tusPath?: string;
 }
 
 export interface PerUploadOptions {
@@ -351,7 +363,8 @@ export function createMediaUploadClient(
 
   async function createTusSession(meta: UploadMeta): Promise<{ location: string }> {
     const length = meta.size ?? 0;
-    const res = await doFetch(joinUrl(baseUrl, tusPath), {
+    const path = meta.tusPath ? normalizePath(meta.tusPath) : tusPath;
+    const res = await doFetch(joinUrl(baseUrl, path), {
       method: 'POST',
       headers: {
         'Tus-Resumable': TUS_VERSION,
@@ -359,6 +372,7 @@ export function createMediaUploadClient(
         'Upload-Metadata': encodeMetadata({
           filename: meta.filename,
           ...(meta.contentType ? { filetype: meta.contentType } : {}),
+          ...(meta.metadata ?? {}),
         }),
         ...(await appHeaders()),
       },

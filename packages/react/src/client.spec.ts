@@ -79,6 +79,27 @@ describe('uploadTus (target TUS endpoints)', () => {
     expect(methods).not.toContain('HEAD');
   });
 
+  it('carries custom Upload-Metadata pairs and a per-upload tusPath to the create POST', async () => {
+    const fetchImpl = tusFetch('/api/exames/tus/u1/s1');
+    const client = createMediaUploadClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const result = await client.uploadTus(blobOf(3), {
+      filename: 'exame.pdf',
+      contentType: 'application/pdf',
+      tusPath: '/api/exames/tus/u1',
+      metadata: { title: 'Hemograma', examdate: '2026-03-12' },
+    });
+
+    expect(result).toEqual({ mode: 'tus', location: '/api/exames/tus/u1/s1' });
+
+    const [createUrl, createInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(createUrl).toBe('/api/exames/tus/u1');
+    const createHeaders = createInit.headers as Record<string, string>;
+    expect(createHeaders['Upload-Metadata']).toContain(`title ${btoa('Hemograma')}`);
+    expect(createHeaders['Upload-Metadata']).toContain(`examdate ${btoa('2026-03-12')}`);
+    expect(createHeaders['Upload-Metadata']).toContain('filename');
+  });
+
   it('resumes from the server Upload-Offset when given resumeFrom (HEAD then continues)', async () => {
     const total = 10;
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
