@@ -1,5 +1,15 @@
 # @adonis-agora/media-react
 
+## 0.4.0
+
+### Minor Changes
+
+- `useMediaUpload`/`createMediaUploadClient` — uploads TUS agora aceitam um path de create por-upload e metadata custom.
+  - `UploadMeta.metadata`: pares `Upload-Metadata` extras (ex.: `{ title, examdate }`), decodificados no servidor pelo `parseTusMetadata`.
+  - `UploadMeta.tusPath`: override do path do create TUS por-upload, para rotas que embutem um resource id no path (ex.: `/api/exames/tus/:uploadId`).
+
+  Puramente aditivo — a API existente (`tusPath` global, `filename`/`filetype`) não muda.
+
 ## 0.3.0
 
 ### Minor Changes
