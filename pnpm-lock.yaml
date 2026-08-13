@@ -94,8 +94,8 @@ importers:
   packages/dashboard:
     dependencies:
       '@adonis-agora/media':
-        specifier: ^0.10.0
-        version: 0.10.2(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@3.4.1(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1107.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1107.0)(mediabunny@1.53.0)(sharp@0.33.5)
+        specifier: ^0.10.0 || ^0.11.0
+        version: 0.10.3(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@3.4.1(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1107.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1107.0)(mediabunny@1.53.0)(sharp@0.33.5)
     devDependencies:
       '@adonis-agora/media-react':
         specifier: workspace:*
@@ -103,9 +103,9 @@ importers:
       '@adonisjs/core':
         specifier: 7.4.0
         version: 7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1)
-      '@base-ui-components/react':
-        specifier: 1.0.0-rc.0
-        version: 1.0.0-rc.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@base-ui/react':
+        specifier: 1.0.0
+        version: 1.0.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@tanstack/react-query':
         specifier: 5.101.4
         version: 5.101.4(react@19.2.8)
@@ -190,8 +190,8 @@ importers:
 
 packages:
 
-  '@adonis-agora/media@0.10.2':
-    resolution: {integrity: sha512-cjLinTkHjMGj90niQqsk/s6AKDBjWnbNza8sm9feYA9q+jW9i+Hvat8PSd3sI7oTYmspgJZd0I5RPnvzIzRfdw==}
+  '@adonis-agora/media@0.10.3':
+    resolution: {integrity: sha512-i8vGFg+z0ttol38x+r3PKq5AzVxj/nr8Ng1RScRciW6CY8/T2d4rH5qVzPquEoxEQ8GSSyR1SxX5f4IwR1SUcw==}
     engines: {node: '>=20.6.0'}
     peerDependencies:
       '@adonis-agora/telescope': ^0.4.0
@@ -660,10 +660,9 @@ packages:
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
 
-  '@base-ui-components/react@1.0.0-rc.0':
-    resolution: {integrity: sha512-9lhUFbJcbXvc9KulLev1WTFxS/alJRBWDH/ibKSQaNvmDwMFS2gKp1sTeeldYSfKuS/KC1w2MZutc0wHu2hRHQ==}
+  '@base-ui/react@1.0.0':
+    resolution: {integrity: sha512-4USBWz++DUSLTuIYpbYkSgy1F9ZmNG9S/lXvlUN6qMK0P0RlW+6eQmDUB4DgZ7HVvtXl4pvi4z5J2fv6Z3+9hg==}
     engines: {node: '>=14.0.0'}
-    deprecated: Package was renamed to @base-ui/react
     peerDependencies:
       '@types/react': ^17 || ^18 || ^19
       react: ^17 || ^18 || ^19
@@ -672,9 +671,8 @@ packages:
       '@types/react':
         optional: true
 
-  '@base-ui-components/utils@0.2.2':
-    resolution: {integrity: sha512-rNJCD6TFy3OSRDKVHJDzLpxO3esTV1/drRtWNUpe7rCpPN9HZVHUCuP+6rdDYDGWfXnQHbqi05xOyRP2iZAlkw==}
-    deprecated: Package was renamed to @base-ui/utils
+  '@base-ui/utils@0.2.3':
+    resolution: {integrity: sha512-/CguQ2PDaOzeVOkllQR8nocJ0FFIDqsWIcURsVmm53QGo8NhFNpePjNlyPIB41luxfOqnG7PU0xicMEw3ls7XQ==}
     peerDependencies:
       '@types/react': ^17 || ^18 || ^19
       react: ^17 || ^18 || ^19
@@ -3693,7 +3691,7 @@ packages:
 
 snapshots:
 
-  '@adonis-agora/media@0.10.2(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@3.4.1(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1107.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1107.0)(mediabunny@1.53.0)(sharp@0.33.5)':
+  '@adonis-agora/media@0.10.3(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@3.4.1(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1107.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.4.0(typescript@5.9.3))(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@11.10.0)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1107.0)(mediabunny@1.53.0)(sharp@0.33.5)':
     dependencies:
       '@adonisjs/core': 7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1)
       '@adonisjs/drive': 3.4.1(@adonisjs/core@7.4.0(@adonisjs/assembler@8.4.0(typescript@5.9.3))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1107.0)(@aws-sdk/s3-request-presigner@3.1085.0)
@@ -4288,10 +4286,10 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@base-ui-components/react@1.0.0-rc.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@base-ui/react@1.0.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@babel/runtime': 7.29.7
-      '@base-ui-components/utils': 0.2.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@base-ui/utils': 0.2.3(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@floating-ui/react-dom': 2.1.9(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@floating-ui/utils': 0.2.12
       react: 19.2.8
@@ -4302,7 +4300,7 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.18
 
-  '@base-ui-components/utils@0.2.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@base-ui/utils@0.2.3(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@floating-ui/utils': 0.2.12

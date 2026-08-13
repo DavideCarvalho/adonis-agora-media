@@ -38,7 +38,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
   "peerDependencies": {
-    "@adonis-agora/media": "^0.11.0",
+    "@adonis-agora/media": "^0.10.0 || ^0.11.0",
     "@adonisjs/core": "^7.3.0"
   },
   "devDependencies": {
