@@ -22,9 +22,17 @@ const execFileAsync = promisify(execFile);
  * structural `rawQuery` with `bindings?: unknown[]`, not assignable in either direction to Lucid's
  * `RawQueryBindings`). Ported from `@adonis-agora/durable`'s harness.
  *
- * Covers all four stubs `configure` publishes — both config files and both migrations — each rendered
- * as the generator writes it and compiled under NodeNext + strict with the package resolved BY NAME,
- * so what is checked is the shipped `dist/**\/*.d.ts` a consumer installs, not `src/`.
+ * The rendering goes through the REAL AdonisJS stubs engine (`app.stubs.create().build().prepare()`),
+ * not a regex that strips the `{{{ exports() }}}` header. That distinction is the whole gate: the
+ * engine compiles a stub body into a JS template literal, so a bare backtick or `${` throws before a
+ * byte is written — and a regex renderer cannot see it. Sibling packages proved the cost, reporting
+ * every stub healthy for a `configure` that could not write any file at all (authz 3/3, agent 4/4,
+ * durable 4/5 throwing). This package renders 4/4, which only the real engine could establish.
+ *
+ * Covers all four stubs `configure` publishes — both config files and both migrations — rendered from
+ * `stubs/` AND from `dist/stubs/` (what a consumer installs, asserted byte-identical), written to the
+ * destination each stub's own header declares, and compiled under NodeNext + strict with the package
+ * resolved BY NAME, so the shipped `dist/**\/*.d.ts` is what they are checked against, not `src/`.
  */
 describe('the published stubs compile in a consumer app (real @adonisjs types)', () => {
   const harness = fileURLToPath(new URL('./fixtures/stub-typecheck/check.mjs', import.meta.url));
