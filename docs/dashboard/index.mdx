@@ -1,6 +1,6 @@
 ---
 title: Dashboard
-description: "@adonis-agora/media-dashboard — a media-management console (React SPA + thin AdonisJS provider) to browse buckets, watch resumable uploads in progress, upload objects, and copy/move/delete across buckets, over the real disk and session-store surfaces."
+description: The management console that ships inside @adonis-agora/media — a React SPA plus a JSON API to browse buckets, inspect media records, watch resumable uploads, upload objects, and copy/move/delete across buckets, over the real disk and session-store surfaces.
 icon: LayoutDashboard
 ---
 
@@ -49,33 +49,56 @@ export default defineConfig({
 | `disks` | `string[]` | derived from media config | Disk names the console may browse / act on. |
 | `uploadsPrefix` | `string` | `/media/uploads` | Match `media.uploads.routes.prefix`. |
 | `tusPrefix` | `string` | `/media/uploads/tus` | Match `media.uploads.resumable.routes.prefix`. |
-| `middleware` | handler(s) | — | Host auth applied to the whole console. |
+| `middleware` | handler(s) | — | Host auth applied to the whole console (SPA + API). |
+| `enabled` | `boolean` | `true` | Mount the console at all. `false` registers the provider — so its config type stays available — without exposing a single route. |
+| `auth` | `ConsoleAuthOptions` | — | Built-in session-cookie login. See [Console authentication](/docs/media/dashboard/authentication). |
+| `objectInsights` | `ObjectInsightProvider[]` | `[]` | Host-supplied annotations rendered in the object preview. See [below](#object-insights). |
+
+`enabled: false` is the per-environment switch: keep the provider registered (and `config/media_dashboard.ts` type-checked) in every environment, and let the config decide where the console actually exists. It short-circuits in `boot()`, before any route is registered — not a 403, simply nothing mounted.
 
 <Callout type="warn">
-  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete — gate the routes with your own `middleware` (an auth guard) before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime bootstrap (`window.__MEDIA_DASHBOARD__`) into `index.html` at serve time.
+  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete, folder operations, record deletion, upload aborts and the console upload — gate the console with `middleware`, `auth`, or both before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime bootstrap (`window.__MEDIA_DASHBOARD__`) into `index.html` at serve time.
 </Callout>
 
 ---
 
 ## Routes
 
-The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`), behind your `middleware`:
+The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`). Everything below runs behind your `middleware` **and**, when `auth` is configured, the built-in session guard — a request must pass both.
+
+**With four deliberate exceptions.** The auth routes are mounted *outside* both gates, because they are what *creates* the session the guard checks for. A `session` hook reads your app's own auth directly off the raw request, so it needs no help from `middleware`; gating the mint behind the guard it mints for would be a closed loop.
 
 | Method | Path | Backed by |
 |--------|------|-----------|
+| `GET` | `/me` | Session probe. `{ authRequired: false }` when `auth` is unset; the signed-in user; or `401` carrying the offered login `modes`. **Ungated.** |
+| `POST` | `/login` | Mode B — credentials → session cookie. `404` when no `login` hook. **Ungated.** |
+| `POST` | `/session` | Mode A — mint from your app's own auth on the raw request. `404` when no `session` hook. **Ungated.** |
+| `POST` | `/logout` | Clears the cookie. `204` always. **Ungated.** |
 | `GET` | `/topology` | capability probe (`{ disks, hasUploads, actions }`) |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
 | `GET` | `/objects?disk&prefix&cursor&limit` | disk `list` |
 | `GET` | `/object?disk&key` | disk `stat` + signed URL |
+| `POST` | `/object?disk&key&type` | raw-body object upload (the console's convenience upload) — `actions` only |
+| `GET` | `/object/raw?disk&key` | streams the object's bytes through the app, `content-disposition: inline` |
+| `GET` | `/object/insights?disk&key` | the registered [object-insight providers](#object-insights) |
 | `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
+| `GET` | `/uploads/:id` | one session in full, plus its recorded parts |
+| `POST` | `/uploads/:id/abort` | discard an in-flight session — `actions` only |
 | `GET` | `/collections?collection&ownerType&ownerId&prefix&cursor&limit` | `MediaStore.list` (see [Collections view](/docs/media/dashboard/collections)) |
+| `GET` | `/collections/summary` | per-collection rollup (count + total bytes) for the filter chips |
+| `GET` | `/media-record?id` | one `MediaRecord` plus a signed URL per conversion |
+| `POST` | `/media-record/delete` | `MediaStore.delete` — `actions` only |
 | `POST` | `/copy` · `/move` | disk `copy` / `move` (streamed for cross-disk) — `actions` only |
 | `POST` | `/delete` | disk `deleteMany` — `actions` only |
 | `POST` | `/folder` | create a zero-byte folder marker — `actions` only |
 | `POST` | `/folder/delete` | recursively delete a folder — `actions` only |
 | `POST` | `/folder/copy` · `/folder/move` | recursively copy / move a folder (same or cross disk) — `actions` only |
 
-Uploads go through the core `@adonis-agora/media` TUS / direct routes via `@adonis-agora/media-react`.
+The `actions`-only routes are always *mounted*; the gate is enforced one layer down, in `DashboardService`, which throws a `403` when `actions` is false. So a read-only console needs no conditional routing — the routes exist and refuse.
+
+Two upload paths coexist, on purpose. `POST /object` is the console's own convenience upload: raw bytes as `application/octet-stream` (so your app's body parsers never consume the stream), the real MIME riding as the `type` query param, buffered in memory and therefore capped at 100 MB. Anything larger belongs on the core `@adonis-agora/media` TUS / direct routes, which the console drives through `@adonis-agora/media-react`.
+
+`GET /object/raw` exists for the preview: a signed URL is fine for an image tag, but streaming through the app is what lets the lightbox read a text/CSV body without a cross-origin fetch, and what works at all on a disk the browser cannot reach directly.
 
 ---
 
@@ -98,12 +121,58 @@ The recursive copy/move share one engine with the single-object [`/copy` · `/mo
 
 ---
 
+## Object insights
+
+The console can only describe a file the way storage sees it: key, size, content type, last modified. Everything that makes the file *mean* something — which work order this scan belongs to, which knowledge base indexed it, who uploaded it — lives in your app.
+
+`objectInsights` is the seam for handing that back. You register providers; the console asks them whenever an object is previewed and renders whatever comes back:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import Document from '#models/document'
+
+export default defineConfig({
+  objectInsights: [
+    {
+      id: 'documents',
+      async resolve({ disk, key }) {
+        const doc = await Document.findBy('storageKey', key)
+        if (!doc) return null // nothing to say about this object
+
+        return {
+          title: 'Document',
+          facts: [
+            { label: 'Title', value: doc.title },
+            { label: 'Owner', value: doc.ownerEmail },
+            { label: 'Indexed', value: doc.indexedAt?.toISO() ?? 'not yet' },
+          ],
+          links: [{ label: 'Open in app', href: `/documents/${doc.id}` }],
+          note: 'Deleting this object leaves the document row orphaned.',
+        }
+      },
+    },
+  ],
+})
+```
+
+Three properties of the design are worth being explicit about:
+
+- **Data, not components.** The console ships as a prebuilt SPA bundle, so a host cannot inject React into it. A provider returns a small structured value (`facts`, `links`, a `note`) the console knows how to render.
+- **Failures are invisible.** A provider that throws is skipped and logged; providers run concurrently so one slow lookup doesn't serialize the rest. Annotation must never be able to stop an admin opening a file.
+- **Links are sanitized.** Every insight passes through `sanitizeInsight` before it reaches the browser: a relative `/…` href is kept, an absolute one only if it is `http:`/`https:`. `javascript:`, `data:` and protocol-relative `//evil.com` are dropped, not rendered.
+
+`resolve` runs on **every preview of every object**, so keep it cheap — a single indexed lookup, not a fan-out.
+
+---
+
 ## Views
 
-- **Library** — pick a disk, walk folders via cursor-paginated `list`, create / copy / move / delete folders and objects across buckets (see [Folder operations](#folder-operations)).
-- **Collections** — the media-library records themselves (owner, collection, conversions), cross-owner and filterable. See [Collections view](/docs/media/dashboard/collections).
-- **Uploads** — live resumable sessions, polled every 2s from the session store.
+- **Library** — the disk browser. A lazy, collapsible **folder tree** in the left rail (each disk is a root; expanding a node fetches only that level, and every node is a drop target for drag-to-move), the object list in the main pane with cursor-paginated `list`, and create / copy / move / delete for folders and objects across buckets (see [Folder operations](#folder-operations)).
+- **Lightbox** — clicking an object opens a modal preview that renders by content type: images, video, audio, PDFs, and text/JSON/CSV/TSV (tabular formats as a real table); anything else falls back to an "open original" link. The [object insights](#object-insights) your app registered render alongside the preview.
+- **Collections** — the media-library records themselves, cross-owner and filterable by collection / owner type / owner id / path prefix. One-click **collection chips** across the top carry each collection's record count and total size (from `/collections/summary`), and clicking a row **drills into the record**: its full metadata plus a signed URL per conversion, with delete when `actions` is on. See [Collections view](/docs/media/dashboard/collections).
+- **Uploads** — live resumable sessions, polled every 2s from the session store. Clicking a row **drills into the session**: its full state plus every recorded part, and an abort button when `actions` is on.
 - **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.
+- **Login** — when `auth` is configured and no valid session cookie exists, the SPA renders its login screen instead of the console, offering exactly the mode(s) the server advertised. See [Console authentication](/docs/media/dashboard/authentication).
 
 ---
 
@@ -129,6 +198,8 @@ either way. **Register only one of the two providers.**
 
 ## Next steps
 
+- [Console authentication](/docs/media/dashboard/authentication) — the built-in session-cookie login, in both modes
+- [Programmatic API](/docs/media/dashboard/programmatic) — `DashboardService` and the JSON contract types
 - [Collections view](/docs/media/dashboard/collections) — the cross-owner `MediaStore.list` behind the console
 - [S3 disk](/docs/media/storage/s3-disk) — the extended operations the Library view drives
 - [React client](/docs/media/react) — the upload UI the console embeds

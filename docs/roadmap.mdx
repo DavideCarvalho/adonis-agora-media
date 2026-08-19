@@ -1,12 +1,12 @@
 ---
 title: Roadmap
-description: What @adonis-agora/media has shipped since the initial alpha — resumable/tus uploads, direct S3 presign, an S3 disk, a React client, and a dashboard — and what is still intentionally deferred (more stores, richer conversions, collection reordering).
+description: What @adonis-agora/media covers today — resumable/tus uploads, direct S3 presign, an S3 disk, a React client, transformers and an embedded console — and what is still intentionally deferred (more stores, richer conversions, collection reordering).
 icon: Map
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-`@adonis-agora/media` started as a focused core: owner collections, column attachments, image conversions, a pluggable store and processor, and a testing kit — all over `@adonisjs/drive`. Several capabilities that were deferred in the first alpha have since **landed**; a few are still intentionally left out. This page tracks both.
+`@adonis-agora/media` is a focused core — owner collections, column attachments, image conversions, a pluggable store and processor, and a testing kit — grown outwards over `@adonisjs/drive` into uploads, transformations, delivery and a management console. Some capabilities are deliberately **not** in it. This page tracks the boundary.
 
 <Callout type="info" title="Why call it out">
   The point of this page is honesty about scope. If you're evaluating the library for a use case below, you'll know whether it's here today — and, for the deferred ones, roughly where it would slot in when it lands.
@@ -14,13 +14,13 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ---
 
-## Shipped since the initial alpha
+## Beyond the core
 
 - **Resumable / tus uploads** — the [tus](https://tus.io) `1.0.0` protocol with a pluggable session store (in-memory + Lucid). See [Resumable / TUS](/docs/media/uploads/resumable-tus).
 - **Direct S3 multipart presign** — the `direct` upload mode (browser uploads straight to S3 via presigned part URLs) alongside `proxy`. See [Upload modes](/docs/media/uploads/upload-modes).
 - **A bundled S3 disk** — `disks.s3()` with extended operations (copy / move / deleteMany / list / size / stat) and native multipart, over the optional AWS SDK peer. See [S3 disk](/docs/media/storage/s3-disk).
 - **A browser client + React package** — [`@adonis-agora/media-react`](/docs/media/react): `useMediaUpload`, `MediaUploader`, and a framework-free `createMediaUploadClient`.
-- **A management dashboard** — [`@adonis-agora/media-dashboard`](/docs/media/dashboard), with cross-owner [collection listing](/docs/media/dashboard/collections) via the new `MediaStore.list`.
+- **A management console** — the [dashboard](/docs/media/dashboard) ships embedded in `@adonis-agora/media` itself (SPA + JSON API + a [built-in session login](/docs/media/dashboard/authentication)), with cross-owner [collection listing](/docs/media/dashboard/collections) via `MediaStore.list`.
 - **A Telescope extension** — a "Media" overview dashboard via [`mediaTelescopeExtension`](/docs/media/integrations/telescope).
 - **Transformers + HLS video** — the pluggable [`Transformer` contract](/docs/media/transformers) with a mediabunny-backed HLS transformer (remux to MPEG-TS segments + playlists, WebCodecs injectable), a metadata probe, and the `HlsDeliveryHandler` read path with m3u8 rewriting.
 
@@ -30,7 +30,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ### More `MediaStore` drivers
 
-The current alpha ships the in-memory and Lucid stores. Additional drivers (e.g. a document/Redis store) aren't built — but the `MediaStore` interface is small and stable, so you can [write your own](/docs/media/stores-and-processors#writing-your-own-store) today.
+The package ships the in-memory and Lucid stores. Additional drivers (e.g. a document/Redis store) aren't built — but the `MediaStore` interface is small and stable, so you can [write your own](/docs/media/stores-and-processors#writing-your-own-store) today.
 
 ### More built-in transformers
 
@@ -65,7 +65,7 @@ The `MediaRecord`/`conversions` shape (including transformer `meta` and multi-ar
 
 ### Collection reordering
 
-Ordering is append-only in the current alpha — `attach` always takes the next `order` slot, and `list` returns by `order` ascending. There's no first-party reorder API yet; resequencing means updating the `order` field through your own store access.
+Ordering is append-only — `attach` always takes the next `order` slot, and `list` returns by `order` ascending. There's no first-party reorder API yet; resequencing means updating the `order` field through your own store access.
 
 ---
 
@@ -79,7 +79,7 @@ For contrast, the library ships:
 - **Pluggable persistence** — in-memory + Lucid stores with a published migration. See [Stores & Processors](/docs/media/stores-and-processors).
 - **Drive-backed storage plus a bundled S3 disk** — reuse your `local` / `s3` / `gcs` disks, or the [S3 disk](/docs/media/storage/s3-disk) with extended operations; signed read URLs included.
 - **Uploads for large files** — [proxy and direct-S3](/docs/media/uploads/upload-modes) modes and [resumable TUS](/docs/media/uploads/resumable-tus) sessions.
-- **A browser client and dashboard** — [`@adonis-agora/media-react`](/docs/media/react) and the [management console](/docs/media/dashboard).
+- **A browser client and an embedded console** — [`@adonis-agora/media-react`](/docs/media/react) and the [management console](/docs/media/dashboard) built into the core package.
 - **A testing kit** — in-memory doubles for every seam. See [Testing](/docs/media/testing).
 - **Structural diagnostics** — `agora:media:*` events, captured by [Telescope](/docs/media/integrations/telescope) when present.
 
