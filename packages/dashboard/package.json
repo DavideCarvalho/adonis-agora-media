@@ -38,10 +38,11 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
   "peerDependencies": {
-    "@adonis-agora/media": "^0.12.0",
+    "@adonis-agora/media": ">=0.11.0 <1.0.0",
     "@adonisjs/core": "^7.3.0"
   },
   "devDependencies": {
+    "@adonis-agora/media": "npm:@adonis-agora/media@0.11.0",
     "@adonis-agora/media-react": "workspace:*",
     "@adonisjs/core": "7.4.0",
     "@base-ui/react": "1.0.0",
