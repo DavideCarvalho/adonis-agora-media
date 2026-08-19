@@ -529,12 +529,61 @@ export default class MediaProvider {
     return ip;
   }
 
-  /** When the config doesn't name a disk, fall back to Drive's configured default disk name. */
+  /**
+   * When `config/media.ts` names no `disk`, fall back to Drive's configured default disk name.
+   *
+   * `app.config.get('drive')` returns the value `config/drive.ts` EXPORTED, and Drive's
+   * `defineConfig()` returns an unresolved `ConfigProvider` — `{ type: 'provider', resolver }`. So the
+   * default disk name is not a property of that value at all: reading `.default` off it always yields
+   * `undefined` (this method used to, and therefore always returned the literal `'default'`), and so
+   * does reading `.config.default` — `{ config: { default, fakes, services } }` is the shape the
+   * resolver RETURNS, never the shape of the provider itself.
+   *
+   * The provider therefore has to be resolved, which is exactly what Drive's own provider does before
+   * building its manager (`configProvider.resolve(app, app.config.get('drive'))` →
+   * `new DriveManager(resolved.config)`). Asking the manager instead is not possible: flydrive's
+   * `DriveManager` keeps that config in a `#private` field and exposes no accessor for the default
+   * service name (`use()`/`fake()`/`restore()` only default TO it internally).
+   *
+   * Resolving here is cheap and side-effect free for our purposes: it builds throwaway driver
+   * FACTORIES (no driver is constructed, no credentials read) and returns a fresh `locallyServed`
+   * array that we discard, so Drive's own resolution — and the file-serving routes it mounts from it —
+   * are untouched. `configProvider` is imported lazily, so a host that names its `disk` explicitly
+   * never pays for it.
+   *
+   * A host may also assign a plain object to `drive` (or have no Drive config at all); both still
+   * work, and `'default'` remains the last resort so such an app keeps booting instead of crashing.
+   */
   async #resolveDefaultDiskName(): Promise<string> {
-    const driveConfig = this.app.config.get<{ default?: string }>('drive', {});
-    return driveConfig.default ?? 'default';
+    const driveConfig = this.app.config.get<DriveConfigValue>('drive');
+    if (driveConfig === undefined || driveConfig === null) return 'default';
+
+    const { configProvider } = await import('@adonisjs/core');
+    // Returns `null` when the value is not a ConfigProvider, which is also how we detect the
+    // plain-object case — one source of truth for "is this a config provider", the framework's own.
+    const resolved = await configProvider.resolve<ResolvedDriveConfig>(this.app, driveConfig);
+    if (resolved) return resolved.config?.default ?? resolved.default ?? 'default';
+
+    return (driveConfig as PlainDriveConfig).default ?? 'default';
   }
 }
+
+/**
+ * The `drive` config value as it ACTUALLY appears in `app.config` — the unresolved
+ * `ConfigProvider` Drive's `defineConfig()` returns, or a plain object for a host that hand-rolls it.
+ * Deliberately NOT declared as `{ default?: string }`: that annotation is what made the old fallback
+ * look correct to every reader and reviewer, because a generic on `config.get()` is an assertion
+ * about data TypeScript never sees, not a check.
+ */
+type PlainDriveConfig = { default?: string };
+type DriveConfigValue = { type: 'provider'; resolver: unknown } | PlainDriveConfig;
+
+/**
+ * What resolving Drive's config provider yields. `config.default` is the default disk name (Drive
+ * feeds `resolved.config` straight into `new DriveManager(...)`); `default` is only read as a
+ * tolerance for a differently-shaped provider.
+ */
+type ResolvedDriveConfig = { config?: { default?: string }; default?: string };
 
 /** Read the object key from the query or JSON body; throw a 400-mappable error when absent. */
 function requireKey(ctx: HttpContext): string {
