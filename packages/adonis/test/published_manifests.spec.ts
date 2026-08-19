@@ -30,6 +30,45 @@ function publishableManifests(): { name: string; manifest: Record<string, unknow
     .map((manifest) => ({ name: String(manifest.name), manifest }));
 }
 
+/**
+ * A `^` or `~` range over a 0.x peer is a latent install failure, not a style nit.
+ *
+ * Under semver, caret does not cross a minor below 1.0 — `^0.4.0` means `>=0.4.0 <0.5.0`. Every
+ * minor release of that peer therefore falls out of range. pnpm downgrades an unsatisfied peer to a
+ * warning, so a monorepo never notices; **npm treats it as `ERESOLVE` and refuses to install**, even
+ * when the peer is marked optional. Verified against the published artifact:
+ *
+ * ```
+ * While resolving: @adonis-agora/media@0.12.0
+ * Found: @adonis-agora/telescope@0.8.1
+ * Conflicting peer dependency: @adonis-agora/telescope@0.4.0
+ * ```
+ *
+ * The rule is not "no pinning" — it is "say what you mean". An explicit `>=0.33.0 <0.34.0` is
+ * accepted here; a caret that silently means the same thing is not, because it was almost never
+ * intended and rots on the peer's next release.
+ */
+const ZERO_X_CARET_OR_TILDE = /(^|\|\|\s*)[\^~]\s*0\./;
+
+describe('peer ranges', () => {
+  const peers = publishableManifests().flatMap(({ name, manifest }) =>
+    Object.entries((manifest.peerDependencies as Record<string, string>) ?? {}).map(
+      ([peer, range]) => ({ pkg: name, peer, range }),
+    ),
+  );
+
+  it('has peers to check', () => {
+    expect(peers.length).toBeGreaterThan(0);
+  });
+
+  it.each(peers)('$pkg: $peer $range does not caret/tilde a 0.x peer', ({ peer, range }) => {
+    expect(
+      ZERO_X_CARET_OR_TILDE.test(range),
+      `"${peer}": "${range}" pins a 0.x peer with ^ or ~, which excludes every later minor and makes npm fail with ERESOLVE. Write the range you actually mean, e.g. ">=0.4.0 <1.0.0".`,
+    ).toBe(false);
+  });
+});
+
 describe('published package manifests', () => {
   const manifests = publishableManifests();
 
