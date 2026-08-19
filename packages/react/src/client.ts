@@ -9,12 +9,18 @@
  *   session with `POST` + `Upload-Length`/`Upload-Metadata`, then append bytes sequentially with
  *   `PATCH` (`Content-Type: application/offset+octet-stream`, `Upload-Offset`). Interrupted uploads
  *   resume from the server's `Upload-Offset` reported by `HEAD`. This is the default strategy.
- * - **Direct-S3 multipart** (`uploads.routes`, default prefix `/media/uploads`): a session-backed
- *   flow — `POST /` initiates and hands back presigned part URLs; the client `PUT`s each part
- *   *straight to S3* (no app auth headers on those requests — they are already signed), confirms each
- *   part's `ETag` via `POST /:id/parts/:partNumber`, then `POST /:id/complete` assembles the object.
- *   A session's status is readable via `GET /:id` and can be torn down via `DELETE /:id`.
- * - **Proxy** (same prefix): a single `PUT /proxy` streams the whole body through the app to the disk.
+ * - **Direct-S3 multipart** (`uploads.direct.routes`, default prefix
+ *   `/media/uploads/direct/sessions`): a session-backed flow — `POST /` initiates and hands back
+ *   presigned part URLs; the client `PUT`s each part *straight to S3* (no app auth headers on those
+ *   requests — they are already signed), confirms each part's `ETag` via
+ *   `POST /:id/parts/:partNumber`, then `POST /:id/complete` assembles the object. A session's status
+ *   is readable via `GET /:id` and can be torn down via `DELETE /:id`.
+ * - **Proxy** (`uploads.routes`, default prefix `/media/uploads`): a single `PUT /proxy` streams the
+ *   whole body through the app to the disk.
+ *
+ * Those last two live on DIFFERENT server prefixes, which is why they have separate options —
+ * `directPath` and `uploadsPath`. Each defaults to the server's own default for that prefix, so a
+ * client talking to a stock server needs neither.
  *
  * Every request against the *app* endpoints (TUS create/HEAD/PATCH/DELETE, direct initiate/status/
  * confirm/complete/abort, and proxy PUT) merges the static `headers` with a freshly-resolved `getHeaders()`
@@ -124,8 +130,24 @@ export interface MediaUploadClientOptions {
   baseUrl?: string;
   /** TUS resumable base path. Must match `uploads.resumable.routes.prefix`. Default `/media/uploads/tus`. */
   tusPath?: string;
-  /** Direct-S3 + proxy base path. Must match `uploads.routes.prefix`. Default `/media/uploads`. */
+  /**
+   * Base path of the core upload routes — where the **proxy** endpoint lives (`<uploadsPath>/proxy`).
+   * Must match the server's `uploads.routes.prefix`. Default `/media/uploads`.
+   *
+   * For backwards compatibility this ALSO supplies {@link directPath} when that one is not given,
+   * because it used to carry the direct-session endpoints as well. New code should set the two
+   * independently: they address two different server prefixes.
+   */
   uploadsPath?: string;
+  /**
+   * Base path of the session-backed **direct upload** routes. Must match the server's
+   * `uploads.direct.routes.prefix`, whose default is `/media/uploads/direct/sessions` — which is
+   * what this defaults to, so both sides line up out of the box.
+   *
+   * Falls back to {@link uploadsPath} when that is set explicitly, preserving the exact URLs every
+   * client configured before this option existed was already producing.
+   */
+  directPath?: string;
   /** Bytes per TUS chunk. Default 8 MiB. The direct-S3 part size is decided by the server, not this. */
   chunkSize?: number;
   /**
@@ -222,6 +244,10 @@ export type MediaUploadResult<TComplete = unknown> =
   | { mode: 'proxy'; key: string; disk: string };
 
 const DEFAULT_CHUNK = 8 * 1024 * 1024;
+/** Mirrors the server's `uploads.routes.prefix` default — where the proxy endpoint is mounted. */
+const DEFAULT_UPLOADS_PATH = '/media/uploads';
+/** Mirrors the server's `uploads.direct.routes.prefix` default. */
+const DEFAULT_DIRECT_PATH = '/media/uploads/direct/sessions';
 const DEFAULT_RETRIES = 3;
 const TUS_VERSION = '1.0.0';
 
@@ -348,7 +374,14 @@ export function createMediaUploadClient(
 ): MediaUploadClient {
   const baseUrl = clientOptions.baseUrl ?? '';
   const tusPath = normalizePath(clientOptions.tusPath ?? '/media/uploads/tus');
-  const uploadsPath = normalizePath(clientOptions.uploadsPath ?? '/media/uploads');
+  const uploadsPath = normalizePath(clientOptions.uploadsPath ?? DEFAULT_UPLOADS_PATH);
+  // Direct sessions live on their OWN server prefix, and its default is NOT the uploads prefix —
+  // assuming otherwise is what made a stock client 404 against a stock server. An explicit
+  // `uploadsPath` still supplies it (that is what the option used to mean), so every client
+  // configured before `directPath` existed keeps producing exactly the same URLs.
+  const directPath = normalizePath(
+    clientOptions.directPath ?? clientOptions.uploadsPath ?? DEFAULT_DIRECT_PATH,
+  );
   const doFetch = clientOptions.fetchImpl ?? fetch;
   const defaultChunk = clientOptions.chunkSize ?? DEFAULT_CHUNK;
   const retries = clientOptions.retries ?? DEFAULT_RETRIES;
@@ -464,7 +497,7 @@ export function createMediaUploadClient(
     if (options.resume) {
       session = options.resume;
     } else {
-      const created = (await postJson(uploadsPath, {
+      const created = (await postJson(directPath, {
         fileName: meta.filename,
         size: total,
         ...(meta.contentType !== undefined ? { contentType: meta.contentType } : {}),
@@ -516,7 +549,7 @@ export function createMediaUploadClient(
       );
 
       // Confirm the part server-side so a later resume can skip it.
-      await postJson(`${uploadsPath}/${session.id}/parts/${part.partNumber}`, { etag });
+      await postJson(`${directPath}/${session.id}/parts/${part.partNumber}`, { etag });
 
       uploaded.push({ partNumber: part.partNumber, etag });
       sent += end - start;
@@ -525,7 +558,7 @@ export function createMediaUploadClient(
 
     // 3) Complete: hand the server the confirmed parts (sorted) so it can assemble the object.
     uploaded.sort((a, b) => a.partNumber - b.partNumber);
-    const body = await postJson(`${uploadsPath}/${session.id}/complete`, { parts: uploaded });
+    const body = await postJson(`${directPath}/${session.id}/complete`, { parts: uploaded });
 
     return { mode: 'direct', uploadId: session.id, key: session.key, disk: session.disk, body };
   }
@@ -558,7 +591,7 @@ export function createMediaUploadClient(
   }
 
   async function directSessionStatus(uploadId: string): Promise<DirectUploadSessionStatus> {
-    const res = await doFetch(joinUrl(baseUrl, `${uploadsPath}/${uploadId}`), {
+    const res = await doFetch(joinUrl(baseUrl, `${directPath}/${uploadId}`), {
       method: 'GET',
       headers: { ...(await appHeaders()) },
     });
@@ -568,7 +601,7 @@ export function createMediaUploadClient(
 
   // Best-effort teardown (mirrors `abortTus`): a non-2xx response is intentionally swallowed.
   async function abortDirectSession(uploadId: string): Promise<void> {
-    await doFetch(joinUrl(baseUrl, `${uploadsPath}/${uploadId}`), {
+    await doFetch(joinUrl(baseUrl, `${directPath}/${uploadId}`), {
       method: 'DELETE',
       headers: { ...(await appHeaders()) },
     });

@@ -101,7 +101,6 @@ Inject your own for a non-browser runtime, or for a test:
 
 ```ts
 const client = createMediaUploadClient({
-  uploadsPath: '/media/uploads/direct/sessions',
   partUploader: async (url, body) => {
     const res = await fetch(url, { method: 'PUT', body })
     return res.headers.get('ETag')!
