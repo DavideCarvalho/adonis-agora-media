@@ -21,8 +21,11 @@ interface MediaCollectionConfig {
   disk?: string             // target disk (defaults to the storage default disk)
   acceptsMimeTypes?: string[] // allowed MIME types; others are rejected on attach
   conversions?: ConversionPreset[] // image presets available for this collection
+  transformers?: Transformer[]     // content transformers (HLS, metadata probe, your own)
 }
 ```
+
+`conversions` and `transformers` both produce named entries in `record.conversions`, so within one collection the two lists share a **single namespace**. A name used twice — by two presets, by two transformers, or by one of each — throws `TransformerConflictError` when the registry is built, which is at boot rather than on the first attach. See [Transformers](/docs/media/transformers) for what goes in that second list.
 
 ```ts title="config/media.ts"
 defineConfig({
@@ -139,7 +142,7 @@ await media.library.list('Post', '1', 'gallery')
 ```
 
 <Callout type="info">
-  Ordering is append-only in the current alpha — `attach` always takes the next slot. There's no built-in reorder API yet; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
+  Ordering is append-only — `attach` always takes the next slot. There's no built-in reorder API; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
 </Callout>
 
 ### Per-collection disk
@@ -267,13 +270,33 @@ interface MediaRecord {
   path: string
   order: number
   customProperties: Record<string, unknown> // your own metadata bag, passed on attach
-  conversions: Record<string, { path: string; disk: string }> // keyed by preset name
+  conversions: Record<string, MediaConversion> // keyed by preset / transformer name
   createdAt: Date
   updatedAt: Date
 }
 ```
 
 You can stash arbitrary metadata on `customProperties` at attach time (`attach({ ..., customProperties: { alt: 'A cat' } })`) and read it back off the record.
+
+### `MediaConversion`
+
+One entry in `record.conversions`. **Every field is optional**, because the same type covers three quite different results:
+
+```ts
+interface MediaConversion {
+  path?: string    // entry-point artifact key — absent for a metadata-only transform
+  disk?: string    // disk holding the artifact(s) — absent when there are none
+  prefix?: string  // storage prefix (ends in `/`) holding every artifact of a multi-file result
+  files?: string[] // every artifact key relative to `prefix`, the entry included
+  meta?: Record<string, unknown> // transformer-reported metadata, persisted verbatim
+}
+```
+
+- An **image conversion** (a `ConversionPreset`) fills `path` + `disk`: one file, one key.
+- A **multi-file transformer output** — an HLS package — fills `path` (the master playlist), `prefix` (the folder every artifact lives under) and `files` (all of them). `files` is the authority both for serving individual artifacts and for deleting the package whole.
+- A **metadata-only transform** — a probe, a blurhash — writes no artifact at all: `path`, `disk`, `prefix` and `files` are all absent and only `meta` carries the result.
+
+Which is why nothing here can be assumed present. Reading `record.conversions.probe.path` on a probe result gets you `undefined`, not a key; narrow on the field you actually need.
 
 ---
 

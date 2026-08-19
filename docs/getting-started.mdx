@@ -16,7 +16,7 @@ Getting `@adonis-agora/media` running is three steps: make sure Drive is install
 
 - **Node.js 20.6+**
 - **AdonisJS 7** (`@adonisjs/core` `^7.3.0`)
-- **`@adonisjs/drive` `^3.0.0`**, installed and configured — media delegates *all* storage to it. If you don't have it yet: `node ace add @adonisjs/drive`.
+- **`@adonisjs/drive` `^3.0.0` or `^4.0.0`**, installed and configured — media delegates *all* storage to it. If you don't have it yet: `node ace add @adonisjs/drive`.
 - *(optional)* **`@adonisjs/lucid`** if you want the persistent `lucid` store, and **`sharp`** if you want image conversions. Both are optional peers, loaded lazily only when selected.
 
 ---
@@ -47,14 +47,15 @@ Make sure `@adonisjs/drive` is installed and a `config/drive.ts` exists first.
 </Tab>
 </Tabs>
 
-`configure` runs three codemods so there is **zero manual wiring**:
+`configure` does all the wiring so there is **zero manual work**:
 
-1. registers the service provider (`@adonis-agora/media/media_provider`) in `adonisrc.ts`;
+1. registers **both** providers in `adonisrc.ts` — `@adonis-agora/media/media_provider` (the library) and `@adonis-agora/media/dashboard_provider` (the management console, whose SPA ships inside this package — there is no separate install);
 2. publishes `config/media.ts` from a stub;
-3. publishes the Lucid migration for the optional `lucid` store.
+3. publishes `config/media_dashboard.ts` from a stub;
+4. publishes **two** Lucid migrations — one for the optional `lucid` media store, one for the resumable-upload session store.
 
 <Callout type="info">
-  The migration is for the `lucid` store only. If you stick with the in-memory store (the default in the stub), simply delete the published migration. If you select `lucid`, run `node ace migration:run`.
+  Both migrations are optional. They back the `lucid` media store and the `lucid` upload-session store respectively; if you stay on the in-memory equivalents (the default in the stub), delete the ones you don't need. Otherwise run `node ace migration:run`.
 </Callout>
 
 The published `config/media.ts` works out of the box with the in-memory store and a sharp processor:
@@ -236,7 +237,28 @@ async storeMany({ request, response, params }: HttpContext) {
 }
 ```
 
-`for()` returns a small binding with `attach` and `list`. For `find` / `delete` / `url` (which work by media id, not owner), use `media.library` directly.
+`for()` returns a small binding with three methods — `attach`, `attachExisting` and `list` — each pre-filled with that owner:
+
+```ts
+const gallery = media.library.for('Post', post.id)
+
+await gallery.attach({ collection: 'gallery', fileName, mimeType, contents })
+
+// register an object that is ALREADY on the disk (a finished TUS or direct-S3 upload),
+// without reading or rewriting a single byte
+await gallery.attachExisting({
+  collection: 'gallery',
+  key: 'uploads/9f2a/clip.mp4',
+  fileName: 'clip.mp4',
+  mimeType: 'video/mp4',
+})
+
+await gallery.list('gallery')
+```
+
+`attachExisting` is the zero-copy adoption path: the record simply points at the key you hand it, and the size is read from the disk's metadata (a HEAD, not a download) when you don't pass one. Pass `moveIntoLayout: true` to have it moved into the library's canonical `ownerType/ownerId/collection/id/fileName` layout first — that needs a disk with a native server-side `move`, and the bytes are never streamed through your app to fake one.
+
+For `find` / `delete` / `url` (which work by media id, not owner), use `media.library` directly.
 
 ---
 
