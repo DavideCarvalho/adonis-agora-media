@@ -129,6 +129,49 @@ const COMMENTED_EXAMPLES = {
 };
 
 /**
+ * The published copy must be byte-identical to the source.
+ *
+ * That is the right assertion ONLY because this package's `copy:stubs` is a pure `cp -r` for stubs —
+ * it transforms nothing on the way (the SPA copy in the same script targets `dist/assets`, not
+ * `dist/stubs`). A build that rewrote stubs in transit would need this compared against the expected
+ * TRANSFORMATION instead, so if `copy:stubs` ever grows one, change this rather than deleting it.
+ *
+ * Compared as BYTES, not as text: a set comparison cannot see a copy whose content drifted, and a
+ * string comparison cannot see encoding or line-ending drift — both of which change what a consumer
+ * receives while every file is still present and still "looks" the same.
+ */
+function assertPublishedCopyIsIdentical(stubPath) {
+  const from = join(srcStubs, stubPath);
+  const to = join(distStubs, stubPath);
+
+  let published;
+  try {
+    published = readFileSync(to);
+  } catch {
+    throw new Error(
+      `dist/stubs/${stubPath} is missing. Either the build has not run (\`pnpm build\`), or \`copy:stubs\` does not publish this stub — check that its directory is copied wholesale rather than file by file.`,
+    );
+  }
+
+  const source = readFileSync(from);
+  if (source.equals(published)) return;
+
+  const detail =
+    source.length !== published.length
+      ? `${source.length} bytes in stubs/, ${published.length} in dist/stubs/`
+      : 'same length, differing bytes (an encoding or line-ending change)';
+
+  throw new Error(
+    [
+      `dist/stubs/${stubPath} is not byte-identical to stubs/${stubPath} — ${detail}.`,
+      '  If you edited the stub since the last build, this is a STALE BUILD: run `pnpm build`.',
+      '  If a fresh build still differs, `copy:stubs` is REWRITING the stub in transit, which is a bug:',
+      '  a consumer would install something other than what this repo reviews.',
+    ].join('\n'),
+  );
+}
+
+/**
  * Boot the minimum AdonisJS app the stubs engine needs, rooted AT the scratch consumer app. Rooting it
  * there is what lets each stub's own `exports({ to: app.configPath(...) })` header resolve to a real
  * destination inside that app — so nothing here computes a path; the stub declares it.
@@ -242,15 +285,9 @@ try {
   const app = await bootApp(appRoot);
 
   for (const stubPath of STUBS) {
-    // What the consumer installs is `dist/stubs`; `stubs/` is only its source. Rendering both and
-    // comparing catches a stale or mangled copy, and what gets compiled below is the dist rendering.
-    const fromSrc = await renderStub(app, stubPath, srcStubs);
+    // What the consumer installs is `dist/stubs`; `stubs/` is only its source.
+    assertPublishedCopyIsIdentical(stubPath);
     const fromDist = await renderStub(app, stubPath, distStubs);
-    if (fromSrc.contents !== fromDist.contents) {
-      throw new Error(
-        `dist/stubs/${stubPath} renders differently from stubs/${stubPath} — the published copy is stale or mangled`,
-      );
-    }
 
     // The stub's OWN header decided this path; nothing here computes it.
     mkdirSync(dirname(fromDist.to), { recursive: true });
