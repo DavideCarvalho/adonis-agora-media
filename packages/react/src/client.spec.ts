@@ -248,7 +248,7 @@ describe('uploadDirect (session-backed)', () => {
   function sessionServer(calls: string[], capture: Capture) {
     return vi.fn(async (url: string, init: RequestInit) => {
       calls.push(`${init.method} ${url}`);
-      if (init.method === 'POST' && url === '/media/uploads') {
+      if (init.method === 'POST' && url === '/media/uploads/direct/sessions') {
         capture.initiate = JSON.parse(init.body as string);
         return json(initiateBody, 201);
       }
@@ -295,11 +295,11 @@ describe('uploadDirect (session-backed)', () => {
       contentType: 'application/octet-stream',
     });
     expect(partUploader).toHaveBeenCalledTimes(3);
-    expect(calls).toContain('POST /media/uploads');
-    expect(calls).toContain('POST /media/uploads/up-1/parts/1');
-    expect(calls).toContain('POST /media/uploads/up-1/parts/2');
-    expect(calls).toContain('POST /media/uploads/up-1/parts/3');
-    expect(calls).toContain('POST /media/uploads/up-1/complete');
+    expect(calls).toContain('POST /media/uploads/direct/sessions');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-1/parts/1');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-1/parts/2');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-1/parts/3');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-1/complete');
     expect(capture.confirms).toEqual([
       { etag: '"etag-1"' },
       { etag: '"etag-2"' },
@@ -369,15 +369,15 @@ describe('uploadDirect (session-backed)', () => {
     );
 
     // No fresh initiate; onSession is not re-fired on resume.
-    expect(calls).not.toContain('POST /media/uploads');
+    expect(calls).not.toContain('POST /media/uploads/direct/sessions');
     expect(capture.initiate).toBeUndefined();
     expect(onSession).not.toHaveBeenCalled();
     // Only the two pending parts uploaded (part 1 was already done).
     expect(partUploader).toHaveBeenCalledTimes(2);
-    expect(calls).toContain('POST /media/uploads/up-9/parts/2');
-    expect(calls).toContain('POST /media/uploads/up-9/parts/3');
-    expect(calls).not.toContain('POST /media/uploads/up-9/parts/1');
-    expect(calls).toContain('POST /media/uploads/up-9/complete');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-9/parts/2');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-9/parts/3');
+    expect(calls).not.toContain('POST /media/uploads/direct/sessions/up-9/parts/1');
+    expect(calls).toContain('POST /media/uploads/direct/sessions/up-9/complete');
     // Progress starts from the already-uploaded part 1 (5 bytes) and ends complete.
     expect(seen[0][0]).toBeGreaterThanOrEqual(5);
     expect(seen.at(-1)).toEqual([15, 15]);
@@ -417,7 +417,7 @@ describe('uploadDirect (session-backed)', () => {
     const result = await client.directSessionStatus('up-1');
 
     expect(seenMethod).toBe('GET');
-    expect(seenUrl).toBe('/media/uploads/up-1');
+    expect(seenUrl).toBe('/media/uploads/direct/sessions/up-1');
     expect(seenHeaders.Authorization).toBe('Bearer t');
     // The full session (object arrays, not bare part numbers) survives the round-trip.
     expect(result).toEqual(status);
@@ -437,7 +437,49 @@ describe('uploadDirect (session-backed)', () => {
 
     await client.abortDirectSession('up-1');
 
-    expect(calls).toEqual(['DELETE /media/uploads/up-1']);
+    expect(calls).toEqual(['DELETE /media/uploads/direct/sessions/up-1']);
+  });
+
+  /**
+   * `uploadsPath` used to address BOTH the proxy endpoint and the direct-session endpoints, even
+   * though the server mounts them on two different prefixes — which is why a client left at its
+   * defaults 404'd on every direct upload. `directPath` separates them; these pin the resolution
+   * rules, including the fallback that keeps every pre-existing single-path client intact.
+   */
+  it('sends direct-session requests to directPath and proxy requests to uploadsPath', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push(`${init.method} ${url}`);
+      return { ok: true, status: 204, headers: new Headers() } as Response;
+    });
+    const client = createMediaUploadClient({
+      uploadsPath: '/media/uploads',
+      directPath: '/internal/sessions',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await client.abortDirectSession('up-1');
+    await client.uploadProxy(new Blob(['x']), { filename: 'a.txt', key: 'k' });
+
+    expect(calls[0]).toBe('DELETE /internal/sessions/up-1');
+    expect(calls[1]).toContain('/media/uploads/proxy?key=k');
+  });
+
+  it('falls back to an explicit uploadsPath when directPath is not given', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push(`${init.method} ${url}`);
+      return { ok: true, status: 204, headers: new Headers() } as Response;
+    });
+    // Exactly how hosts wired the client before `directPath` existed: one path, both roles.
+    const client = createMediaUploadClient({
+      uploadsPath: '/api/v1/upload-video',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await client.abortDirectSession('up-1');
+
+    expect(calls).toEqual(['DELETE /api/v1/upload-video/up-1']);
   });
 
   it('retries a transient part failure and ultimately succeeds', async () => {
@@ -452,7 +494,8 @@ describe('uploadDirect (session-backed)', () => {
       parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
     };
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
-      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (init.method === 'POST' && url === '/media/uploads/direct/sessions')
+        return json(onePartBody, 201);
       if (url.endsWith('/complete')) return json(completeBody);
       if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
       return json({});
@@ -488,7 +531,8 @@ describe('uploadDirect (session-backed)', () => {
       parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
     };
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
-      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (init.method === 'POST' && url === '/media/uploads/direct/sessions')
+        return json(onePartBody, 201);
       if (url.endsWith('/complete')) return json(completeBody);
       if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
       return json({});
@@ -522,7 +566,8 @@ describe('uploadDirect (session-backed)', () => {
       parts: [{ partNumber: 1, url: 'https://s3.example/part-1' }],
     };
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
-      if (init.method === 'POST' && url === '/media/uploads') return json(onePartBody, 201);
+      if (init.method === 'POST' && url === '/media/uploads/direct/sessions')
+        return json(onePartBody, 201);
       if (url.endsWith('/complete')) return json(completeBody);
       if (/\/parts\/\d+$/.test(url)) return json({ offset: 0, completedParts: [] });
       return json({});

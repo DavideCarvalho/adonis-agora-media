@@ -42,6 +42,9 @@ importers:
       '@adonis-agora/media-dashboard':
         specifier: workspace:*
         version: link:../dashboard
+      '@adonis-agora/media-react':
+        specifier: workspace:*
+        version: link:../react
       '@adonisjs/assembler':
         specifier: ^8.4.0
         version: 8.4.0(typescript@5.9.3)
