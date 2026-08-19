@@ -9,7 +9,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `@adonis-agora/media` already publishes `agora:media:*` lifecycle events onto the diagnostics bus (see [Configuration → Diagnostics](/docs/media/configuration#diagnostics)). When [Telescope](/docs/telescope) is installed, its generic diagnostics watcher records those events automatically — so you get media entries with zero wiring. `mediaTelescopeExtension` goes one step further: it contributes a dedicated **"Media" overview dashboard** built from those recorded events.
 
 <Callout type="info">
-  Telescope is an **optional, never-imported peer**. The extension object structurally (not nominally) satisfies Telescope's `TelescopeExtension` contract, so `@adonis-agora/media` never depends on `@adonis-agora/telescope` — installed or not, the media library behaves identically.
+  Telescope is an **optional, never-imported peer** (`>=0.4.0 <1.0.0` — every 0.x from 0.4 on). The extension object structurally (not nominally) satisfies Telescope's `TelescopeExtension` contract, so `@adonis-agora/media` never depends on `@adonis-agora/telescope` — installed or not, the media library behaves identically.
 </Callout>
 
 ---
@@ -69,7 +69,7 @@ What it buys you over the generic diagnostics watcher: a per-operation entry of 
 
 Three details make it safe to run alongside everything else:
 
-- **No double-recording.** `register()` *claims* each channel it records through the reference-counted `Symbol.for('@agora/diagnostics:claims')` registry, and the generic `DiagnosticsWatcher` skips claimed channels by default. `dispose()` releases the claim and detaches every subscription.
+- **No double-recording.** `register()` *claims* each channel it records through the reference-counted `Symbol.for('@agora/diagnostics:claims')` registry, and the generic `DiagnosticsWatcher` skips claimed channels by default. `dispose()` releases the claim and detaches every subscription. That skip is honoured from **`@adonis-agora/telescope` 0.6.0** onward; on 0.4.x/0.5.x the generic watcher predates the claim registry, so running both records each event twice. The overview dashboard is unaffected either way — it reads the generic entries, and this watcher is opt-in.
 - **`upload.progress` is deliberately excluded** — neither recorded nor claimed. A per-chunk event would flood the timeline; it stays available on its channel for programmatic subscribers.
 - **Still zero coupling.** It subscribes to the same `node:diagnostics_channel` channels media publishes on. Neither `@adonis-agora/telescope` nor `@adonis-agora/diagnostics` is imported.
 
