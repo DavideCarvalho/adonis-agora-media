@@ -8,9 +8,27 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 **`@adonis-agora/media-react`** is the first-party browser companion to the server upload routes. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
 
-- **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `uploads.resumable.routes.prefix` (default `/media/uploads/tus`), resuming from the server's `Upload-Offset`.
-- **Direct-S3 multipart** — `POST /direct/initiate` returns presigned part URLs; parts `PUT` straight to S3 and are assembled via `POST /direct/:uploadId/complete`.
-- **Proxy** — a single `PUT /proxy` streams the whole body through the app.
+- **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `tusPath` (default `/media/uploads/tus`, matching `uploads.resumable.routes.prefix`), resuming from the server's `Upload-Offset`.
+- **Direct-S3 multipart** — the [direct-session](/docs/media/uploads/direct-sessions) contract against `uploadsPath`: `POST {uploadsPath}` initiates and returns presigned part URLs, each part `PUT`s straight to S3, `POST {uploadsPath}/:id/parts/:partNumber` confirms its `ETag`, and `POST {uploadsPath}/:id/complete` assembles the object. `GET {uploadsPath}/:id` reports a session's state and `DELETE {uploadsPath}/:id` tears it down.
+- **Proxy** — a single `PUT {uploadsPath}/proxy` streams the whole body through the app.
+
+<Callout type="warn" title="The two direct-path defaults do not line up">
+  The client's `uploadsPath` defaults to `/media/uploads`, but the server mounts its direct-session
+  routes at `uploads.direct.routes.prefix`, which defaults to **`/media/uploads/direct/sessions`**.
+  Left at both defaults, every direct upload 404s. Align them explicitly — either set the server
+  prefix, or point the client at the server's:
+
+  ```ts
+  createMediaUploadClient({ uploadsPath: '/media/uploads/direct/sessions' })
+  ```
+
+  Be aware that `uploadsPath` also carries the proxy route (`PUT {uploadsPath}/proxy`), which lives
+  under `uploads.routes.prefix` instead. If you use both strategies, prefer moving the **server's**
+  direct-session prefix onto `uploads.routes.prefix` — the two route sets don't collide — rather than
+  moving the client; otherwise use one client instance per strategy.
+</Callout>
+
+The older stateless routes under `uploads.routes.prefix` (`POST /direct/initiate`, `POST /direct/:uploadId/complete`) exist too, but this client does **not** speak them. They are the raw primitives documented in [Upload modes](/docs/media/uploads/upload-modes); the client always uses the session-backed contract, because that is the one that survives a page reload.
 
 <Callout type="info" title="Separate package">
   Install it alongside the server library: `npm i @adonis-agora/media-react react`. `react` is an **optional** peer — the `./client` entry point is framework-free and needs no React. This package matches the routes documented in [Upload modes](/docs/media/uploads/upload-modes) and [Resumable / TUS](/docs/media/uploads/resumable-tus).
@@ -45,11 +63,73 @@ function Uploader() {
 ```
 
 - `mode`: `'tus'` (resumable, default) · `'direct'` (presigned S3 multipart) · `'proxy'`.
-- State: `status` (`'idle' | 'uploading' | 'paused' | 'success' | 'error'`), `progress` (`0..1`), `result`, `location` (TUS session), `error`.
-- Actions: `upload(file, meta)`, `pause()`, `resume()`, `abort()` (terminates the TUS session server-side), `reset()`.
-- `direct` / `proxy` need a `key` in the upload `meta` — resolve it server-side in real apps.
+- State: `status` (`'idle' | 'uploading' | 'paused' | 'success' | 'error'`), `progress` (`0..1`), `result`, `location` (TUS session), `error`, `resumable` (see [below](#resuming-a-direct-upload-across-a-reload)).
+- Actions: `upload(file, meta)`, `pause()`, `resume()`, `abort()` (terminates the session server-side), `reset()`.
+- Only **`proxy`** takes a `key` in the upload `meta`. TUS and direct both derive the key server-side, and `meta.key` is ignored on those paths — a client-chosen key would be a hole you'd have to close anyway.
 
-The hook accepts every `MediaUploadClientOptions` field (below) plus an optional pre-built `client` for tests or a shared instance.
+The hook accepts every `MediaUploadClientOptions` field (below) plus an optional pre-built `client` for tests or a shared instance, and a `storageKey` for cross-reload resume.
+
+### The typed completion body
+
+`useMediaUpload<TComplete>()` types what the server's `complete` returned. For a direct upload with a [`DirectUploadPolicy`](/docs/media/uploads/direct-upload-policy), that body is whatever the policy's `onComplete` handed back — a media id, a status, a whole domain object:
+
+```tsx
+type Completion = { mediaId: string; status: 'processing' }
+
+const { upload } = useMediaUpload<Completion>({ mode: 'direct' })
+
+const result = await upload(file, { filename: file.name, contentType: file.type })
+if (result.mode === 'direct') {
+  router.visit(`/videos/${result.body.mediaId}`) // typed
+}
+```
+
+The result is a discriminated union — `{ mode: 'tus', location }`, `{ mode: 'direct', uploadId, key, disk, body }`, `{ mode: 'proxy', key, disk }` — so narrowing on `mode` is what gets you to `body` at all.
+
+<Callout type="warn">
+  `TComplete` is an **assertion, not a validation**. That body is raw server JSON and nothing at this
+  boundary checks it. Parse it with a schema before trusting its shape.
+</Callout>
+
+### Pausing and resuming
+
+`pause()` aborts the in-flight transfer and settles into `status: 'paused'`; `resume()` picks the same file back up. What "resume" means depends on the strategy:
+
+- **`tus`** — a true byte-offset resume. The client re-`HEAD`s the session, learns the server's offset, and continues from exactly there.
+- **`direct`** — a real resume at **part** granularity. `pause` aborts the in-flight part `PUT`s; `resume` calls `directSessionStatus` and continues from the session's still-pending parts with **fresh** presigned URLs. Parts already confirmed are never re-uploaded.
+- **`proxy`** — a single-shot transfer, so a resume restarts it.
+
+`abort()` differs from `reset()` in one important way: abort tears the session down **server-side** (a TUS `DELETE`, a direct-session `DELETE`) as well as clearing local state, while reset only clears locally. Reset an upload you might resume; abort one you are done with.
+
+### Resuming a direct upload across a reload
+
+Pause/resume survives a component unmount but not a page reload — the session coordinates live in memory. Pass `storageKey` and they are persisted to `localStorage` on initiate:
+
+```tsx
+const { upload, resume, resumable, status, progress } = useMediaUpload({
+  mode: 'direct',
+  uploadsPath: '/media/uploads/direct/sessions',
+  storageKey: `upload:lesson:${lessonId}`,
+})
+
+return resumable ? (
+  <button type="button" onClick={() => resume()}>
+    Resume “{resumable.fileName}”
+  </button>
+) : (
+  <input type="file" onChange={(e) => { /* upload(file, meta) */ }} />
+)
+```
+
+How it behaves, because the details are what make it trustworthy:
+
+- **On mount**, the hook probes the persisted session. If the server still has pending parts, `resumable` is populated with `{ uploadId, fileName }` — your cue to offer "resume" instead of "choose a file". If the session is finished or gone, the entry is dropped silently.
+- **On `upload()` of the same file**, a persisted session is reused when the file name **and** the byte size both match. Requiring the size too is what stops a revised same-named file from splicing its bytes into the old session.
+- **The server is the authority.** On resume the client re-reads the coordinates from `directSessionStatus` — key, disk, part size, pending parts — rather than trusting the stored copy.
+- **A definitive "gone"** (`404` / `410`) drops the entry and falls through to a fresh initiate, so an expired session never bricks that `storageKey`. A **transient** failure (network blip, `5xx`) keeps the entry resumable and surfaces the error instead of silently discarding progress and restarting at 0%. Telling those two apart is exactly what `MediaHttpError.status` is for.
+- The entry is cleared on success, on `abort()` and on `reset()`.
+
+Because `resume()` needs the original `Blob` back, offer it from a control that still has the file (or re-prompt for it) — the hook persists the session's coordinates, never the bytes. `storageKey` is ignored by `tus` and `proxy`, and should be unique per upload slot: two uploaders sharing one key would fight over the same entry.
 
 ---
 
@@ -65,7 +145,7 @@ import { MediaUploader } from '@adonis-agora/media-react'
 // Fully headless — bring your own UI:
 <MediaUploader
   mode="direct"
-  meta={{ key: 'u/1/a.png' }}
+  uploadsPath="/media/uploads/direct/sessions"
   render={({ status, progress, selectFile }) => (
     /* your markup; call selectFile(file) to start */
   )}
@@ -76,7 +156,7 @@ import { MediaUploader } from '@adonis-agora/media-react'
 |------|------|------|
 | `mode` | `'tus' \| 'direct' \| 'proxy'` | Strategy (default `tus`). |
 | `accept` | `string` | `accept` attribute for the file input. |
-| `meta` | `Partial<UploadMeta>` | Extra metadata (e.g. `key` / `disk` for direct/proxy) merged into every upload. |
+| `meta` | `Partial<UploadMeta>` | Extra metadata merged into every upload (`key` / `disk` for proxy, `metadata` / `tusPath` for TUS). |
 | `unstyled` | `boolean` | Skip the default stylesheet. |
 | `className` | `string` | Class on the wrapper element. |
 | `onUploaded` / `onError` | callbacks | Fire on success / failure. |
@@ -100,32 +180,49 @@ const client = createMediaUploadClient({
 })
 
 await client.uploadTus(file, { filename: 'a.png', contentType: 'image/png' })
-await client.uploadDirect(file, { filename: 'a.png', key: 'u/1/a.png' })
-await client.uploadProxy(file, { filename: 'a.png', key: 'u/1/a.png' })
+await client.uploadDirect(file, { filename: 'a.png', contentType: 'image/png' }) // key: server-side
+await client.uploadProxy(file, { filename: 'a.png', key: 'u/1/a.png' })          // key: required
 ```
+
+Those are the three upload entry points; the client also exposes the session primitives underneath them (`createTusSession`, `tusOffset`, `abortTus`, `directSessionStatus`, `abortDirectSession`) and an injectable part transport. See [Upload client](/docs/media/react/client) for the full surface.
 
 | Option | Default | What |
 |--------|---------|------|
 | `baseUrl` | `''` (same-origin) | Origin (and optional path) prepended to every relative endpoint. |
 | `tusPath` | `/media/uploads/tus` | TUS base path — match `uploads.resumable.routes.prefix`. |
 | `uploadsPath` | `/media/uploads` | Direct-S3 + proxy base path — match `uploads.routes.prefix`. |
-| `chunkSize` | `8 MiB` | Bytes per TUS chunk / requested direct part size. |
-| `concurrency` | `3` | Max in-flight part `PUT`s for direct-S3 multipart. |
+| `chunkSize` | `8 MiB` | Bytes per **TUS** chunk. The direct-S3 part size is decided by the server, not here. |
+| `concurrency` | — | **Reserved.** Direct-S3 uploads are sequential today, so this does not apply to them; it is kept for forward compatibility. |
 | `retries` | `3` | Per-chunk / per-part retry attempts. |
 | `fetchImpl` | global `fetch` | Custom fetch for tests / non-browser runtimes. |
+| `partUploader` | `xhrPartUploader` | Transport for one direct-S3 part `PUT`. See [Upload client](/docs/media/react/client#the-part-transport). |
 | `headers` | — | Static headers merged into every **app** request. |
 | `getHeaders` | — | Resolved fresh before every app request (short-lived tokens); wins on key conflict. |
+
+### `UploadMeta`
+
+| Field | Applies to | What |
+|---|---|---|
+| `filename` | all | Required. Sent as the TUS `filename` metadata / the direct `fileName`. |
+| `contentType` | all | MIME type. TUS sends it as `filetype`; direct declares it at initiate, where a collection gate may reject it. |
+| `size` | all | Total byte length. Defaults to the blob's `.size`. |
+| `key` | **proxy only** | The object key. **Ignored by TUS and direct**, which derive the key server-side. |
+| `disk` | **proxy only** | Disk override. A direct upload's disk is assigned by the server at initiate. |
+| `metadata` | **TUS only** | Extra `Upload-Metadata` pairs carried through to your server. See [Upload client](/docs/media/react/client#custom-tus-metadata). |
+| `tusPath` | **TUS only** | Per-upload override of the create path, for a TUS route that embeds a resource id. |
 
 <Callout type="warn">
   `headers` / `getHeaders` are merged into requests against **your app** only. Presigned S3 `PUT`s deliberately receive neither — adding an `Authorization` header there would break the SigV4 signature.
 </Callout>
 
-A `mediaUrl(...)` helper is also exported for composing URLs against the base path.
+A `mediaUrl(id, conversion?)` helper is also exported for composing URLs against the base path.
 
 ---
 
 ## Next steps
 
-- [Upload modes](/docs/media/uploads/upload-modes) — the direct / proxy routes this client calls
+- [Upload client](/docs/media/react/client) — the full `MediaUploadClient` surface, the part transport, and `MediaHttpError`
+- [Console launcher](/docs/media/react/console-launcher) — open the media console from your app, in three tiers
+- [Direct sessions](/docs/media/uploads/direct-sessions) — the server contract the direct strategy speaks
 - [Resumable / TUS](/docs/media/uploads/resumable-tus) — the TUS protocol it implements
 - [Dashboard](/docs/media/dashboard) — reuses this client for its upload UI

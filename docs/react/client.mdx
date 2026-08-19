@@ -1,0 +1,202 @@
+---
+title: Upload Client
+description: The full MediaUploadClient surface — the three upload strategies plus the session primitives underneath them, the injectable part transport, typed MediaHttpError, and the custom TUS metadata that reaches your server through parseTusMetadata.
+icon: Terminal
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`createMediaUploadClient` is the framework-free half of `@adonis-agora/media-react`: no React, no DOM assumptions beyond `Blob` and `fetch`, importable from `@adonis-agora/media-react/client`. [`useMediaUpload`](/docs/media/react) is a thin state machine over it.
+
+Three of its methods are the upload strategies. The rest are the **session primitives** those strategies are built from — exposed because a real upload UI eventually needs one of them directly: to show a session's state before committing to a resume, to tear down an abandoned upload, or to drive a flow the hook doesn't model.
+
+```ts
+interface MediaUploadClient {
+  uploadTus(data: Blob, meta: UploadMeta, options?: TusUploadOptions): Promise<MediaUploadResult>
+  uploadDirect(data: Blob, meta: UploadMeta, options?: DirectUploadOptions): Promise<MediaUploadResult>
+  uploadProxy(data: Blob, meta: UploadMeta, options?: PerUploadOptions): Promise<MediaUploadResult>
+
+  createTusSession(meta: UploadMeta): Promise<{ location: string }>
+  tusOffset(location: string): Promise<number>
+  abortTus(location: string): Promise<void>
+
+  directSessionStatus(uploadId: string): Promise<DirectUploadSessionStatus>
+  abortDirectSession(uploadId: string): Promise<void>
+
+  mediaUrl(id: string, conversion?: string): string
+}
+```
+
+---
+
+## The TUS primitives
+
+```ts
+const { location } = await client.createTusSession({ filename: 'talk.mp4', size: file.size })
+// persist `location` — it is the whole resume token
+
+const offset = await client.tusOffset(location) // where the server got to
+await client.uploadTus(file, meta, { resumeFrom: location, onProgress })
+
+await client.abortTus(location) // TUS DELETE — the user gave up
+```
+
+`createTusSession` opens the session without sending a byte, which is what lets you persist the `Location` *before* the transfer begins — the difference between "resumable in this tab" and "resumable after a crash". `tusOffset` is a `HEAD`; it returns `0` rather than throwing when the session is gone, so a resume attempt degrades into a fresh upload instead of an error. `abortTus` is best-effort: a non-2xx response is swallowed, because failing to clean up a session the user already abandoned is not worth surfacing.
+
+## The direct-session primitives
+
+```ts
+const status = await client.directSessionStatus(uploadId)
+// { id, key, disk, partSize, size, totalParts, contentType?,
+//   completedParts: [{ partNumber, etag }],
+//   pendingParts:   [{ partNumber, url }],   ← FRESH presigned URLs
+//   expiresAt? }                              ← ISO string, not a Date
+
+await client.uploadDirect(file, meta, {
+  resume: {
+    id: status.id,
+    key: status.key,
+    disk: status.disk,
+    partSize: status.partSize,
+    parts: status.pendingParts,
+  },
+  onProgress,
+})
+
+await client.abortDirectSession(uploadId) // DELETE — also aborts the S3 multipart upload
+```
+
+`directSessionStatus` is the source of truth for a resume, and the reason expiry never strands an upload: pending parts always come back with **freshly signed** URLs, whatever happened to the ones handed out at initiate. `expiresAt` arrives over JSON, so it is an ISO-8601 string.
+
+Two `uploadDirect` options make a resumable UI possible:
+
+| Option | What |
+|---|---|
+| `onSession` | Fires once, after a **fresh** initiate (never on resume), with `{ uploadId, fileName, key, disk, partSize }`. Persist this to resume later. |
+| `resume` | Skip the initiate round-trip and upload only these pending parts. |
+
+Progress accounting handles resume correctly on its own: the client computes the already-uploaded bytes from the *pending* parts and starts `onProgress` from there, so a resumed upload opens at 60% instead of 0%.
+
+---
+
+## The part transport
+
+Every direct-S3 part `PUT` goes through a `PartUploader` — one function, injectable:
+
+```ts
+type PartUploader = (
+  url: string,
+  body: Blob,
+  options: { contentType?: string; signal?: AbortSignal; onBytes?: (loaded: number) => void },
+) => Promise<string> // resolves to the part's ETag
+```
+
+The default is `xhrPartUploader`, exported alongside the type. It uses `XMLHttpRequest` rather than `fetch` for one concrete reason: **`fetch` exposes no upload-progress hook**, so per-part byte progress is impossible with it. Everything else about the default matters too — it rejects with a typed `MediaHttpError` carrying the status, it detaches its abort listener on settle so a shared `AbortSignal` never retains dead requests, it rejects immediately when handed an already-aborted signal (an `abort()` before `send()` dispatches no event, which would otherwise leave the promise unsettled forever), and it fails with an explicit message when S3 returns no readable `ETag`:
+
+> `media upload: S3 did not expose an ETag — check the bucket CORS ExposeHeaders`
+
+That is the single most common direct-upload misconfiguration. The bucket must expose `ETag` (`ExposeHeaders: ["ETag"]`) or the browser cannot read it, and no part can ever be confirmed.
+
+Inject your own for a non-browser runtime, or for a test:
+
+```ts
+const client = createMediaUploadClient({
+  uploadsPath: '/media/uploads/direct/sessions',
+  partUploader: async (url, body) => {
+    const res = await fetch(url, { method: 'PUT', body })
+    return res.headers.get('ETag')!
+  },
+})
+```
+
+<Callout type="warn">
+  A part `PUT` goes to a **presigned S3 URL**, and the client deliberately sends it neither `headers`
+  nor `getHeaders`. Adding an `Authorization` header there breaks the SigV4 signature. If your
+  custom uploader adds headers, add them only to app requests.
+</Callout>
+
+---
+
+## `MediaHttpError`
+
+Every non-2xx response from an *app* endpoint throws this, not a bare `Error`:
+
+```ts
+class MediaHttpError extends Error {
+  readonly status: number | undefined // absent on a network error
+}
+```
+
+The `status` is the point. It lets a caller distinguish a **definitive** failure from a **transient** one without parsing message strings, and two behaviours in this package depend on that distinction:
+
+- **Retries.** `withRetry` fails fast on a `4xx` (it will fail identically on every attempt) and keeps retrying `5xx` and network errors (no status). Burning three attempts with backoff on a `404` helps nobody.
+- **Resume.** The hook's cross-reload resume treats `404` / `410` as "the session is genuinely gone" — drop the stored entry, start fresh — and anything else as "I could not verify" — keep the entry resumable and surface the error. Without a structured status, every network blip would silently discard a nearly-complete upload.
+
+```ts
+import { MediaHttpError } from '@adonis-agora/media-react/client'
+
+try {
+  await client.directSessionStatus(id)
+} catch (error) {
+  if (error instanceof MediaHttpError && error.status === 410) {
+    // session expired — initiate a new one
+  } else {
+    throw error // transient: let the caller retry
+  }
+}
+```
+
+An aborted upload rejects with an `AbortError`-named error instead (`error.name === 'AbortError'`), which retries never swallow.
+
+---
+
+## Custom TUS metadata
+
+TUS carries arbitrary key/value pairs on the `Upload-Metadata` header at create time. The client sends `filename` (and `filetype` when you pass a `contentType`) automatically; `meta.metadata` adds your own:
+
+```ts
+await client.uploadTus(file, {
+  filename: 'exam.pdf',
+  contentType: 'application/pdf',
+  metadata: { patientId: '4821', examDate: '2026-08-18' },
+})
+```
+
+On the server, decode them with the exported `parseTusMetadata`:
+
+```ts title="start/routes.ts"
+import { parseTusMetadata } from '@adonis-agora/media'
+
+const metadata = parseTusMetadata(request.header('upload-metadata'))
+// { filename: 'exam.pdf', filetype: 'application/pdf', patientId: '4821', examDate: '2026-08-18' }
+```
+
+It parses the `key base64value,key2 base64value2` format, decoding each value from base64; a pair with no value yields an empty string, and a malformed header yields `{}` rather than throwing.
+
+This is the seam for carrying domain context through an upload that has not produced a media record yet. The built-in TUS handler passes the parsed metadata to its `keyFor`, so the key can be derived from your own fields; and the metadata is persisted on the session, so it is still there at finalize time.
+
+<Callout type="warn" title="Metadata is client-supplied">
+  Anything in `Upload-Metadata` came from the browser. Treat it as request input — validate it,
+  authorize against it, and never use it as a key segment without sanitizing.
+</Callout>
+
+### Per-upload TUS path
+
+Some servers embed a resource id in the TUS route (`/api/exams/:examId/tus`) instead of mounting one fixed prefix. `meta.tusPath` overrides the create path for a single upload, without a second client:
+
+```ts
+await client.uploadTus(file, {
+  filename: 'scan.dcm',
+  tusPath: `/api/exams/${exam.id}/tus`,
+})
+```
+
+It affects only the **create** request; the `Location` the server returns drives every `PATCH`/`HEAD`/`DELETE` after it, as the protocol intends.
+
+---
+
+## Next steps
+
+- [React client](/docs/media/react) — the hook and component over this client
+- [Direct sessions](/docs/media/uploads/direct-sessions) — the server side of the direct primitives
+- [Resumable / TUS](/docs/media/uploads/resumable-tus) — the server side of the TUS primitives
