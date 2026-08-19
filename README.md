@@ -4,14 +4,17 @@ Media-library for **AdonisJS**, part of the [Agora](https://github.com/DavideCar
 spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.com/adonisjs/drive).
 
 Attach files to entities, organize them into collections (MIME whitelist, single-file replace,
-ordering), and generate image conversions (eager or lazy). Storage is delegated entirely to Drive, so
-you reuse your existing `local` / `s3` / `gcs` disks — this package never reimplements disk drivers.
+ordering), and generate image conversions (eager or lazy) — plus **content transformers**, the same
+seam driven beyond images: the bundled `transformers.hls()` packages a video into an HLS ladder and
+`transformers.probe()` records duration/codecs as metadata, both persisted into the same
+`record.conversions` map. Storage is delegated entirely to Drive, so you reuse your existing
+`local` / `s3` / `gcs` disks — this package never reimplements disk drivers.
 
 ## Packages
 
 | Package | Role |
 |---|---|
-| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, provider + `defineConfig`, testing kit |
+| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the `Transformer` SPI (HLS video + metadata probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, the embedded management console, provider + `defineConfig`, testing kit |
 | [`@adonis-agora/media-react`](./packages/react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
 | [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
 
@@ -20,10 +23,12 @@ The core package uses **subpath exports** (the Agora idiom), so heavy backends s
 | Subpath | What |
 |---|---|
 | `@adonis-agora/media` | barrel — `defineConfig`, `stores`, `processors`, `disks`, `uploadSessions`, `MediaManager`, `MediaLibrary`, `AttachmentManager`, `UploadManager`, `ResumableUploadManager`, `MediaDeliveryHandler`, SPIs, errors |
+| `@adonis-agora/media/services/main` | the app-bound `MediaManager` singleton — `import media from '@adonis-agora/media/services/main'`, importable at any time (it resolves lazily on first use) |
 | `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
 | `@adonis-agora/media/dashboard_provider` | the embedded management-console provider (React SPA + JSON API) |
 | `@adonis-agora/media/dashboard` | `defineConfig` + types for `config/media_dashboard.ts`, `DashboardService`, session-auth helpers, `ObjectInsightProvider` |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
+| `@adonis-agora/media/single-file` | `storeSingleFile` / `removeSingleFile` / `storeSingleFileWith` / `removeSingleFileWith` / `isSingleFileStoreAvailable` — lets other packages delegate single-file uploads (e.g. avatars) to media without a hard dependency |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
 | `@adonis-agora/media/upload_sessions/lucid` | the Lucid resumable `UploadSessionStore` (`@adonisjs/lucid` peer) |
 | `@adonis-agora/media/disks/s3` | the bundled `S3Disk` (`@aws-sdk/client-s3` peer; presigning is hand-rolled SigV4) |
@@ -40,8 +45,10 @@ npm i @adonis-agora/media
 node ace configure @adonis-agora/media
 ```
 
-`configure` registers the provider, publishes `config/media.ts`, and publishes the `media` table
-migration (delete it if you only use the in-memory store; otherwise `node ace migration:run`).
+`configure` registers **both** providers (the library and the embedded console), publishes
+`config/media.ts` and `config/media_dashboard.ts`, and publishes **two** migrations — the `media`
+table for the `lucid` store and the session table for the `lucid` upload-session store. Delete the
+ones you don't need (the in-memory equivalents need no table); otherwise `node ace migration:run`.
 
 Optional peers, loaded lazily only when selected: `@adonisjs/lucid` (the `lucid` store) and `sharp`
 (image conversions).
@@ -136,7 +143,8 @@ cached on the record. `fit` and `format` map straight onto sharp.
 
 ## Diagnostics
 
-Lifecycle events (`attach`, `delete`, `conversion`, `attachment.create`, `attachment.delete`) are
+All nine lifecycle events — `attach`, `delete`, `conversion`, `attachment.create`,
+`attachment.delete`, `upload.start`, `upload.progress`, `upload.complete`, `upload.abort` — are
 emitted on the `agora:media:*` channel via the `@agora/diagnostics:emit` global slot — read
 structurally, with **no hard dependency** on `@adonis-agora/diagnostics`. When that package isn't
 installed, emitting is an inert no-op; when it is, the Telescope generic watcher captures every media

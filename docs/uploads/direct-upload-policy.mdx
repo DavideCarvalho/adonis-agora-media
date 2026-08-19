@@ -1,0 +1,278 @@
+---
+title: Direct Upload Policy
+description: DirectUploadPolicy — the app-injected strategy that decides an upload's object key, what a completed upload becomes in your domain, and how failures read as HTTP. The seam that turns the built-in direct-session routes into a complete feature.
+icon: ShieldCheck
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+The [direct-session routes](/docs/media/uploads/direct-sessions) know how to run a multipart upload: open it, presign the parts, collect ETags, assemble. What they deliberately do **not** know is anything about your application — where this particular user's file should live, which row it belongs to, what the client should get back when it finishes, or what a refusal looks like in your API.
+
+`DirectUploadPolicy` is where you supply exactly that. Register one and the handler routes `initiate`, `complete` and `abort` through it; leave it out and the handler keeps its built-in defaults. It is the difference between "an upload endpoint exists" and "uploads are a feature of my app".
+
+<Callout type="info" title="The one-sentence split">
+  The handler owns the invariant mechanics — nothing about them changes per app. The policy owns
+  every variant decision. Nothing in the middle: the handler performs **no authorization at all**,
+  and the policy never touches S3.
+</Callout>
+
+---
+
+## What the policy decides
+
+| Hook | Required | Answers |
+|---|---|---|
+| `onInitiate(ctx, input)` | yes | **Where does this object go?** Returns the final `key`, plus optional `collection` / `disk` / `visibility` / `partSize` / `metadata`, extra fields to merge onto the `201` body, an app-side `context` value, and a `rollback`. |
+| `onInitiated(ctx, info)` | no | Fires after the multipart upload actually opened, with the created session. Where you persist your own row *knowing the upload exists*. |
+| `resolveComplete(ctx, input)` | yes | **What does the finished object become?** Returns the session id and the `attachExisting` target (owner, collection, file name, MIME type…). |
+| `onComplete(ctx, info)` | yes | Fires with the created `MediaRecord`. Its **return value is the response body** the client receives. |
+| `onAbort(ctx, input)` | no | Clean up your own state before the session is discarded. |
+| `mapError(ctx, err, info)` | no | Turn a thrown error into `{ status, body }`. Gets first refusal on every failure in all three phases. |
+
+### The key is the point
+
+Without a policy, the handler derives the key from `keyFor` — by default `uploads/<random-token>/<fileName>`. That is a safe placeholder, not a design: it puts every tenant's files in one flat namespace and encodes nothing you can query later.
+
+**With a policy, `keyFor` is never called.** The key comes from `InitiateDecision.key`, computed server-side from your authenticated context. The client sends a `fileName` and a `size`; it never sends, and can never influence, a key.
+
+```ts
+async onInitiate(ctx: HttpContext, input) {
+  const user = ctx.auth.getUserOrFail()
+  return { key: `tenants/${user.tenantId}/lessons/${ctx.params.id}/${cuid()}.mp4` }
+}
+```
+
+---
+
+## A complete policy
+
+A realistic one: a lesson video, uploaded by an authenticated user, tracked by a row in the app's own table so the UI can show "processing" before the bytes finish arriving.
+
+```ts title="app/media/lesson_video_policy.ts"
+import { cuid } from '@adonisjs/core/helpers'
+import type { HttpContext } from '@adonisjs/core/http'
+import type {
+  CompleteResolution,
+  DirectUploadPolicy,
+  InitiateDecision,
+  PolicyErrorInfo,
+} from '@adonis-agora/media'
+import LessonUpload from '#models/lesson_upload'
+
+/** What we carry between the policy's own phases. */
+type Ctx = { uploadRowId: string }
+
+export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext, Ctx> {
+  async onInitiate(ctx: HttpContext, input): Promise<InitiateDecision<Ctx>> {
+    const user = ctx.auth.getUserOrFail()
+    const lesson = await Lesson.findOrFail(ctx.params.lessonId)
+    await ctx.bouncer.authorize('uploadLessonVideo', lesson) // ← authorization lives HERE
+
+    const key = `tenants/${user.tenantId}/lessons/${lesson.id}/${cuid()}.mp4`
+
+    // Our own tracking row, created before the multipart upload opens.
+    const row = await LessonUpload.create({
+      lessonId: lesson.id,
+      uploadedBy: user.id,
+      fileName: input.fileName,
+      sizeBytes: input.size,
+      status: 'pending',
+      key,
+    })
+
+    return {
+      key,
+      collection: 'videos',
+      metadata: { lessonId: String(lesson.id) },
+      // merged onto the 201 body, after the session fields
+      response: { lessonUploadId: row.id },
+      context: { uploadRowId: row.id },
+      // runs if anything AFTER this decision throws (MIME gate, S3 open)
+      rollback: () => row.delete(),
+    }
+  }
+
+  async onInitiated(_ctx: HttpContext, { decision, session }) {
+    // The upload really exists now — record its id so an operator can abort it later.
+    await LessonUpload.query()
+      .where('id', decision.context!.uploadRowId)
+      .update({ uploadSessionId: session.id, status: 'uploading' })
+  }
+
+  async resolveComplete(ctx: HttpContext, input): Promise<CompleteResolution<Ctx>> {
+    const row = await LessonUpload.findByOrFail('uploadSessionId', input.id)
+    await ctx.bouncer.authorize('uploadLessonVideo', await row.related('lesson').query().firstOrFail())
+
+    return {
+      sessionId: input.id,
+      target: {
+        ownerType: 'Lesson',
+        ownerId: row.lessonId,
+        collection: 'videos',
+        fileName: row.fileName,
+        mimeType: 'video/mp4',
+      },
+      context: { uploadRowId: row.id },
+    }
+  }
+
+  async onComplete(_ctx: HttpContext, { record, resolution }) {
+    await LessonUpload.query()
+      .where('id', resolution.context!.uploadRowId)
+      .update({ status: 'stored', mediaId: record.id })
+
+    await transcodeQueue.dispatch({ mediaId: record.id })
+
+    // Whatever we return IS the response body.
+    return { mediaId: record.id, status: 'processing' }
+  }
+
+  async onAbort(_ctx: HttpContext, { id }) {
+    await LessonUpload.query().where('uploadSessionId', id).update({ status: 'aborted' })
+  }
+
+  mapError(_ctx: HttpContext, error: unknown, info: PolicyErrorInfo<Ctx>) {
+    if (error instanceof AuthorizationException) {
+      return { status: 403, body: { error: 'You cannot upload to this lesson' } }
+    }
+    if (error instanceof LessonNotFound) {
+      return { status: 404, body: { error: 'Unknown lesson', phase: info.phase } }
+    }
+    return undefined // fall through to the handler's own error mapping
+  }
+}
+```
+
+Register it as the `policy` thunk:
+
+```ts title="config/media.ts"
+uploads: {
+  direct: {
+    store: 'lucid',
+    stores: { lucid: uploadSessions.lucid() },
+    routes: {
+      enabled: true,
+      collection: 'videos',
+      middleware: [middleware.auth()],
+      policy: () => import('#media/lesson_video_policy'),
+    },
+  },
+}
+```
+
+---
+
+## How the phases actually run
+
+<Steps>
+<Step>
+
+### initiate
+
+The handler validates the request shape first — `fileName` present, `size` a positive integer, `maxSize` respected — and answers `400`/`413` itself. Only then does it call `onInitiate`.
+
+With the decision in hand it opens the multipart upload, applying `decision.disk ?? routes.disk` and `decision.collection ?? routes.collection`, then `onInitiated`. The `201` body is the standard session payload (`id`, `key`, `disk`, `partSize`, `size`, `totalParts`, `parts`, `expiresAt?`) with `decision.response` spread **on top**.
+
+If anything after the decision throws — the MIME gate rejecting the declared type, S3 refusing to open the upload — `decision.rollback()` runs first, and a rollback that itself throws is swallowed so it can never mask the real error or preempt `mapError`.
+
+</Step>
+<Step>
+
+### confirm-part and status
+
+These two never reach the policy. Confirming a part and reporting session status are pure session mechanics with no app-specific decision in them, so they run identically with or without a policy.
+
+</Step>
+<Step>
+
+### complete
+
+`resolveComplete` maps the session onto a library target. The handler then calls `adopt` — wired by the provider to `MediaManager.completeDirectUploadToLibrary` — which assembles the parts and registers the object via `attachExisting`, zero-copy, re-validating the collection whitelist against the **real bytes**.
+
+The resulting `MediaRecord` goes to `onComplete`, and **its return value becomes the `200` body**. Note what the handler skips here: with a policy configured it does *not* validate the shape of the caller's `parts` array, because what a completion means is now the policy's business.
+
+</Step>
+<Step>
+
+### abort
+
+`onAbort` runs first (your cleanup), then the session is discarded and the native multipart upload aborted. The response is `204`.
+
+</Step>
+</Steps>
+
+### Error mapping
+
+Every phase catches, calls `mapError` if you defined one, and uses its response when it returns something. Returning `undefined` means "I have no opinion" and falls through to the handler's built-in mapping:
+
+| Error | Status |
+|---|---|
+| `UploadSessionNotFoundError` | `404` |
+| `UploadSessionExpiredError` | `410` |
+| `MimeNotAllowedError` | `415` |
+| `UploadPartsIncompleteError` | `409` (body names `missingParts`) |
+| `UploadPartSizeError`, `UploadPartOutOfRangeError`, `UploadNotSupportedError`, `RangeError` | `400` |
+| anything else | rethrown — your app's exception handler sees it |
+
+`PolicyErrorInfo` tells you which phase failed and hands back the in-flight decision or resolution, so an error handler can report against real data instead of guessing.
+
+---
+
+## Typing
+
+`DirectUploadPolicy<Ctx, C>` has two parameters: `Ctx` is whatever the route adapter passes as context (in AdonisJS, the `HttpContext`), and `C` is your own per-upload payload — the type of `decision.context` / `resolution.context`.
+
+The interface declares **methods, not arrow properties**, on purpose. TypeScript checks method parameters bivariantly, so a concretely-typed `DirectUploadPolicy<HttpContext, MyCtx>` is assignable to the handler's `DirectUploadPolicy<unknown, unknown>` without a cast at the boundary.
+
+<Callout type="warn" title="Authorization is yours, and only yours">
+  Neither the handler nor the policy machinery checks who is calling. Two independent places to put
+  that: `routes.middleware` (rejects unauthenticated requests before any handler code runs) and the
+  policy hooks themselves (per-resource checks that need the request's parameters). Use both — the
+  middleware for "are you logged in", the policy for "may you upload to *this* lesson".
+</Callout>
+
+---
+
+## The lazy thunk
+
+`policy` is a thunk returning a module promise, not a policy value:
+
+```ts
+policy: () => import('#media/lesson_video_policy')
+```
+
+Two consequences worth knowing. The module — and everything it imports, which for a real policy means models and services — is loaded only when the routes first serve a request, so configuring the routes costs nothing at boot. And the provider reads the module's **default export**: a policy **class** is instantiated with no arguments, while a ready policy **object** is used as-is.
+
+```ts
+// both are valid default exports
+export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext, Ctx> { … }
+
+export default {
+  async onInitiate(ctx, input) { … },
+  async resolveComplete(ctx, input) { … },
+  async onComplete(ctx, info) { … },
+} satisfies DirectUploadPolicy<HttpContext, Ctx>
+```
+
+Because the class form takes no constructor arguments, resolve collaborators inside the hooks rather than expecting injection.
+
+---
+
+## Without a policy
+
+Leaving `policy` unset is a perfectly reasonable choice for an internal tool. You then get:
+
+- keys from `keyFor` (`uploads/<token>/<fileName>` by default);
+- `complete` returning the raw `{ key, disk, size }` of the assembled object, with **no media record created** — adopting it into the library is then your own job, typically by calling `media.completeDirectUploadToLibrary` from a route of your own;
+- the built-in error mapping, unmodified.
+
+The moment you want an owner, a domain row, or a response the client can act on, that is the moment for a policy.
+
+---
+
+## Next steps
+
+- [Direct sessions](/docs/media/uploads/direct-sessions) — the session lifecycle the policy plugs into
+- [Upload modes](/docs/media/uploads/upload-modes) — the raw stateless primitives underneath
+- [React client](/docs/media/react) — the browser half, including the typed `complete` body a policy returns

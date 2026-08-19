@@ -1,12 +1,12 @@
 ---
 title: Configuration
-description: Every key on defineConfig — disk, store and the stores map, imageProcessor, collections, the attachment key prefix, and the diagnostics toggle — and how the provider builds the MediaManager at boot.
+description: Every key on defineConfig — disk and the disks map, store and stores, imageProcessor, collections, uploads, delivery, the attachment key prefix and the diagnostics toggle — and how the provider builds the MediaManager at boot.
 icon: SlidersHorizontal
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-All configuration lives in `config/media.ts`, validated by the exported `defineConfig` helper. The shape follows the Agora config idiom: **drivers live in the core package**, you select them by name from a factory map, and each heavy peer (`@adonisjs/lucid`, `sharp`) is imported lazily — only when actually chosen.
+All configuration lives in `config/media.ts`, typed by the exported `defineConfig` helper. (The console has its own file, `config/media_dashboard.ts` — see [Dashboard](/docs/media/dashboard).) The shape follows the Agora config idiom: **drivers live in the core package**, you select them by name from a factory map, and each heavy peer (`@adonisjs/lucid`, `sharp`) is imported lazily — only when actually chosen.
 
 ```ts title="config/media.ts"
 import { defineConfig, stores, processors } from '@adonis-agora/media'
@@ -38,28 +38,35 @@ export default defineConfig({
 
 | Key | Type | Default | What it controls |
 |-----|------|---------|------------------|
-| `disk` | `string` | Drive's default disk | Name of the `@adonisjs/drive` disk media is written to. |
+| `disk` | `string` | Drive's default disk | Name of the disk media is written to — resolved from `disks` first, then from `@adonisjs/drive`. |
+| `disks` | `Record<string, DiskFactory>` | — | Disks bundled with this package (e.g. `disks.s3()`). A name here **wins** over a Drive disk of the same name. See [S3 disk](/docs/media/storage/s3-disk). |
 | `store` | `string` | `memory` | Which entry of `stores` to use for metadata persistence. |
 | `stores` | `Record<string, StoreFactory>` | — | The named store factories (`stores.memory()`, `stores.lucid()`). |
 | `imageProcessor` | `ImageProcessor \| ImageProcessorFactory` | — | The conversion engine. Required only if any collection has conversions. |
 | `collections` | `MediaCollectionConfig[]` | `[]` | Collection definitions — see [Collections & Conversions](/docs/media/collections-and-conversions). |
+| `uploads` | `MediaUploadsConfig` | — | Large-file uploads: default mode, part size, presign TTL, and the opt-in routes for [direct](/docs/media/uploads/upload-modes), [direct sessions](/docs/media/uploads/direct-sessions) and [TUS](/docs/media/uploads/resumable-tus). |
+| `delivery` | `MediaDeliveryConfig` | `{ mode: 'auto' }` | How stored media is served back — `auto` / `public` / `signed` / `proxy`, plus the signed-URL TTL. See [Delivery](/docs/media/delivery). |
 | `attachmentKeyPrefix` | `string` | `attachments` | Key prefix for column attachments created via the `AttachmentManager`. |
 | `emitDiagnostics` | `boolean` | `true` | Whether to emit `agora:media:*` diagnostics events. |
 
-Every key is optional. An empty `defineConfig({})` gives you the in-memory store on Drive's default disk, no conversions, and diagnostics on.
+Every key is optional. An empty `defineConfig({})` gives you the in-memory store on Drive's default disk, no conversions, no upload routes, `auto` delivery, and diagnostics on.
+
+The three sub-configs are large enough to have pages of their own: **`disks`** on [S3 disk](/docs/media/storage/s3-disk), **`uploads`** across the three upload pages, and **`delivery`** on [Delivery](/docs/media/delivery). What follows covers the rest.
 
 ---
 
 ## `disk` — where files live
 
-`disk` is the **name** of a disk in your `config/drive.ts`. Omit it and the provider falls back to Drive's configured default disk (the `default` key of `config/drive.ts`). Media never reimplements storage — it resolves the disk from Drive and writes through it.
+`disk` is a disk **name**, resolved in two steps: first against this config's own `disks` map (the drivers bundled with this package, e.g. `disks.s3()`), and only then against your `config/drive.ts`. A name present in both resolves to the local one. Omit `disk` entirely and the provider falls back to Drive's configured default disk — the `default` key of `config/drive.ts`, resolved through Drive's config provider.
 
-The disk is chosen with a clear precedence each time a file is written:
+So there are two independent precedences. **Which disk** a write targets:
 
 1. a per-call `disk` passed to `attach()` (or `createFromFile()`),
 2. else the collection's `disk`,
 3. else this top-level `disk`,
 4. else Drive's default disk.
+
+And **where that name resolves from**: the `disks` map first, `@adonisjs/drive` second. An app whose disks all come from `disks` never touches Drive at all — the Drive manager is read lazily, at the first resolution that actually needs it.
 
 ```ts
 defineConfig({
@@ -159,7 +166,7 @@ This whole surface is documented on [Collections & Conversions](/docs/media/coll
 At boot, `MediaProvider` binds a singleton `MediaManager` assembled from this config:
 
 1. It resolves disks from the booted Drive manager via a lazy `import('@adonisjs/drive/services/main')` — no hard import of Drive.
-2. It builds the selected store from the `stores` map (defaulting to the in-memory store if none is selected).
+2. It builds the selected store from the `stores` map. Naming a `store` with no matching factory **throws `StoreNotConfiguredError`** — it does not quietly fall back to the in-memory store, because a typo silently swapping durable persistence for a process-local `Map` is the kind of bug you discover after losing data. Only the zero-config path (no `store` named at all) resolves to in-memory. The same no-silent-fallback rule holds for the upload-session stores.
 3. It resolves the `imageProcessor` — calling the factory thunk if you passed one, or using the instance directly.
 4. It computes the default disk: your `disk`, else Drive's `default`.
 
@@ -178,6 +185,12 @@ The library emits lifecycle events on the `agora:media:*` channel through the `@
 | `conversion` | `agora:media:conversion` | `id`, `conversion`, `path` |
 | `attachment.create` | `agora:media:attachment.create` | `disk`, `path`, `size`, `mimeType`, `name`, `variants` |
 | `attachment.delete` | `agora:media:attachment.delete` | `disk`, `path`, `variants` |
+| `upload.start` | `agora:media:upload.start` | `id`, `disk`, `key`, `mode` (`proxy` \| `direct`), `size?`, `contentType?` |
+| `upload.progress` | `agora:media:upload.progress` | `id`, `offset` (bytes safely stored), `parts`, `size?` |
+| `upload.complete` | `agora:media:upload.complete` | `id`, `disk`, `key` |
+| `upload.abort` | `agora:media:upload.abort` | `id`, `disk`, `key` |
+
+The four `upload.*` events cover every upload path — proxy, direct, direct sessions and TUS alike — so one subscriber sees them all. `offset` on `upload.progress` is the resume offset: bytes that are genuinely durable, not bytes merely received.
 
 When `@adonis-agora/diagnostics` isn't installed, the slot is empty and emitting is an inert no-op. When it *is* installed, the [Telescope](/docs/telescope) generic watcher captures every media event automatically. Emitting never throws back into a media operation, and you can turn it off entirely with `emitDiagnostics: false`.
 
@@ -187,4 +200,6 @@ When `@adonis-agora/diagnostics` isn't installed, the slot is empty and emitting
 
 - [Collections & Conversions](/docs/media/collections-and-conversions) — the `collections` surface in depth
 - [Stores & Processors](/docs/media/stores-and-processors) — the Lucid store, the sharp processor, and custom drivers
+- [Upload modes](/docs/media/uploads/upload-modes) — the `uploads` key in depth
+- [Delivery](/docs/media/delivery) — the `delivery` key in depth
 - [Attachments](/docs/media/attachments) — `attachmentKeyPrefix` in context

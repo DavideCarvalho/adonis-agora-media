@@ -24,21 +24,56 @@ interface Disk {
   getUrl(key: string): Promise<string>
   getSignedUrl(key: string, options?: SignedUrlOptions): Promise<string>
   getMetaData(key: string): Promise<DiskMetaData>
+
+  // optional — present on every real Drive disk, absent on a minimal hand-rolled one
+  putStream?(key: string, contents: Readable, options?: DiskWriteOptions): Promise<void>
+  getVisibility?(key: string): Promise<'public' | 'private'>
 }
 
 type DiskResolver = (name?: string) => Disk
 ```
 
-A couple of deliberate choices:
+Ten methods, of which **eight are required**. The two optional ones are what a real Drive disk adds on top of the minimum, and each unlocks a specific behaviour rather than being decorative:
+
+- **`putStream`** writes a stream straight to the backend without buffering it in memory. The library uses it for a large upload that needs no conversions and whose size is known up front; when the method is absent it falls back to `put`, buffering the whole payload. On S3 the size matters: a stream has no knowable length and the API needs `ContentLength` up front, which is why `DiskWriteOptions.contentLength` exists.
+- **`getVisibility`** answers whether an object is readable without credentials. This is the method `delivery.mode: 'auto'` asks: public ⇒ hand out the stable public URL, otherwise ⇒ sign one. A disk that cannot answer is treated as private, so `auto` degrades to `signed` rather than leaking a URL that would 403. See [Delivery](/docs/media/delivery).
+
+A couple more deliberate choices:
 
 - Binary reads use **`getBytes`** (a `Uint8Array`) rather than Drive's `get` (which returns a UTF-8 string) — images aren't text.
 - Writes accept a `Uint8Array`, so the library buffers any incoming `Readable` first (via `toBytes`).
 - `getMetaData().contentLength` is read back after a write when you don't pass an explicit `size`, so records always carry a byte size.
 
+Two further contracts sit **off** this interface on purpose, detected structurally at runtime rather than being required of every disk: `MultipartUploadDisk` (native server-side multipart, behind `isMultipartCapable`) and `ExtendedDisk` (`copy`/`move`/`deleteMany`/`list`/`size`/`stat` plus a `capabilities` descriptor, behind `isExtendedDisk`). The bundled [`disks.s3()`](/docs/media/storage/s3-disk) driver implements both; the in-memory test disk and a plain Drive disk implement neither, and the library degrades instead of failing.
+
 The `StorageManager` is the thin façade the library talks to — it wraps a `DiskResolver` plus a default disk name, and the media and attachment layers only ever go through it. This is why Drive stays a peer dependency and why the in-memory test disk is a true drop-in. You can reach the raw disk through `media.disk(name?)` as an escape hatch.
 
+### `createDriveBackedResolver`
+
+The resolver the provider actually runs on is exported, so you can build a `MediaLibrary` outside AdonisJS — a script, a worker, a test against real Drive disks:
+
+```ts
+import { createDriveBackedResolver, StorageManager } from '@adonis-agora/media'
+import * as driveService from '@adonisjs/drive/services/main'
+
+const resolve = createDriveBackedResolver({
+  driveService,                          // the module NAMESPACE, not its default export
+  configuredDisks: { s3: myS3Disk },     // built from `config.disks` — these win by name
+  defaultDisk: 's3',
+})
+
+const storage = new StorageManager({ default: 's3', resolve })
+```
+
+Two behaviours are load-bearing:
+
+- **Locally-configured disks win.** A name found in `configuredDisks` never reaches Drive at all, which is what makes `disks` take precedence over a Drive disk of the same name — and what lets an app whose disks all come from `disks` never touch Drive.
+- **Drive is read lazily**, at the first resolution that actually needs it, then memoized. That is what makes the resolver safe to construct during `register()`, long before Drive has booted. Resolving a Drive disk before Drive is ready throws `DriveNotReadyError` rather than a `Cannot read properties of undefined` deep inside a write.
+
+Pass the **module namespace** (`import * as driveService`), not a captured `default`. Drive's service module assigns its manager inside an `app.booted()` callback, so at import time the export is still `undefined`; ESM live bindings mean the namespace's property reflects the later assignment, while a value destructured out of it is frozen at `undefined` forever.
+
 <Callout type="info">
-  Because the contract is structural, you aren't limited to Drive. Anything that implements these eight methods works — though Drive is the intended (and zero-effort) backend, since every AdonisJS app already has it.
+  Because the contract is structural, you aren't limited to Drive. Anything that implements the eight required methods works — though Drive is the intended (and zero-effort) backend, since every AdonisJS app already has it.
 </Callout>
 
 ---
@@ -52,12 +87,17 @@ interface MediaStore {
   save(record: MediaRecord): Promise<MediaRecord>
   find(id: string): Promise<MediaRecord | null>
   listByOwner(ownerType: string, ownerId: string, collection?: string): Promise<MediaRecord[]>
+  list(options?: MediaListOptions): Promise<MediaListPage>
   delete(id: string): Promise<void>
   nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number>
 }
 ```
 
-(`listByOwner` returns records ordered by `order` ascending; `nextOrder` returns the next 0-based slot for appending.)
+`listByOwner` returns records ordered by `order` ascending, and `nextOrder` returns the next 0-based slot for appending — those two are the library's own hot paths.
+
+`list` is the **cross-owner** read, and it is not optional. It takes a `MediaListOptions` (`collection` / `ownerType` / `ownerId` / `prefix` filters, all `AND`ed, plus `cursor` and `limit`) and returns a `MediaListPage` — `{ items, nextCursor }`, where `nextCursor` is `null` on the last page. The ordering is a stable keyset: `createdAt` descending, then `id` descending, so paging stays consistent while rows are being written underneath it. Three helpers are exported for implementers: `encodeMediaCursor` / `decodeMediaCursor` (the cursor is base64url JSON of `{ createdAt, id }`) and `clampMediaListLimit` (defaults to `DEFAULT_MEDIA_LIST_LIMIT`, caps at `MAX_MEDIA_LIST_LIMIT`, so a caller cannot request an unbounded scan).
+
+Nothing inside `attach`/`url`/`delete` calls `list` — it exists for management views. It is what the [dashboard](/docs/media/dashboard/collections) browses stored records with, which is why a store that omits it leaves the console's collection views empty.
 
 ### In-memory store
 
@@ -122,13 +162,13 @@ The two indexes back the library's hot paths — `listByOwner` (owner, optionall
 
 ### Writing your own store
 
-A store is a POJO that implements the five methods. Receive whatever connection it needs in the constructor, and wire it via a `StoreFactory` thunk in config (so any peer it needs is imported lazily):
+A store is a POJO that implements the six methods. Receive whatever connection it needs in the constructor, and wire it via a `StoreFactory` thunk in config (so any peer it needs is imported lazily):
 
 ```ts
 import type { MediaStore, StoreFactory } from '@adonis-agora/media'
 
 class RedisMediaStore implements MediaStore {
-  // save / find / listByOwner / delete / nextOrder ...
+  // save / find / listByOwner / list / delete / nextOrder ...
 }
 
 // config/media.ts

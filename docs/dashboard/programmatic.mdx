@@ -1,0 +1,192 @@
+---
+title: Programmatic API
+description: DashboardService, DashboardError, MediaManagerLike and the JSON contract types — the console's logic as a plain, framework-free object you can call from your own routes, plus the response shapes shared by server and SPA.
+icon: Code
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The console's provider is a thin HTTP shell. Every read and every action it performs lives in `DashboardService` — a plain class, no AdonisJS import anywhere in it, expressed over a **structural** view of the media manager. That is what makes the console's logic unit-testable without booting an app, and it is also what lets you reuse it.
+
+Reach for this when you want the console's behaviour under your own routes: a bespoke admin screen, an internal API that lists buckets, a CLI that sweeps a prefix. You get the real implementation — the same paging, the same cross-disk transfer engine, the same guards — instead of a re-derivation of it.
+
+```ts
+import { DashboardService, DashboardError } from '@adonis-agora/media/dashboard'
+import type { MediaManagerLike, DashboardServiceOptions } from '@adonis-agora/media/dashboard'
+```
+
+---
+
+## Constructing one
+
+```ts title="start/routes.ts"
+import { MediaManager } from '@adonis-agora/media'
+import { DashboardService } from '@adonis-agora/media/dashboard'
+
+const media = await app.container.make(MediaManager)
+
+const dashboard = new DashboardService(
+  media,                                    // any MediaManagerLike
+  { diskNames: ['s3', 'backups'], actions: true },
+  [documentInsightProvider],                // optional — ObjectInsightProvider[]
+)
+```
+
+Three arguments:
+
+1. **the manager** — typed `MediaManagerLike`, not `MediaManager`. The real manager satisfies it; so does a hand-rolled fake (see below).
+2. **`DashboardServiceOptions`** — `{ diskNames, actions }`. The first disk name (or the manager's default) is the default disk; `actions: false` makes every mutating method throw `403`.
+3. **`insightProviders`** — the [object-insight providers](/docs/media/dashboard#object-insights), defaulting to `[]`.
+
+### `MediaManagerLike`
+
+The exact slice of `MediaManager` the console depends on — deliberately small, so faking it in a test is a few lines:
+
+```ts
+interface MediaManagerLike {
+  readonly storage: { readonly defaultDisk: string; disk(name?: string): Disk }
+  readonly hasResumable: boolean
+  readonly resumable: {
+    list(filter?: { disk?: string; keyPrefix?: string }): Promise<UploadSession[]>
+    abort(id: string): Promise<void>
+    listParts(id: string): Promise<MultipartPart[]>
+  }
+  readonly store: {
+    list(options?: MediaListOptions): Promise<MediaListPage>
+    find(id: string): Promise<MediaRecord | null>
+    delete(id: string): Promise<void>
+  }
+}
+```
+
+Note what is *not* there: nothing about attaching, converting or transforming. The console reads and moves objects; it never creates media.
+
+---
+
+## The methods
+
+### Reads
+
+| Method | Returns | Notes |
+|---|---|---|
+| `topology()` | `Topology` | `{ disks, hasUploads, actions }` — the capability probe the SPA enables affordances from. Synchronous. |
+| `disks()` | `DiskListResponse` | Each exposed disk with its `DiskCapabilities`. A non-extended disk reports `list: false` and is not browsable. Synchronous. |
+| `objects(disk, { prefix?, cursor?, limit? })` | `ObjectListResponse` | One page of delimiter listing: `folders` (common prefixes) + `files`, plus a `cursor` when truncated. |
+| `object(disk, key)` | `ObjectDetailResponse` | Metadata plus a signed URL, 300s TTL. |
+| `objectStream(disk, key)` | `{ stream, contentType, size }` | The raw bytes, for streaming through your own route. |
+| `objectInsights(disk, key)` | `ObjectInsightsResponse` | Runs every registered provider concurrently, sanitizes the links, skips (and logs) any that throw. `{ insights: [] }` when none are registered. |
+| `uploads({ disk?, prefix? })` | `UploadListResponse` | In-progress resumable sessions. `{ uploads: [] }` — not an error — when no session store is configured. |
+| `uploadDetail(id)` | `UploadDetailResponse` | One session plus its recorded parts. `404` for an unknown id, and `404` when no session store exists. |
+| `collections({ collection?, ownerType?, ownerId?, prefix?, cursor?, limit? })` | `CollectionListResponse` | Delegates straight to `MediaStore.list` — no bespoke query. |
+| `collectionsSummary()` | `CollectionsSummaryResponse` | Per-collection count + total bytes. |
+| `mediaRecord(id)` | `MediaDetailResponse` | The record plus a signed URL per conversion. |
+
+<Callout type="info" title="Why the summary is bounded">
+  `MediaStore` has no aggregate query — a store SPI that demanded `GROUP BY` would rule out the
+  in-memory driver and any non-SQL backend. So `collectionsSummary` walks `list()` in pages of 200
+  and sums client-side, stopping at 5,000 records. Past that the rollup is **partial rather than
+  unbounded**: a very large library degrades to an approximate-but-instant summary instead of a
+  full-table scan behind a spinner.
+</Callout>
+
+### Actions
+
+Every method below calls `assertActions()` first and throws `DashboardError(403)` when the service was built with `actions: false`.
+
+| Method | Does |
+|---|---|
+| `putObject(disk, key, body, contentType?)` | Writes an object from an async byte iterable. Buffered, so capped at **100 MB** (`413` past it) — larger files belong on the TUS path. |
+| `copy({ disk, from, to, toDisk? })` | Same-disk native server-side copy, or cross-disk streamed get→put (capped at 100 MB per object). |
+| `move({ disk, from, to, toDisk? })` | The same transfer, then deletes the source. |
+| `remove({ disk, keys })` | Batched `deleteMany`. An empty array is a no-op. |
+| `createFolder({ disk, prefix })` | Writes a zero-byte marker at `<prefix>/`. |
+| `deleteFolder({ disk, prefix })` | Recursive sweep + delete, paginated at 1,000 keys per page. |
+| `copyFolder` / `moveFolder({ disk, from, to, toDisk? })` | Recursive relocation, preserving each key's relative path. |
+| `abortUpload(id)` | Discards a resumable session (native multipart + buffered parts) and drops its record. |
+| `deleteMediaRecord(id)` | Deletes the `MediaRecord` row. **Does not touch the underlying disk object** — that stays where it is. |
+
+### `DashboardError`
+
+One error type, carrying the HTTP status the provider surfaces verbatim:
+
+```ts
+class DashboardError extends Error {
+  constructor(message: string, readonly status: number)
+}
+```
+
+`400` for a missing/invalid argument, `403` for an actions-gated call on a read-only service, `404` for an unknown disk / record / session, `413` for an oversized upload. Anything else that escapes is a genuine bug and reaches your handler as-is — the provider maps a non-`DashboardError` to `500`.
+
+---
+
+## Using it in your own route
+
+```ts title="start/routes.ts"
+router
+  .get('/admin/storage/objects', async ({ request, response }) => {
+    try {
+      return await dashboard.objects(request.input('disk'), {
+        prefix: request.input('prefix', ''),
+        cursor: request.input('cursor'),
+        limit: 100,
+      })
+    } catch (error) {
+      if (error instanceof DashboardError) {
+        return response.status(error.status).json({ error: error.message })
+      }
+      throw error
+    }
+  })
+  .use([middleware.auth(), middleware.admin()])
+```
+
+Note the shape of that error handling — it is exactly what the provider does internally, and it is the whole contract: catch `DashboardError`, use its `status`, rethrow everything else.
+
+---
+
+## The JSON contract types
+
+Every response shape the API returns is exported as a type, framework-free (no DOM, no Node), so the same declarations type both a server handler and a browser client. They live in two places with identical content:
+
+```ts
+// from the core package — alongside DashboardService
+import type { DiskInfo, ObjectListResponse, MediaEntry } from '@adonis-agora/media/dashboard'
+
+// from the standalone dashboard package — for a browser bundle that shouldn't pull in the server
+import type { DiskInfo, ObjectListResponse, MediaEntry } from '@adonis-agora/media-dashboard/types'
+```
+
+The second subpath is the one to import from a frontend: it carries only these declarations, with no server code behind it.
+
+| Type | Shape |
+|---|---|
+| `Topology` | `{ disks, hasUploads, actions }` |
+| `DiskCapabilities` | `{ presign, multipart, publicUrls, list }` |
+| `DiskInfo` / `DiskListResponse` | `{ name, default, capabilities }` / `{ disks }` |
+| `ObjectFolder` / `ObjectEntry` | `{ name, prefix }` / `{ key, name, sizeBytes, lastModified }` |
+| `ObjectListResponse` | `{ folders, files, cursor? }` |
+| `ObjectDetailResponse` | `{ key, size, contentType?, lastModified?, url }` |
+| `MediaEntry` | A `MediaRecord` projected for the console — ids, owner, collection, name/fileName, mimeType, `sizeBytes`, disk, path, `conversions: string[]` (names only), ISO timestamps. |
+| `CollectionListResponse` | `{ items: MediaEntry[], nextCursor: string \| null }` |
+| `CollectionFilter` | `{ collection?, ownerType?, ownerId?, prefix? }` — every field optional, `AND`ed server-side. |
+| `CollectionSummary` / `CollectionsSummaryResponse` | `{ key, count, sumSize }` / `{ collections }` |
+| `MediaVariant` / `MediaDetailResponse` | `{ name, url }` / `{ record, variants }` |
+| `UploadInfo` / `UploadListResponse` | `{ id, disk, key, offset, size, percent, parts, multipart, createdAt? }` / `{ uploads }` |
+| `UploadPart` / `UploadDetailResponse` | `{ partNumber, etag }` / `{ upload, parts }` |
+| `ObjectInsight` | `{ title, facts?, links?, note? }` — with `ObjectInsightFact` (`{ label, value }`) and `ObjectInsightLink` (`{ label, href }`). |
+| `ObjectInsightsResponse` | `{ insights }` |
+| `CopyMoveBody` | `{ disk, from, to, toDisk? }` — `toDisk` defaults to the source disk. |
+| `DeleteBody` | `{ disk, keys }` |
+| `FolderBody` | `{ disk, prefix }` |
+| `ConsoleSessionUserInfo` / `MeResponse` | `{ id, name?, roles }` / `{ authRequired: false } \| { user }` |
+| `LoginBody` | `{ username, password }` |
+
+Two projections are worth reading carefully. `MediaEntry.conversions` is a **list of names**, not the conversion objects — the console shows which derivatives exist, and `mediaRecord(id)` is where you get their URLs. And every timestamp crosses as an **ISO-8601 string**, because these shapes travel over JSON; nothing here is a `Date`.
+
+---
+
+## Next steps
+
+- [Dashboard](/docs/media/dashboard) — the console's config, routes and views
+- [Console authentication](/docs/media/dashboard/authentication) — the session gate in front of all of this
+- [Collections view](/docs/media/dashboard/collections) — the `MediaStore.list` contract behind `collections()`

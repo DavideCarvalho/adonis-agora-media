@@ -107,7 +107,7 @@ await media.attachments.signedUrl(att, '1h', { variant: 'thumb' })  // signed va
 
 // force a download with a chosen filename (a response header baked into the URL)
 await media.attachments.signedUrl(att, '1h', {
-  contentDisposition: `attachment; filename="${att.fileName}"`,
+  contentDisposition: `attachment; filename="${att.name}"`,
 })
 ```
 

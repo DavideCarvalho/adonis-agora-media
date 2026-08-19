@@ -7,6 +7,7 @@
     "collections-and-conversions",
     "transformers",
     "attachments",
+    "single-file",
     "uploads",
     "storage",
     "delivery",
@@ -14,10 +15,11 @@
     "dashboard",
     "stores-and-processors",
     "integrations",
+    "errors",
     "testing",
     "roadmap"
   ],
   "root": true,
-  "description": "A media library for AdonisJS — collections, image conversions and column attachments on top of @adonisjs/drive.",
+  "description": "A media library for AdonisJS \u2014 collections, image conversions and column attachments on top of @adonisjs/drive.",
   "icon": "Image"
 }

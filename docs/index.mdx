@@ -8,11 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 import { Cards, Card } from 'fumadocs-ui/components/card';
 
-**`@adonis-agora/media`** gives AdonisJS the [spatie/laravel-media-library](https://spatie.be/docs/laravel-medialibrary) feel: attach files to your entities, organize them into named **collections** (with a MIME whitelist, single-file replacement, and ordering), and generate image **conversions** — eagerly on upload or lazily on first access. Storage itself is delegated entirely to [`@adonisjs/drive`](https://github.com/adonisjs/drive), so you reuse your existing `local` / `s3` / `gcs` disks. This package never reimplements disk drivers.
-
-<Callout type="info" title="Alpha">
-  This package is published as an alpha (`0.1.x`). The API documented here reflects the current alpha. Pin a version and expect refinements before `1.0`.
-</Callout>
+**`@adonis-agora/media`** gives AdonisJS the [spatie/laravel-media-library](https://spatie.be/docs/laravel-medialibrary) feel: attach files to your entities, organize them into named **collections** (with a MIME whitelist, single-file replacement, and ordering), and generate image **conversions** — eagerly on upload or lazily on first access. Storage itself is delegated entirely to [`@adonisjs/drive`](https://github.com/adonisjs/drive) — either major, `^3.0.0` or `^4.0.0` — so you reuse your existing `local` / `s3` / `gcs` disks. This package never reimplements disk drivers.
 
 ## The problem it solves
 
@@ -47,7 +43,7 @@ npm i @adonis-agora/media
 node ace configure @adonis-agora/media
 ```
 
-`configure` registers the provider, publishes `config/media.ts`, and publishes the `media` table migration.
+`configure` registers both providers (the library and the embedded management console), publishes `config/media.ts` and `config/media_dashboard.ts`, and publishes two Lucid migrations — the `media` table and the upload-session table. Delete the migrations you don't need; the in-memory stores need none.
 
 </Step>
 <Step>
@@ -112,13 +108,17 @@ For the full walkthrough — including the optional `for(owner)` binding and col
   <Card title="Configuration" href="/docs/media/configuration" description="Every key on defineConfig — disk, store/stores, imageProcessor, collections, the diagnostics toggle." />
   <Card title="Collections & Conversions" href="/docs/media/collections-and-conversions" description="MIME whitelist, single-file replace, ordering, and image presets — eager vs lazy generation." />
   <Card title="Attachments" href="/docs/media/attachments" description="Column attachments (adonis-attachment style): a file (and variants) stored directly on a model column." />
+  <Card title="Single-file store" href="/docs/media/single-file" description="The avatar-style seam — replace this owner's one file, get a URL, with no hard dependency on media." />
   <Card title="Upload modes" href="/docs/media/uploads/upload-modes" description="Large-file uploads — proxy (through your app) and direct-S3 multipart (straight to the bucket)." />
   <Card title="Resumable / TUS" href="/docs/media/uploads/resumable-tus" description="Chunked, resumable uploads over the tus protocol, with a pluggable session store." />
+  <Card title="Direct upload policy" href="/docs/media/uploads/direct-upload-policy" description="The app-injected seam deciding an upload's key, what a completed upload becomes, and how failures read as HTTP." />
   <Card title="S3 disk" href="/docs/media/storage/s3-disk" description="The bundled disks.s3() driver — extended operations, native multipart, presigned URLs." />
   <Card title="React client" href="/docs/media/react" description="@adonis-agora/media-react — useMediaUpload, MediaUploader, and a framework-free upload client." />
   <Card title="Dashboard" href="/docs/media/dashboard" description="Embedded management console — browse buckets, watch uploads, copy/move/delete objects. No separate install." />
+  <Card title="Console authentication" href="/docs/media/dashboard/authentication" description="The console's built-in session-cookie login — mint from your app's auth, or a login screen of its own." />
   <Card title="Stores & Processors" href="/docs/media/stores-and-processors" description="The Lucid store and its migration, the sharp processor, the Disk contract, and writing your own driver." />
   <Card title="Telescope" href="/docs/media/integrations/telescope" description="mediaTelescopeExtension — a Media overview dashboard built from the agora:media:* events." />
+  <Card title="Errors" href="/docs/media/errors" description="Every exported error class, its stable code, and the properties it carries — branch on a code, never a message." />
   <Card title="Testing" href="/docs/media/testing" description="Drive the library with in-memory doubles — no disk, no database, no sharp." />
-  <Card title="Roadmap" href="/docs/media/roadmap" description="What has shipped since the initial alpha, and what is still intentionally deferred." />
+  <Card title="Roadmap" href="/docs/media/roadmap" description="What the library covers today, and what is still intentionally deferred." />
 </Cards>

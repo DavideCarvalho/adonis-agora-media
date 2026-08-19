@@ -1,0 +1,210 @@
+---
+title: Console Authentication
+description: The built-in session-cookie login for the media console — Mode A mints a session from your app's own auth, Mode B accepts credentials at a login screen. Plus the exported signing helpers and how the guard slides a live session forward.
+icon: KeyRound
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+The console is served at a literal path (`/media/dashboard` by default), which means a plain browser navigation to it carries none of your app's identity. You have two ways to close that gap.
+
+The first is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
+
+The second is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first option covers only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
+
+<Callout type="info" title="They compose">
+  `auth` and `middleware` are independent gates on the same routes. Configure both and a request
+  must pass both — your middleware first, the console's session guard second.
+</Callout>
+
+---
+
+## The two modes
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  auth: {
+    secret: env.get('MEDIA_CONSOLE_SECRET'), // required
+    ttl: '8h',                               // default '8h'
+    session: async (request) => { … },       // Mode A
+    login: async (username, password) => { … }, // Mode B
+    revalidate: async (user) => { … },        // optional
+  },
+})
+```
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `secret` | `string` | — | **Required.** HMAC-SHA256 signing key. Missing or empty ⇒ boot error. |
+| `ttl` | `string` | `'8h'` | Cookie lifetime as `<number><s\|m\|h\|d>`. An unparseable value falls back to 8h. |
+| `session` | `(request) => user \| null` | — | **Mode A.** Validate your app's own auth on the raw request. |
+| `login` | `(username, password) => user \| null` | — | **Mode B.** Validate credentials from the built-in login screen. |
+| `revalidate` | `(user) => boolean` | — | Re-check a *live* session when the cookie slides forward. Not a mode — it cannot mint. |
+
+Both hooks return a `ConsoleSessionUser` (`{ id, name?, roles? }`) or `null` to deny. At least one of `session` / `login` must be present; configuring `auth` with neither is a **boot error**, deliberately — a gate nothing can mint a session for would lock the console permanently, and finding that out at boot beats finding it out in production.
+
+<Tabs items={['Mode A — mint from your app', 'Mode B — login screen']}>
+<Tab value="Mode A — mint from your app">
+
+Your app is already authenticated. An XHR from inside it — which *does* carry that identity — posts to `POST <apiBasePath>/session`, your hook decides, and the console answers with its own cookie. The navigation that follows rides it.
+
+```ts title="config/media_dashboard.ts"
+auth: {
+  secret: env.get('MEDIA_CONSOLE_SECRET'),
+  async session(request) {
+    // `request` is the raw Node request — read whatever your app authenticates with
+    const token = (request as IncomingMessage).headers.authorization?.replace('Bearer ', '')
+    if (!token) return null
+
+    const user = await verifyAccessToken(token)
+    if (!user || !user.roles.includes('admin')) return null
+
+    return { id: String(user.id), name: user.name, roles: user.roles }
+  },
+}
+```
+
+The browser half is a one-liner from [`@adonis-agora/media-react`](/docs/media/react/console-launcher):
+
+```tsx
+import { OpenMediaDashboardButton } from '@adonis-agora/media-react'
+
+<OpenMediaDashboardButton headers={() => ({ Authorization: `Bearer ${token()}` })} />
+```
+
+This is the mode to reach for when your app already knows who the user is. The console never learns a password, never grows a second user table, and the decision about who may open it stays one function in your codebase.
+
+</Tab>
+<Tab value="Mode B — login screen">
+
+No app-side identity to borrow — the console asks for credentials itself. The SPA renders its login screen, posts to `POST <apiBasePath>/login`, and your hook decides.
+
+```ts title="config/media_dashboard.ts"
+auth: {
+  secret: env.get('MEDIA_CONSOLE_SECRET'),
+  ttl: '2h',
+  async login(username, password) {
+    const admin = await Admin.findBy('email', username)
+    if (!admin) return null
+    if (!(await hash.verify(admin.password, password))) return null
+
+    return { id: String(admin.id), name: admin.fullName, roles: ['admin'] }
+  },
+}
+```
+
+Refusals are uniform: unknown user and wrong password both return `401 { error: 'invalid credentials' }`, with no way to tell them apart — no user enumeration through the console.
+
+</Tab>
+</Tabs>
+
+Configure both and the login screen offers both: the SPA learns which modes exist from the `401` body of `GET /me` (`{ auth: { modes: ['session', 'login'] } }`) and renders accordingly.
+
+---
+
+## How the session actually works
+
+The cookie is **stateless**: `base64url(payload).base64url(hmac)`, signed with HMAC-SHA256 over `node:crypto` — no JWT dependency, no server-side session table. The payload is a `ConsoleSession`:
+
+```ts
+interface ConsoleSession {
+  sub: string      // the user id
+  name?: string
+  roles: string[]  // free-form; the console does not interpret them
+  iat: number      // issued-at, epoch ms
+  exp: number      // expiry, epoch ms
+}
+```
+
+It is written as `media_dashboard_session`, `HttpOnly`, `SameSite=Lax`, `Secure` over https, with `Path=/`. The broad path is deliberate: `basePath` and `apiBasePath` are independently configurable and can live at unrelated paths, and a cookie scoped to one would be withheld on a full-page navigation to the other. The cookie is HttpOnly, signed and short-lived, so the wider scope is a reasonable trade.
+
+Verification rejects anything tampered, malformed or expired, and **never throws** — every failure path returns `null`. The signature comparison is constant-time, and a wrong-length signature is caught before the comparison rather than throwing out of it. Expiry allows a 30-second grace so a marginally-skewed clock doesn't bounce a valid cookie.
+
+### Sliding renewal
+
+Past the halfway point of its TTL, the guard re-issues the cookie on the next request, so an admin working continuously is never logged out mid-session. That renewal is also the hook point for `revalidate`:
+
+```ts
+auth: {
+  secret: env.get('MEDIA_CONSOLE_SECRET'),
+  session: (request) => …,
+  async revalidate(user) {
+    const admin = await Admin.find(Number(user.id))
+    return admin !== null && !admin.suspended
+  },
+}
+```
+
+Return `false` and the cookie is cleared and the request `401`s — which is how you revoke access to a stateless session without a revocation list. Note the boundary: revalidation happens **at renewal**, not on every request, so a revoked user keeps access for up to half the TTL. Set a shorter `ttl` if that window matters. A `revalidate` that throws is treated as a denial — fail closed.
+
+### Failure behaviour
+
+- Both host hooks are run defensively: a hook that **throws** is a denial (`null`), never a `500`. Your database being down does not turn into a stack trace on a login screen.
+- With `auth` unset, `GET /me` reports `{ authRequired: false }` and `/login` / `/session` return `404` — there is nothing to mint. The console is then open, and `middleware` is your only gate.
+- `POST /logout` always clears the cookie and returns `204`, even with `auth` unset. Clearing a cookie that isn't there is harmless.
+
+---
+
+## The exported helpers
+
+Everything above is in `@adonis-agora/media/dashboard`, framework-free — no AdonisJS import anywhere in `auth.ts`. Use them to mint or verify a console session outside the provider's own routes:
+
+```ts
+import {
+  resolveConsoleAuth,
+  signSessionCookie,
+  verifySessionCookie,
+} from '@adonis-agora/media/dashboard'
+import type {
+  ConsoleAuthOptions,
+  ConsoleSession,
+  ConsoleSessionUser,
+  ResolvedConsoleAuth,
+} from '@adonis-agora/media/dashboard'
+```
+
+| Export | Signature | Use |
+|---|---|---|
+| `resolveConsoleAuth` | `(options?) => ResolvedConsoleAuth \| null` | Validate + normalize the `auth` option: parses `ttl` to ms, collects the available `modes`, throws on a missing secret or no hook. `null` when unconfigured. |
+| `signSessionCookie` | `(user, { secret, ttlMs, now? }) => string` | Mint a cookie value. `now` is injectable for deterministic tests. |
+| `verifySessionCookie` | `(value, { secret, now? }) => ConsoleSession \| null` | Verify one. Never throws. |
+
+A realistic use: minting a console session from a route of your own, so an operator arrives at the console already signed in from an internal tool.
+
+```ts title="start/routes.ts"
+import { signSessionCookie } from '@adonis-agora/media/dashboard'
+
+router.get('/admin/open-media', async ({ auth, response }) => {
+  const user = auth.getUserOrFail()
+  await bouncer.authorize('openMediaConsole')
+
+  const value = signSessionCookie(
+    { id: String(user.id), name: user.fullName, roles: ['admin'] },
+    { secret: env.get('MEDIA_CONSOLE_SECRET'), ttlMs: 8 * 60 * 60 * 1000 },
+  )
+
+  response.append(
+    'set-cookie',
+    `media_dashboard_session=${encodeURIComponent(value)}; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax; Secure`,
+  )
+  return response.redirect('/media/dashboard')
+}).use(middleware.auth())
+```
+
+<Callout type="warn" title="One secret, one meaning">
+  The secret is the whole gate. Anyone who can compute the HMAC can mint a session for any user id
+  and any roles. Keep it in the environment, keep it out of the config file's literal text, and
+  rotate it by changing the value — every outstanding cookie stops verifying immediately, which is
+  the fastest logout available.
+</Callout>
+
+---
+
+## Next steps
+
+- [Dashboard](/docs/media/dashboard) — the console's config, routes and views
+- [Console launcher](/docs/media/react/console-launcher) — the React side of Mode A, in three tiers
+- [Programmatic API](/docs/media/dashboard/programmatic) — `DashboardService` and the JSON contract types

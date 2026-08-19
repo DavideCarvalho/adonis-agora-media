@@ -7,7 +7,7 @@ icon: RefreshCw
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Steps, Step } from 'fumadocs-ui/components/steps';
 
-Large uploads shouldn't restart from zero when a connection drops. The package now implements the [tus](https://tus.io) `1.0.0` resumable protocol: bytes flow through the backend in chunks, each chunk is written immediately as a part on the target disk (native S3 multipart when available, else buffered part objects), and a **session** persists the offset so a `HEAD` tells the client exactly where to resume.
+Large uploads shouldn't restart from zero when a connection drops. The package implements the [tus](https://tus.io) `1.0.0` resumable protocol: bytes flow through the backend in chunks, each chunk is written immediately as a part on the target disk (native S3 multipart when available, else buffered part objects), and a **session** persists the offset so a `HEAD` tells the client exactly where to resume.
 
 <Callout type="info">
   The engine (`ResumableUploadManager`) and the TUS server (`TusUploadHandler`) are framework-agnostic; the provider mounts thin AdonisJS routes over them. A browser client that speaks this protocol ships in [`@adonis-agora/media-react`](/docs/media/react) (`mode: 'tus'`, the default there).
@@ -214,7 +214,11 @@ than streaming the bytes through the app to fake it. Registering in place is the
 
 ---
 
-`media.resumable.list(filter?)` returns in-progress sessions (optionally filtered by `disk` / `keyPrefix`) for an "uploads in progress" view — the [Dashboard](/docs/media/dashboard) uses it. Sessions emit `agora:media:upload.*` diagnostics events, captured by [Telescope](/docs/media/integrations/telescope).
+`media.resumable.list(filter?)` returns in-progress sessions (optionally filtered by `disk` / `keyPrefix`) for an "uploads in progress" view — the [Dashboard](/docs/media/dashboard) uses it. It returns an empty array, not an error, when the configured store can't enumerate.
+
+`media.resumable.listParts(id)` goes one level deeper: every part recorded for one session, as `{ partNumber, etag }`. On a multipart-capable disk that is the real S3 part manifest — what an operator needs to see *why* a stalled upload is stalled, and what the console's upload drill-in renders. A buffered session (a disk with no native multipart) has no parts to record and comes back empty.
+
+Sessions emit `agora:media:upload.*` diagnostics events, captured by [Telescope](/docs/media/integrations/telescope).
 
 ---
 

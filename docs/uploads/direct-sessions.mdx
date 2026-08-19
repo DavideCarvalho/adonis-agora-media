@@ -73,6 +73,25 @@ export default defineConfig({
 | `routes.disk` | `string` | media default disk | Disk uploads land on (must be multipart-capable). |
 | `routes.maxSize` | `number` | — | Reject initiations whose declared `size` exceeds this. |
 | `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates `initiate`. Omit to accept any type. |
+| `routes.middleware` | `readonly unknown[]` | `[]` | Middleware applied to the whole route group — **the only way to guard these routes**. |
+| `routes.policy` | `() => Promise<{ default: … }>` | — | Lazy thunk loading a [`DirectUploadPolicy`](/docs/media/uploads/direct-upload-policy) that owns key resolution, completion and error mapping. |
+
+`routes.middleware` is passed straight through to the AdonisJS route group, so it takes exactly what
+`router.group().middleware()` takes — `[middleware.auth()]`, a named middleware, your own. It is typed
+`readonly unknown[]` only so this config file never has to import AdonisJS. Leave it empty and the
+routes are **open to the internet**: the handler itself performs no authorization whatsoever.
+
+`routes.policy` is a thunk, not a value, so the policy module (and everything it imports) loads only
+when the routes first serve a request. The provider reads its default export: a policy **class** is
+instantiated with no arguments, a ready policy **object** is used as-is.
+
+```ts title="config/media.ts"
+routes: {
+  enabled: true,
+  middleware: [middleware.auth()],
+  policy: () => import('#media/lesson_video_policy'),
+}
+```
 
 <Callout type="warn" title="Bucket CORS must expose ETag">
   The browser `PUT`s each part to S3 and must read the `ETag` **response header** to confirm it.
@@ -154,6 +173,8 @@ That chains [`attachExisting`](/docs/media/collections-and-conversions) — zero
 
 Abort with `media.direct.abort(id)` — S3 discards the stored parts (and stops charging for them) and the session is dropped. The S3 abort is best-effort: a session whose native upload a bucket lifecycle rule already reaped is still deletable.
 
+`media.direct.list(filter?)` enumerates in-progress direct sessions, optionally filtered by `disk` / `keyPrefix` — the same shape `media.resumable.list()` returns, since both flows share one session store. It is what an "uploads in progress" screen or a sweeper job reads; a store that can't enumerate yields an empty array rather than an error.
+
 <Callout type="info" title="Set an abort lifecycle rule anyway">
   A client that vanishes mid-upload leaves parts accruing storage charges until someone aborts.
   Pair session TTLs with a bucket `AbortIncompleteMultipartUpload` lifecycle rule.
@@ -173,7 +194,14 @@ With `uploads.direct.routes.enabled`, the provider mounts these plain AdonisJS r
 | `POST` | `/:id/complete` | Assemble: `{ parts? }` → `200`, or `409` naming the missing parts. |
 | `DELETE` | `/:id` | Abort. |
 
-The client sends a **`fileName`, never a key**: the handler resolves the key server-side (`keyFor`, default `uploads/<token>/<fileName>`). And like the TUS and delivery handlers, **no authorization is performed** — guard the routes with your own middleware.
+The client sends a **`fileName`, never a key** — the key is always resolved server-side. *Which* server-side rule applies depends on whether a policy is configured, and the two branches differ completely:
+
+- **without a policy**, the handler derives the key from `keyFor` (default `uploads/<token>/<fileName>`) and `complete` returns the raw assembled object without creating any media record;
+- **with a policy**, `keyFor` is never called at all. The key comes from the policy's `onInitiate` decision, `complete` runs through `resolveComplete` → `attachExisting` → `onComplete`, and the response body is whatever `onComplete` returned.
+
+That second branch is where a real app lives — see [Direct upload policy](/docs/media/uploads/direct-upload-policy).
+
+And like the TUS and delivery handlers, **no authorization is performed** by the handler. Guard the routes with `routes.middleware`, and put per-resource checks in the policy hooks.
 
 ---
 
@@ -185,6 +213,7 @@ The same `agora:media:upload.*` events as every other upload path: `upload.start
 
 ## Next steps
 
+- [Direct upload policy](/docs/media/uploads/direct-upload-policy) — deciding the key, the domain object, and the error mapping
 - [Upload modes](/docs/media/uploads/upload-modes) — the raw stateless primitives these sessions wrap
 - [Resumable / TUS](/docs/media/uploads/resumable-tus) — when bytes must flow through the app (any disk, byte-exact resume)
 - [S3 disk](/docs/media/storage/s3-disk) — `publicEndpoint` and the hand-rolled SigV4 presigner

@@ -1,12 +1,12 @@
 ---
 title: Collections View
-description: The cross-owner MediaStore.list — a cursor-paginated, filterable listing of media-library records across every owner (newest first), added for management and console reads. Backs the dashboard's Collections view.
+description: The cross-owner MediaStore.list — a cursor-paginated, filterable listing of media-library records across every owner (newest first), for management and console reads. Backs the dashboard's Collections view.
 icon: FolderTree
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The original `MediaStore` only listed records **for one owner** (`listByOwner`), which is all the library needs day-to-day. Management and console views need the opposite: every record **across all owners**, paginated and filterable, newest first. That's the new `MediaStore.list` — and it's what the [Dashboard](/docs/media/dashboard)'s Collections view is built on.
+`listByOwner` answers the question the library itself asks all day: *what has this entity got?* Management and console views need the opposite question — every record **across all owners**, paginated and filterable, newest first. That is `MediaStore.list`, and it is what the [Dashboard](/docs/media/dashboard)'s Collections view is built on.
 
 <Callout type="info">
   `list` is a **read** API for consoles and admin tooling. It's implemented by both bundled stores (in-memory + Lucid). Your own [custom store](/docs/media/stores-and-processors#writing-your-own-store) must implement it too — it's part of the `MediaStore` interface.
@@ -57,11 +57,14 @@ Ordering is a **stable keyset** — `createdAt` desc, then `id` desc — so pagi
 
 The console's `GET /collections` route projects each `MediaRecord` into a `MediaEntry` (id, owner, collection, name, file name, MIME type, size, disk, path, the names of generated conversions, and timestamps) and returns a `CollectionListResponse` — `{ items, nextCursor }` — driven directly by `media.store.list`. The same filters (`collection` / `ownerType` / `ownerId` / `prefix`) are exposed as query parameters, so you can drill into one collection or one owner from the UI.
 
-This is a read-only view: it shows what the library has recorded, independent of the raw bucket-browsing **Library** view (which lists disk keys). Together they let you see both the storage layer and the media-library metadata over it.
+Two more routes hang off the same view. `GET /collections/summary` returns a per-collection rollup — record count and total bytes — which the UI renders as one-click filter chips; it walks `list()` in pages and sums client-side, bounded so a very large library degrades to a partial summary rather than an unbounded scan. And `GET /media-record?id` drills into a single row, returning the record plus a **signed URL per conversion** (only conversions that actually wrote an artifact get one — a metadata-only probe result has nothing to link to). With `actions: true`, `POST /media-record/delete` removes the row; note that it deletes the *record*, not the object on disk.
+
+The listing itself is read-only: it shows what the library has recorded, independent of the raw bucket-browsing **Library** view (which lists disk keys). Together they let you see both the storage layer and the media-library metadata over it.
 
 ---
 
 ## Next steps
 
 - [Dashboard](/docs/media/dashboard) — the console that surfaces this view
+- [Programmatic API](/docs/media/dashboard/programmatic) — `DashboardService.collections` / `collectionsSummary` / `mediaRecord`
 - [Stores & Processors](/docs/media/stores-and-processors#the-mediastore-persistence) — the `MediaStore` interface `list` belongs to

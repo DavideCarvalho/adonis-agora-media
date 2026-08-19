@@ -17,6 +17,11 @@
       "matchDepTypes": ["peerDependencies"],
       "rangeStrategy": "widen",
       "automerge": false
+    },
+    {
+      "description": "Never touch engines. The global rangeStrategy:pin above otherwise rewrites engines.node from a range (\">=20.6.0\") to an exact version (\"v22.23.2\"), which makes every consumer on any other Node emit an engine warning on install.",
+      "matchDepTypes": ["engines"],
+      "enabled": false
     }
   ],
   "lockFileMaintenance": {

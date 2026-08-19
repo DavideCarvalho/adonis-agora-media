@@ -217,6 +217,47 @@ export class ExtractAudioTransformer implements Transformer {
 }
 ```
 
+### The three types
+
+`Transformer`, `TransformerContext`, `TransformerWriteOptions` and `TransformResult` are all exported from the barrel. In full:
+
+```ts
+interface Transformer {
+  readonly name: string          // the conversion name this produces — unique within a collection
+  readonly eager?: boolean       // run inside attach/attachExisting instead of on transform()
+  transform(context: TransformerContext): Promise<TransformResult>
+}
+
+interface TransformerContext {
+  record: MediaRecord            // the media being transformed
+  disk: Disk                     // the disk holding the original (and receiving the artifacts)
+  diskName: string               // its name, as resolvable through the storage manager
+  storage: StorageManager        // for reads OUTSIDE the record's disk (auxiliary assets)
+
+  getBytes(): Promise<Uint8Array> // buffer the original — fine for small files
+  getStream(): Promise<Readable>  // stream it — what you want for video
+
+  outputPrefix: string           // `<ownerType>/<ownerId>/<collection>/<mediaId>/conversions/<name>/`
+  write(
+    relativePath: string,
+    contents: Uint8Array | Readable,
+    options?: TransformerWriteOptions,
+  ): Promise<void>
+}
+
+interface TransformerWriteOptions {
+  contentType?: string
+  contentLength?: number         // load-bearing for a Readable on a streaming disk (S3 needs it up front)
+}
+
+interface TransformResult {
+  entry?: string                 // entry artifact, relative to outputPrefix — omit for metadata-only
+  meta?: Record<string, unknown> // persisted verbatim on record.conversions[name].meta (JSON-serializable)
+}
+```
+
+Two things are worth naming explicitly. **The context, not the transformer, decides where artifacts live**: `outputPrefix` is computed by the library and every `write` is keyed under it, which is what makes an artifact list the library can trust — and therefore a package it can delete whole. And `contentLength` is not decoration: a `Readable` has no knowable length, S3 requires `ContentLength` up front, so a stream without it gets buffered instead of streamed.
+
 What the context guarantees:
 
 - **`write(relativePath, contents, options?)`** is the only artifact path. Every write lands under `context.outputPrefix` (`…/conversions/<name>/`), is validated (no `..`, no absolute paths — `TransformerOutputError`), and is recorded: the persisted `files` list comes from what was actually written, never from the transformer's own bookkeeping. A `Readable` with a `contentLength` streams to the disk without buffering.

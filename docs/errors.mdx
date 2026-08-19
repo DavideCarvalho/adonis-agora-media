@@ -1,0 +1,101 @@
+---
+title: Errors
+description: Every error class @adonis-agora/media exports, with its stable code, when it is thrown, and which properties it carries — so you can branch on a code instead of a message string.
+icon: Bug
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Every failure the library raises deliberately is a **named class with a stable `code`**, exported from the barrel. That gives you two ways to branch — `instanceof` in TypeScript, or `error.code` across a boundary that lost the prototype (a job queue, a serialized API response) — and it means no error message is ever load-bearing.
+
+```ts
+import { MimeNotAllowedError, TransformNotReadyError } from '@adonis-agora/media'
+
+try {
+  await media.library.attach({ … })
+} catch (error) {
+  if (error instanceof MimeNotAllowedError) {
+    return response.unsupportedMediaType({
+      error: `We accept ${error.accepted.join(', ')} here, not ${error.mimeType}`,
+    })
+  }
+  throw error
+}
+```
+
+---
+
+## Content and collections
+
+| Error | Code | Thrown when | Carries |
+|---|---|---|---|
+| `MimeNotAllowedError` | `E_MEDIA_MIME_NOT_ALLOWED` | The declared MIME type is outside the collection's `acceptsMimeTypes` — checked *before* anything is written. | `collection`, `mimeType`, `accepted` |
+| `ContentTypeMismatchError` | `E_MEDIA_CONTENT_TYPE_MISMATCH` | The file's real signature disagrees with what the client declared. | `collection`, `declaredMimeType`, `detectedMimeType` |
+| `ContentSignatureUnrecognizedError` | `E_MEDIA_CONTENT_SIGNATURE_UNRECOGNIZED` | The bytes match no known signature, on a collection whose whitelist is fully detectable. | `collection`, `declaredMimeType`, `accepted` |
+
+`MimeNotAllowedError`'s three properties are what let you build the refusal message rather than restating the whitelist in your controller — the collection config stays the single source of truth, on both ends.
+
+## Records and objects
+
+| Error | Code | Thrown when |
+|---|---|---|
+| `MediaNotFoundError` | `E_MEDIA_RECORD_NOT_FOUND` | An operation names a media id no record exists for. |
+| `MediaObjectMissingError` | `E_MEDIA_OBJECT_MISSING` | The record exists but its object is gone from the disk. |
+| `VariantNotFoundError` | `E_MEDIA_VARIANT_NOT_FOUND` | An [attachment](/docs/media/attachments) is asked for a variant it never generated. |
+
+## Conversions and transformers
+
+| Error | Code | Thrown when |
+|---|---|---|
+| `ConversionNotDefinedError` | `E_MEDIA_CONVERSION_NOT_DEFINED` | A conversion name the collection doesn't declare is requested. |
+| `ConversionArtifactMissingError` | `E_MEDIA_CONVERSION_ARTIFACT_MISSING` | A conversion with no artifact (a metadata-only transform) is asked for a URL. |
+| `ImageProcessorMissingError` | `E_MEDIA_IMAGE_PROCESSOR_MISSING` | Any conversion is requested with no `imageProcessor` configured. |
+| `TransformerNotDefinedError` | `E_MEDIA_TRANSFORMER_NOT_DEFINED` | `transform()` names a transformer the collection doesn't declare. |
+| `TransformNotReadyError` | `E_MEDIA_TRANSFORM_NOT_READY` | A transformer conversion is read before it has been generated. |
+| `TransformerConflictError` | `E_MEDIA_TRANSFORMER_CONFLICT` | Two derivatives in one collection share a name — thrown at **boot**. |
+| `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` | A transformer needs a peer or runtime capability the host lacks. |
+| `TransformerOutputError` | `E_MEDIA_TRANSFORMER_OUTPUT_INVALID` | A transformer wrote outside its prefix, or named a bad entry. |
+| `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` | An HLS source can't be stream-copied and no encoder is available. |
+
+See [Transformers](/docs/media/transformers) for the reasoning behind the split between "not defined" and "not ready".
+
+## Storage and configuration
+
+| Error | Code | Thrown when |
+|---|---|---|
+| `DriveNotReadyError` | `E_MEDIA_DRIVE_NOT_READY` | A disk resolution reaches `@adonisjs/drive` before its manager has booted. Almost always a media call at module scope rather than inside a request or `app.booted`. |
+| `StoreNotConfiguredError` | `E_MEDIA_STORE_NOT_CONFIGURED` | `store` names an entry missing from `stores`. **Not** a silent fallback to in-memory — a typo must not quietly swap durable persistence for a process-local `Map`. |
+| `UploadSessionStoreNotConfiguredError` | `E_MEDIA_UPLOAD_SESSION_STORE_NOT_CONFIGURED` | The same, for a resumable session store. |
+| `UploadNotSupportedError` | `E_MEDIA_UPLOAD_NOT_SUPPORTED` | `mode: 'direct'` (or a native `move`) is asked of a disk that can't do it. |
+
+## Uploads
+
+| Error | Code | Thrown when | Carries |
+|---|---|---|---|
+| `ResumableUploadsNotConfiguredError` | `E_MEDIA_RESUMABLE_NOT_CONFIGURED` | `media.resumable` is used without `uploads.resumable` in config. | — |
+| `DirectUploadsNotConfiguredError` | `E_MEDIA_DIRECT_NOT_CONFIGURED` | `media.direct` is used without `uploads.direct` in config. | — |
+| `UploadSessionNotFoundError` | `E_MEDIA_UPLOAD_SESSION_NOT_FOUND` | An unknown session id. Maps to **`404`**. | — |
+| `UploadSessionExpiredError` | `E_MEDIA_UPLOAD_SESSION_EXPIRED` | The session's TTL has passed; the native upload is aborted on the way out. Maps to **`410`**. | — |
+| `UploadOffsetConflictError` | `E_MEDIA_UPLOAD_OFFSET_CONFLICT` | A TUS `PATCH` arrives at the wrong offset. Maps to **`409`**. | `expected`, `received` |
+| `UploadPartSizeError` | `E_MEDIA_UPLOAD_PART_SIZE` | A part size violates S3's rules (5 MiB floor, 10,000-part cap). | — |
+| `UploadPartOutOfRangeError` | `E_MEDIA_UPLOAD_PART_OUT_OF_RANGE` | A part number falls outside `1..totalParts` — the client sliced with the wrong part size. | `partNumber`, `totalParts` |
+| `UploadPartsIncompleteError` | `E_MEDIA_UPLOAD_PARTS_INCOMPLETE` | `complete()` is called with parts still unaccounted for. Maps to **`409`**. | `sessionId`, `missingParts` |
+
+`UploadPartsIncompleteError` is the one worth designing a client around. It names the **exact missing part numbers**, which is precisely what S3 will not tell you — asking it to assemble an incomplete upload returns an opaque `InvalidPart` after a full round-trip. The built-in direct routes put that array in the `409` body as `missingParts`, so a client can re-upload just those and retry.
+
+<Callout type="info" title="How they become HTTP">
+  The framework-agnostic handlers (`DirectUploadHandler`, `TusUploadHandler`) map these onto statuses
+  themselves — the "maps to" column above. Anything unmapped keeps propagating to your app's own
+  exception handler, deliberately: an error the library has no opinion about should not be flattened
+  into a generic `500` on the way out. A
+  [`DirectUploadPolicy.mapError`](/docs/media/uploads/direct-upload-policy#error-mapping) gets first
+  refusal on all of them.
+</Callout>
+
+---
+
+## Next steps
+
+- [Direct upload policy](/docs/media/uploads/direct-upload-policy) — mapping these onto your own API's error shape
+- [Collections & Conversions](/docs/media/collections-and-conversions) — where the MIME errors come from
+- [Transformers](/docs/media/transformers) — the transformer error family in context

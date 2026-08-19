@@ -1,0 +1,98 @@
+---
+title: Single-File Store
+description: "@adonis-agora/media/single-file — a tiny seam for avatar-style uploads, so another package can delegate 'replace this owner's one file and give me a URL' to media without taking a hard dependency on it."
+icon: FileUp
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Some callers need one narrow thing from a media library: *replace this owner's single file and hand me back a URL.* An avatar. A workspace logo. A signature image.
+
+Going through the full `MediaLibrary` for that means knowing about collections, conversions, records and disks — a lot of surface for one field. Worse, it means **depending on media** in a package that would otherwise work fine without it.
+
+`@adonis-agora/media/single-file` is the seam that solves both. It is a handful of functions with no types of their own beyond plain inputs, and a feature-detection helper so a caller can degrade gracefully when media isn't installed at all. Other Agora packages use it exactly this way.
+
+```ts
+import {
+  isSingleFileStoreAvailable,
+  removeSingleFile,
+  storeSingleFile,
+} from '@adonis-agora/media/single-file'
+```
+
+---
+
+## Storing and removing
+
+```ts
+const { url, thumbUrl } = await storeSingleFile({
+  ownerType: 'User',
+  ownerId: String(user.id),
+  collection: 'avatar',
+  fileName: upload.clientName,
+  mimeType: upload.type!,
+  contents: await readFile(upload.tmpPath!), // a Buffer
+})
+
+user.avatarUrl = url
+user.avatarThumbUrl = thumbUrl // string | null
+```
+
+`storeSingleFile` attaches the file and resolves two URLs: the original, and the `thumb` conversion. `thumbUrl` is `null` — not an error — when that conversion isn't configured on the collection or couldn't be generated, because a missing thumbnail should never fail the store.
+
+```ts
+await removeSingleFile({ ownerType: 'User', ownerId: String(user.id), collection: 'avatar' })
+```
+
+`removeSingleFile` empties the owner's collection, deleting every record it holds (which for a single-file collection is at most one) along with each one's disk object and conversions.
+
+<Callout type="warn" title="`single: true` lives in the config, not in the call">
+  Nothing about these functions makes a collection single-slot. Replacement is a property of the
+  **collection**, so the `collection` you name here must be declared `single: true` in
+  `config/media.ts`. Without that, each call *appends* another file and "the avatar" quietly becomes
+  a growing list.
+
+  ```ts title="config/media.ts"
+  collections: [
+    { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
+  ]
+  ```
+</Callout>
+
+## Feature detection
+
+```ts
+if (await isSingleFileStoreAvailable()) {
+  const { url } = await storeSingleFile({ … })
+} else {
+  await storeAvatarSomewhereElse(file)
+}
+```
+
+`isSingleFileStoreAvailable()` reports whether the `MediaManager` is bound in the app container. That is what lets a package offer media-backed uploads as an **enhancement**: import the subpath unconditionally, check before using it, and behave sensibly in an app that never installed media.
+
+## Explicit-manager variants
+
+`storeSingleFileWith(manager, input)` and `removeSingleFileWith(manager, input)` are the same functions driven by a `MediaManager` you pass in, instead of one resolved from the container. Two uses:
+
+- **Tests** — exercise the behaviour against an in-memory manager without booting an app. See [Testing](/docs/media/testing).
+- **Multiple managers** — an app that builds more than one media manager and needs to say which.
+
+```ts
+import { storeSingleFileWith } from '@adonis-agora/media/single-file'
+
+const { url } = await storeSingleFileWith(testManager, {
+  ownerType: 'User', ownerId: '1', collection: 'avatar',
+  fileName: 'me.png', mimeType: 'image/png', contents: pngBytes,
+})
+```
+
+The container-reading variants resolve the manager through the provider-captured booted app rather than `@adonisjs/core/services/app` — the same defence the rest of the package uses against a duplicated `@adonisjs/core` tree in a pnpm workspace.
+
+---
+
+## Next steps
+
+- [Collections & Conversions](/docs/media/collections-and-conversions) — declaring the `single: true` collection this needs
+- [Attachments](/docs/media/attachments) — the other single-file shape: a file on a model column
+- [Testing](/docs/media/testing) — driving the `*With` variants against an in-memory manager

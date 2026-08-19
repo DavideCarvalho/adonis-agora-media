@@ -1,0 +1,148 @@
+---
+title: Console Launcher
+description: Open the media console from your own app in three tiers — the bare mintMediaDashboardSession / openMediaDashboard functions, the useOpenMediaDashboard hook, and the drop-in OpenMediaDashboardButton. Plus ConsoleSessionError and why the redirect trap matters.
+icon: ExternalLink
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The [media console](/docs/media/dashboard) is served at a literal path and knows nothing about your app's auth. A plain `<a href="/media/dashboard">` therefore carries no identity: the user lands on a login screen, or on a `401`, from a button that looked like it should just work.
+
+This is the fix, and it is one round-trip. An XHR from **inside** your app — which does carry your auth — posts to the console's `/session` endpoint; your [`auth.session` hook](/docs/media/dashboard/authentication) decides; the console answers with its own signed cookie. The navigation that follows rides it.
+
+Three tiers, same behaviour, decreasing amounts of your code:
+
+| Tier | Export | Use when |
+|---|---|---|
+| function | `openMediaDashboard`, `mintMediaDashboardSession` | No React, or you own the whole interaction. |
+| hook | `useOpenMediaDashboard` | You want the pending/error state but your own markup. |
+| component | `<OpenMediaDashboardButton>` | You want a working button. |
+
+---
+
+## The component
+
+```tsx
+import { OpenMediaDashboardButton } from '@adonis-agora/media-react'
+
+<OpenMediaDashboardButton
+  headers={() => ({ Authorization: `Bearer ${auth.token}` })}
+  className="btn btn-secondary"
+>
+  Open media console
+</OpenMediaDashboardButton>
+```
+
+It emits a bare `<button>` and forwards `className` / `style` / every other button prop, so it inherits your design system instead of importing CSS that would fight it. It disables itself and sets `aria-busy` while the mint is in flight, and shows the pending label (default `Opening…`).
+
+| Prop | Default | What |
+|---|---|---|
+| `children` | `Open Media console` | The label. |
+| `pendingLabel` | `Opening…` | Shown while minting. |
+| `renderError` | a `<p role="alert">` | Render the refusal yourself, or pass `null` to render nothing. |
+| `basePath` / `apiBasePath` / `headers` / `fetch` / `signal` / `navigate` | — | Every `OpenConsoleOptions` field, forwarded. |
+
+The error renders by default rather than being swallowed, deliberately: a refused mint is exactly the case a launcher most needs to surface, and a button that silently does nothing reads as broken rather than as forbidden.
+
+## The hook
+
+```tsx
+import { useOpenMediaDashboard } from '@adonis-agora/media-react'
+
+function ConsoleLink() {
+  const { open, isPending, error, reset } = useOpenMediaDashboard({
+    headers: async () => ({ Authorization: `Bearer ${await freshToken()}` }),
+  })
+
+  return (
+    <>
+      <MyButton onClick={open} loading={isPending}>Media console</MyButton>
+      {error && <MyAlert onDismiss={reset}>{error.message}</MyAlert>}
+    </>
+  )
+}
+```
+
+`open()` never rejects — read `error` instead. It is stable across renders (options are held in a ref), so passing an inline object literal doesn't churn its identity.
+
+Two details in `isPending` are worth knowing, because both are deliberate:
+
+- It is **not** cleared on success. The navigation is already underway and the component is about to be torn down; flipping the button back to idle first produces a visible flicker of "ready to click again" on a page that is leaving.
+- Except the page doesn't always die. The **back/forward cache** restores it with React state intact, so pressing Back would otherwise return the user to a permanent spinner on a permanently-disabled button. The hook listens for `pageshow` with `persisted: true` — the only observable signal of a bfcache restore, since there is no unmount and no remount to hang a reset off — and clears the flag there.
+
+### With TanStack Query
+
+`openMediaDashboardMutationOptions` returns the shape `useMutation` takes, with **no TanStack dependency** in this package:
+
+```ts
+import { useMutation } from '@tanstack/react-query'
+import { openMediaDashboardMutationOptions } from '@adonis-agora/media-react'
+
+const { mutate, isPending } = useMutation(openMediaDashboardMutationOptions({ headers }))
+```
+
+Both mount points are in the mutation key, since `apiBasePath` decides which endpoint mints the session and is settable independently of `basePath` — two mounts differing only in it are two different calls and must not share cache state.
+
+## The functions
+
+```ts
+import {
+  ConsoleSessionError,
+  mediaDashboardSessionUrl,
+  mediaDashboardUrl,
+  mintMediaDashboardSession,
+  openMediaDashboard,
+} from '@adonis-agora/media-react'
+
+await openMediaDashboard({ headers: { Authorization: `Bearer ${token}` } })
+```
+
+`openMediaDashboard` mints and then navigates; it throws **without navigating** when the mint is refused, so a denied user gets a real error instead of landing on the console's login screen — which reads as a bug rather than as a permission decision.
+
+`mintMediaDashboardSession` is the mint alone, for a pre-flight check or a link the user will open later. `mediaDashboardSessionUrl(apiBasePath?)` and `mediaDashboardUrl(basePath?)` expose the URL derivation if you need to build a link by hand.
+
+| Option | Default | What |
+|---|---|---|
+| `basePath` | `/media/dashboard` | Where the console SPA is mounted. Must match `config/media_dashboard.ts`. |
+| `apiBasePath` | `<basePath>/api` | Where the JSON API — and the session endpoint — is mounted. |
+| `headers` | — | `HeadersInit`, or a (possibly async) function returning one. Pass a function for a refreshing token: it is read at call time, not at wiring time. |
+| `fetch` | global `fetch` | Injected for tests and non-browser callers. |
+| `signal` | — | Abort the mint. |
+| `navigate` | `location.assign` | Perform the navigation. Override to route through your own router, or to open a new tab. |
+
+The session URL derives from `apiBasePath`, **not** `basePath` — the auth routes are mounted with the JSON API, which the provider mounts separately from the SPA. Deriving it here rather than at the call site means a host cannot get that split wrong; and when you set only `basePath`, `apiBasePath` defaults off it exactly the way the provider does.
+
+---
+
+## `ConsoleSessionError`
+
+```ts
+class ConsoleSessionError extends Error {
+  readonly url: string               // the session endpoint it was refused by
+  readonly status?: number           // absent when the request never produced one
+}
+```
+
+Thrown only before a successful mint, never after. Beyond the plain refusal (`403` from your hook, `404` when no `session` hook is configured), it catches one failure that is otherwise genuinely baffling.
+
+<Callout type="warn" title="The redirect trap">
+  `fetch` follows redirects by default. An app whose auth layer rewrites a `401` into a "go to
+  /signin" redirect makes the mint request resolve **`200` against the sign-in HTML** —
+  `response.ok` reads true, the caller navigates, and the user lands in a console with no session.
+  That looks exactly like a permissions bug, and it is not.
+
+  So the mint is issued with `redirect: 'manual'` and any redirect becomes a `ConsoleSessionError`
+  saying so. If you hit it, exempt the console's session path from whatever rewrites your 401s.
+</Callout>
+
+The runtime difference is handled for you: browsers surface a manual redirect as an opaque response (`type: 'opaqueredirect'`, status `0`), Node/undici gives the real `3xx`. Both are treated as the same thing.
+
+The request is also sent with `credentials: 'include'` — the whole point is that the response's `Set-Cookie` sticks and rides the navigation that follows.
+
+---
+
+## Next steps
+
+- [Console authentication](/docs/media/dashboard/authentication) — the server hook this calls, and the cookie it mints
+- [Dashboard](/docs/media/dashboard) — the console you are opening
+- [React client](/docs/media/react) — the upload half of this package
