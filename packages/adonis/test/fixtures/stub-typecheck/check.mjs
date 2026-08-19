@@ -146,8 +146,17 @@ async function bootApp(appRoot) {
  * Throws whatever the engine throws — which is the point.
  */
 async function renderStub(app, stubPath, source) {
-  const stub = await (await app.stubs.create()).build(stubPath, { source });
-  const prepared = await stub.prepare({});
+  // Any throw here is the finding, so it must arrive legible: which stub, and which of the two roots
+  // it came from. A bare stack trace from the engine (an emptied stub, one `copy:stubs` never copied)
+  // reads as a harness crash rather than as the packaging defect it actually is.
+  const label = `${source === distStubs ? 'dist/stubs' : 'stubs'}/${stubPath}`;
+  let prepared;
+  try {
+    const stub = await (await app.stubs.create()).build(stubPath, { source });
+    prepared = await stub.prepare({});
+  } catch (error) {
+    throw new Error(`${label} could not be rendered by the stubs engine: ${error.message}`);
+  }
   const to = prepared.attributes?.to;
   if (!to)
     throw new Error(

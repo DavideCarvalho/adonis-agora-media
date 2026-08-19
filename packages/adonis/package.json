@@ -1,7 +1,7 @@
 {
   "name": "@adonis-agora/media",
   "version": "0.12.1",
-  "description": "Media-library for AdonisJS — owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
+  "description": "Media-library for AdonisJS \u2014 owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -88,7 +88,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
-    "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations dist/assets && cp stubs/config/media.stub dist/stubs/config/media.stub && cp stubs/config/media_dashboard.stub dist/stubs/config/media_dashboard.stub && cp -r stubs/database/migrations/. dist/stubs/database/migrations/ && rm -rf dist/assets/spa && cp -r ../dashboard/dist/spa dist/assets/spa",
+    "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations dist/assets && cp -r stubs/config/. dist/stubs/config/ && cp -r stubs/database/migrations/. dist/stubs/database/migrations/ && rm -rf dist/assets/spa && cp -r ../dashboard/dist/spa dist/assets/spa",
     "prepack": "pnpm run build",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
