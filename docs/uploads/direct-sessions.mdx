@@ -69,7 +69,7 @@ export default defineConfig({
 | `presignTtlSeconds` | `number` | `uploads.presignTtlSeconds`, else 3600 | Lifetime of each presigned part URL. |
 | `sessionTtlSeconds` | `number` | never | Session lifetime; an expired session is reaped on access (native upload aborted). |
 | `routes.enabled` | `boolean` | `false` | Mount the built-in JSON routes. |
-| `routes.prefix` | `string` | `/media/uploads/direct/sessions` | Path prefix for those routes. |
+| `routes.prefix` | `string` | `/media/uploads/direct/sessions` | Path prefix for those routes. The browser client's `directPath` defaults to the same value, so leaving both alone lines them up. |
 | `routes.disk` | `string` | media default disk | Disk uploads land on (must be multipart-capable). |
 | `routes.maxSize` | `number` | — | Reject initiations whose declared `size` exceeds this. |
 | `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates `initiate`. Omit to accept any type. |

@@ -9,23 +9,24 @@ import { Callout } from 'fumadocs-ui/components/callout';
 **`@adonis-agora/media-react`** is the first-party browser companion to the server upload routes. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
 
 - **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `tusPath` (default `/media/uploads/tus`, matching `uploads.resumable.routes.prefix`), resuming from the server's `Upload-Offset`.
-- **Direct-S3 multipart** — the [direct-session](/docs/media/uploads/direct-sessions) contract against `uploadsPath`: `POST {uploadsPath}` initiates and returns presigned part URLs, each part `PUT`s straight to S3, `POST {uploadsPath}/:id/parts/:partNumber` confirms its `ETag`, and `POST {uploadsPath}/:id/complete` assembles the object. `GET {uploadsPath}/:id` reports a session's state and `DELETE {uploadsPath}/:id` tears it down.
+- **Direct-S3 multipart** — the [direct-session](/docs/media/uploads/direct-sessions) contract against `directPath` (default `/media/uploads/direct/sessions`, matching `uploads.direct.routes.prefix`): `POST {directPath}` initiates and returns presigned part URLs, each part `PUT`s straight to S3, `POST {directPath}/:id/parts/:partNumber` confirms its `ETag`, and `POST {directPath}/:id/complete` assembles the object. `GET {directPath}/:id` reports a session's state and `DELETE {directPath}/:id` tears it down.
 - **Proxy** — a single `PUT {uploadsPath}/proxy` streams the whole body through the app.
 
-<Callout type="warn" title="The two direct-path defaults do not line up">
-  The client's `uploadsPath` defaults to `/media/uploads`, but the server mounts its direct-session
-  routes at `uploads.direct.routes.prefix`, which defaults to **`/media/uploads/direct/sessions`**.
-  Left at both defaults, every direct upload 404s. Align them explicitly — either set the server
-  prefix, or point the client at the server's:
+<Callout type="info" title="Two paths, because there are two server prefixes">
+  `uploadsPath` and `directPath` are separate options because they address separate mounts on the
+  server: the core upload routes (`uploads.routes.prefix`, default `/media/uploads`, where the proxy
+  endpoint lives) and the direct-session routes (`uploads.direct.routes.prefix`, default
+  `/media/uploads/direct/sessions`). Each client option defaults to the matching server default, so
+  a client talking to a stock server sets neither.
+
+  Set `directPath` when you moved the server's direct-session prefix:
 
   ```ts
-  createMediaUploadClient({ uploadsPath: '/media/uploads/direct/sessions' })
+  createMediaUploadClient({ directPath: '/api/v1/upload-video' })
   ```
 
-  Be aware that `uploadsPath` also carries the proxy route (`PUT {uploadsPath}/proxy`), which lives
-  under `uploads.routes.prefix` instead. If you use both strategies, prefer moving the **server's**
-  direct-session prefix onto `uploads.routes.prefix` — the two route sets don't collide — rather than
-  moving the client; otherwise use one client instance per strategy.
+  An explicit `uploadsPath` also supplies `directPath` when you don't set one, which is how clients
+  were configured before `directPath` existed — so a single-path setup keeps working untouched.
 </Callout>
 
 The older stateless routes under `uploads.routes.prefix` (`POST /direct/initiate`, `POST /direct/:uploadId/complete`) exist too, but this client does **not** speak them. They are the raw primitives documented in [Upload modes](/docs/media/uploads/upload-modes); the client always uses the session-backed contract, because that is the one that survives a page reload.
@@ -108,7 +109,6 @@ Pause/resume survives a component unmount but not a page reload — the session 
 ```tsx
 const { upload, resume, resumable, status, progress } = useMediaUpload({
   mode: 'direct',
-  uploadsPath: '/media/uploads/direct/sessions',
   storageKey: `upload:lesson:${lessonId}`,
 })
 
@@ -145,7 +145,6 @@ import { MediaUploader } from '@adonis-agora/media-react'
 // Fully headless — bring your own UI:
 <MediaUploader
   mode="direct"
-  uploadsPath="/media/uploads/direct/sessions"
   render={({ status, progress, selectFile }) => (
     /* your markup; call selectFile(file) to start */
   )}
@@ -190,7 +189,8 @@ Those are the three upload entry points; the client also exposes the session pri
 |--------|---------|------|
 | `baseUrl` | `''` (same-origin) | Origin (and optional path) prepended to every relative endpoint. |
 | `tusPath` | `/media/uploads/tus` | TUS base path — match `uploads.resumable.routes.prefix`. |
-| `uploadsPath` | `/media/uploads` | Direct-S3 + proxy base path — match `uploads.routes.prefix`. |
+| `uploadsPath` | `/media/uploads` | Core upload routes — where the proxy endpoint lives. Match `uploads.routes.prefix`. |
+| `directPath` | `/media/uploads/direct/sessions` | Direct-session routes. Match `uploads.direct.routes.prefix`. Falls back to `uploadsPath` when that is set and this isn't. |
 | `chunkSize` | `8 MiB` | Bytes per **TUS** chunk. The direct-S3 part size is decided by the server, not here. |
 | `concurrency` | — | **Reserved.** Direct-S3 uploads are sequential today, so this does not apply to them; it is kept for forward compatibility. |
 | `retries` | `3` | Per-chunk / per-part retry attempts. |
