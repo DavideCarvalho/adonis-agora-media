@@ -1,6 +1,6 @@
 ---
 title: Testing
-description: Drive the media library in tests with the in-memory doubles from @adonis-agora/media/testing — InMemoryMediaStore, InMemoryDisk + inMemoryDiskResolver, and FakeImageProcessor — no disk, no database, no sharp.
+description: Drive the media library in tests with the in-memory doubles from @adonis-agora/media/testing — InMemoryMediaStore, InMemoryDisk + inMemoryDiskResolver, InMemoryUploadSessionStore, FakeImageProcessor and FakeTransformer — no disk, no database, no sharp, no media engine.
 icon: FlaskConical
 ---
 
@@ -38,6 +38,51 @@ import {
 | `inMemoryDiskResolver(names)` | `DiskResolver` factory | Builds a resolver over named in-memory disks; returns `{ resolve, disks }`. |
 | `FakeImageProcessor` | `ImageProcessor` | Deterministic, sharp-free; records every `convert` call on `.calls`. |
 | `InMemoryUploadSessionStore` | `UploadSessionStore` | `Map`-backed resumable-upload session store; drives TUS / multipart tests with no database. Non-durable (sessions vanish on restart) and returns defensive copies. |
+| `FakeTransformer` | `Transformer` | Deterministic, engine-free transformer; writes exactly the artifacts it was configured with and records every context on `.calls`. |
+| `DiskVisibility` | type | `'public'` \| `'private'` \| `'unknown'` — what an in-memory disk reports from `getVisibility`. |
+
+### `FakeTransformer`
+
+The transformer counterpart of `FakeImageProcessor`, and the reason you can test a [transformer](/docs/media/transformers) pipeline without a media engine anywhere near it:
+
+```ts
+import { FakeTransformer } from '@adonis-agora/media/testing'
+
+const hls = new FakeTransformer({
+  name: 'hls',
+  eager: false,
+  artifacts: { 'index.m3u8': '#EXTM3U', 'segment-0.ts': 'bytes' },
+  meta: { durationSeconds: 12 },
+})
+
+// metadata-only, like a probe: no artifact at all
+const probe = new FakeTransformer({ name: 'probe', entry: null, meta: { width: 1920 } })
+```
+
+| Option | What |
+|---|---|
+| `name` | The conversion name it produces. |
+| `eager` | Run inside `attach` instead of on `transform()`. Default `false`. |
+| `artifacts` | Prefix-relative path → content, each written through `context.write`. |
+| `entry` | The declared entry. Defaults to the first artifact; pass `null` for a metadata-only result. |
+| `meta` | The metadata the result declares. |
+| `behavior` | Full override — throw from here to assert rollback, or return a hand-built result. |
+
+`.calls` collects every `TransformerContext` it received, so you can assert *when* it ran, not only what it produced — which is how you pin eager-vs-deferred behaviour. And because it writes through the real `context.write`, the library's own artifact bookkeeping (the persisted `files` list, deletion of the whole package) is genuinely exercised rather than mocked away.
+
+Apps benefit too: registering a `FakeTransformer` under the name your real one uses lets you test **your** transcode job's orchestration — dispatch, retry, idempotency — without ever touching a video codec.
+
+### Disk visibility
+
+`InMemoryDisk` and `inMemoryDiskResolver` both take a `DiskVisibility` as their last argument, defaulting to `'private'`. It exists to test the one branch that depends on it — [`delivery.mode: 'auto'`](/docs/media/delivery), which asks the disk whether an object is public:
+
+```ts
+const publicDisks = inMemoryDiskResolver(['cdn'], 'public')    // auto ⇒ public URL
+const privateDisks = inMemoryDiskResolver(['s3'], 'private')   // auto ⇒ signed URL
+const oldDisks = inMemoryDiskResolver(['legacy'], 'unknown')   // no getVisibility at all
+```
+
+`'unknown'` is the interesting one: it builds a disk with **no `getVisibility` method**, which is exactly the shape of a minimal disk that cannot answer the question. That is how you assert `auto` degrades to `signed` rather than assuming public — a fallback that is easy to get backwards and impossible to test with a disk that always answers.
 
 ---
 

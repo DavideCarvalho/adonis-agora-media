@@ -6,7 +6,7 @@ icon: Download
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The library has had a configurable strategy for **writes** since 0.4 ([`uploads.mode`](/docs/media/uploads/upload-modes)). `delivery` is its mirror image for **reads**.
+The library has a configurable strategy for **writes** ([`uploads.mode`](/docs/media/uploads/upload-modes)). `delivery` is its mirror image for **reads**.
 
 Without it, every app re-derives the same decision by hand: call `url()` on a public bucket, `signedUrl()` on a private one — and when the storage isn't reachable from the internet at all (a bucket on a private network, MinIO on an internal host), hand-roll a route that opens a stream and pipes it. That route is the same in every app, so it belongs here.
 

@@ -7,7 +7,7 @@ icon: ArrowUpFromLine
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Beyond the buffer-once `attach` / `createFromFile` calls, the library now ships an **upload coordinator** for large files, with two strategies:
+Beyond the buffer-once `attach` / `createFromFile` calls, the library ships an **upload coordinator** for large files, with two strategies:
 
 - **`proxy`** — the client sends bytes to your app, which streams them to the disk (`putStream`, no in-memory buffering). Works on **any** disk.
 - **`direct`** — for a multipart-capable disk (the bundled [S3 disk](/docs/media/storage/s3-disk)), your app hands the client **presigned multipart part URLs**; the browser `PUT`s each part straight to S3, then your app assembles them. Bytes never pass through your server.
@@ -108,6 +108,27 @@ await media.proxyUpload({
 </Tabs>
 
 `media.uploads.resolveMode({ disk, mode })` tells you which strategy a disk will use (`'proxy'` or `'direct'`), honouring the per-call override, the configured default, and the disk's multipart capability.
+
+### Resolving the mode yourself
+
+The decision is one pure function, exported as `resolveUploadMode` — useful when you drive an upload outside the manager, or want to tell a client which strategy to expect before it commits to one:
+
+```ts
+import { resolveUploadMode, isMultipartCapable } from '@adonis-agora/media'
+import type { ResolvedUploadMode, UploadModeLevels } from '@adonis-agora/media'
+
+const disk = media.disk('s3')
+
+const mode: ResolvedUploadMode = resolveUploadMode(
+  { global: 'auto', perCall: request.input('mode') } satisfies UploadModeLevels,
+  isMultipartCapable(disk),
+  's3',
+)
+```
+
+`UploadModeLevels` names the three places a mode can be set, most specific first: `perCall` → `perDisk` → `global`, defaulting to `'auto'` when none is given. (`perDisk` is reserved — the bundled disks don't use it.) The second argument is the disk's capability, and the third is the disk name, used only to build a readable error.
+
+The rules are exactly the ones the manager applies: `proxy` is always allowed (every disk accepts bytes), `direct` **throws `UploadNotSupportedError`** on a disk without native multipart rather than silently downgrading, and `auto` picks `direct` when it can and `proxy` when it can't. That difference is the point of having both `direct` and `auto` — one is a requirement, the other is a preference.
 
 <Callout type="warn">
   These upload methods write bytes to a disk key — they do **not** create a `MediaLibrary` record. Once the object exists, register it (e.g. `media.library.attach` pointing at the key, or your own row) if you want it in a collection.

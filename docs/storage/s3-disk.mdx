@@ -6,7 +6,7 @@ icon: Cloud
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Media delegates storage to [`@adonisjs/drive`](https://github.com/adonisjs/drive), so `local` / `s3` / `gcs` Drive disks work out of the box. On top of that, the package now bundles its **own** S3 driver — `disks.s3()` — a first-class `Disk` that also implements the richer add-on surfaces the direct-upload, resumable, and dashboard features lean on: native multipart, prefix listing, cross-bucket copy/move, batched deletes, and cheap metadata. The AWS SDK stays an **optional peer**, imported lazily only when an S3 disk is actually selected.
+Media delegates storage to [`@adonisjs/drive`](https://github.com/adonisjs/drive), so `local` / `s3` / `gcs` Drive disks work out of the box. On top of that, the package bundles its **own** S3 driver — `disks.s3()` — a first-class `Disk` that also implements the richer add-on surfaces the direct-upload, resumable, and dashboard features lean on: native multipart, prefix listing, cross-bucket copy/move, batched deletes, and cheap metadata. The AWS SDK stays an **optional peer**, imported lazily only when an S3 disk is actually selected.
 
 <Callout type="info">
   You don't need this driver to use S3 through Drive. Reach for `disks.s3()` when you want the extended operations (`copy` / `move` / `deleteMany` / `list` / `size` / `stat`) and direct-to-S3 multipart uploads that a plain Drive disk doesn't expose. See [Upload modes](/docs/media/uploads/upload-modes) and the [Dashboard](/docs/media/dashboard).
@@ -28,7 +28,7 @@ It is declared `optional` in `peerDependenciesMeta`, so nothing is pulled in unl
 
 ## Configure
 
-`disks` is a new top-level key on `defineConfig`, parallel to `stores` and `processors`: a name → factory map. Select one with the top-level `disk` (or a per-collection / per-`attach` `disk`). A name in `disks` **takes precedence** over a Drive disk of the same name; any name not found here falls through to Drive.
+`disks` is a top-level key on `defineConfig`, parallel to `stores` and `processors`: a name → factory map. Select one with the top-level `disk` (or a per-collection / per-`attach` `disk`). A name in `disks` **takes precedence** over a Drive disk of the same name; any name not found here falls through to Drive.
 
 ```ts title="config/media.ts"
 import { defineConfig, disks, stores } from '@adonis-agora/media'
@@ -135,6 +135,42 @@ if (isExtendedDisk(s3)) {
 ## Native multipart
 
 `S3Disk` implements the optional `MultipartUploadDisk` surface (`createMultipartUpload` / `uploadPart` / `presignUploadPart` / `completeMultipartUpload` / `abortMultipartUpload`), detected with `isMultipartCapable(disk)`. This is what powers the **direct** upload mode and native-multipart **resumable** uploads — see [Upload modes](/docs/media/uploads/upload-modes) and [Resumable / TUS](/docs/media/uploads/resumable-tus). You rarely call these directly; the `UploadManager` and `ResumableUploadManager` drive them for you.
+
+---
+
+## The presigner, on its own
+
+Every signed URL this driver hands out — read URLs, multipart part URLs — comes from `presignS3Url`, a hand-rolled SigV4 **query** presigner written against `node:crypto`. No AWS presigner package is involved, which is what keeps presigning available even though `@aws-sdk/client-s3` is an optional peer, and what makes the `endpoint` / `publicEndpoint` split possible at all.
+
+It is exported, for signing a URL outside the disk — a bucket the media config doesn't know about, an operation with no method here, a URL minted by a service that isn't this app:
+
+```ts
+import { presignS3Url } from '@adonis-agora/media'
+import type { PresignS3UrlInput, SigV4Credentials } from '@adonis-agora/media'
+
+const url = presignS3Url({
+  method: 'GET',
+  protocol: 'https:',
+  host: 'files.example.com',
+  path: '/media/reports/q3 summary.pdf', // UNENCODED — encoded here, exactly once
+  query: { 'response-content-disposition': 'attachment; filename="q3.pdf"' },
+  credentials: { accessKeyId: '…', secretAccessKey: '…' },
+  region: 'us-east-1',
+  expiresInSeconds: 300,
+})
+```
+
+| Field | Notes |
+|---|---|
+| `method` | The HTTP method the URL authorizes (`GET`, `PUT`, …). |
+| `protocol` / `host` / `path` | Given **separately**, never as a pre-built URL. The signature covers host and path, and both must be byte-identical between what was signed and what the client requests. |
+| `query` | Extra parameters signed into the URL (`uploadId`, `partNumber`, `response-content-type`, …). |
+| `credentials` | `SigV4Credentials` — `accessKeyId`, `secretAccessKey`, and an optional STS `sessionToken`. |
+| `region` / `service` | Signing region (must match what the endpoint expects — `us-east-1` for MinIO defaults) and service (default `s3`). |
+| `expiresInSeconds` | Whole seconds. SigV4 caps this at 7 days. |
+| `now` | Injectable signing time, so a test can pin the exact signature. |
+
+The separate `host` / `path` is the part worth understanding. The presigner encodes the raw path **exactly once** and reuses that single encoding for both the canonical request and the returned URL, so the two can never drift. It also implements SigV4's own percent-encoding rather than reaching for `encodeURIComponent`, which leaves `!'()*` bare — any of those in an object key would make the canonical request disagree with what S3 reconstructs server-side, producing a signature mismatch that bites on exactly one file and no others.
 
 ---
 
