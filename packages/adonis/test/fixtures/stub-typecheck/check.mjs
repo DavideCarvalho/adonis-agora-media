@@ -1,28 +1,33 @@
 /**
- * Type-checks every PUBLISHED stub the way a consumer app does: a scratch AdonisJS-shaped app that
- * depends on `@adonis-agora/media` and `@adonisjs/*` by NAME, with each stub rendered into the file it
- * actually generates, compiled by a real `tsc --noEmit` under NodeNext + strict.
+ * Type-checks every PUBLISHED stub the way a consumer app receives it: each stub rendered by the REAL
+ * AdonisJS stubs engine into the destination its own header declares, inside a scratch app that
+ * depends on `@adonis-agora/media` and `@adonisjs/*` by NAME, then compiled by a real `tsc --noEmit`
+ * under NodeNext + strict.
  *
- * WHY THIS EXISTS. A `.stub` is a template that no tsconfig `include` reaches, so it is invisible to
- * every other gate in this repo. The package's own typecheck compiles `src/` against the library's OWN
- * types, which are trivially happy with themselves, and `stubs.spec.ts` only asserts the stubs exist
- * and get copied into `dist/`. Nothing looks at whether the code `node ace configure` hands a user
- * compiles — so a stub can reference a shape the real `@adonisjs/lucid` types reject, or import a
- * symbol the barrel no longer exports, while the whole suite stays green.
+ * WHY THIS EXISTS. A `.stub` is a template no tsconfig `include` reaches, so nothing else here checks
+ * the code `node ace configure` hands a user. The package's own typecheck compiles `src/` against the
+ * library's own types, which are trivially happy with themselves, and `stubs.spec.ts` only asserts the
+ * files exist and are copied into `dist/` — packaging, not compilation. Three Agora libs published
+ * 0-byte config stubs through that gap, and `@adonis-agora/agent` published a migration whose `up()`
+ * did not compile under Lucid 22.
  *
- * Two ecosystem failures motivated this, both shipped through full green suites: three Agora libs
- * published 0-byte config stubs (a de-backtick commit emptied the file instead of the backticks), and
- * `@adonis-agora/agent` published a migration whose `up()` did not compile under Lucid 22 — its
- * structural `rawQuery` declared `bindings?: unknown[]`, not assignable in either direction to Lucid's
- * `RawQueryBindings`, so no per-connection client satisfied it. Ported from `@adonis-agora/durable`'s
- * harness, adapted to this package's four stubs.
+ * WHY THE REAL ENGINE. An earlier version of this file stripped the `{{{ exports() }}}` header with a
+ * regex and treated the remainder as the output. That is not what the generator does:
+ * `codemods.makeUsingStub` compiles the body into a JS **template literal**, so a bare backtick in the
+ * body closes that literal and a bare `${` opens an interpolation — either throws before a single byte
+ * is written. A regex renderer cannot see that, and sibling packages proved the cost: their harnesses
+ * reported every stub healthy for a `configure` that could not write any file at all (authz 3/3,
+ * agent 4/4, durable 4/5 throwing). Injecting a type error into each stub only proves the COMPILER is
+ * connected; it says nothing about the input being real. So the input is now the real thing.
  *
- * Resolution matters as much as compilation. The scratch app reaches the package through its `exports`
- * map, so what is checked is the PUBLISHED `dist/**\/*.d.ts` a consumer installs — not `src/`, which a
- * check run inside this repo would otherwise pick up. That is the difference that makes this able to
- * catch an export-map regression at all: the library's own imports are relative and never notice.
+ * WHAT IS CHECKED, on three axes:
+ *  1. `stubs/` renders through the engine — no throw, a declared destination, non-empty contents;
+ *  2. `dist/stubs/` — what a consumer actually installs — renders byte-identically to `stubs/`;
+ *  3. the rendered output compiles, resolved BY NAME through the package's `exports` map, so the
+ *     shipped `dist/**\/*.d.ts` is what the stubs are checked against and an export-map regression is
+ *     visible (the library's own imports are relative and never notice one).
  *
- * Exits 0 on success; on failure prints tsc's diagnostics and exits non-zero.
+ * Exits 0 on success; on failure prints diagnostics and exits non-zero.
  * Driven by `stub-typecheck.spec.ts`.
  */
 import { execFileSync } from 'node:child_process';
@@ -36,30 +41,39 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { AppFactory } from '@adonisjs/core/factories/app';
 
 const pkgRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+const srcStubs = join(pkgRoot, 'stubs');
+const distStubs = join(pkgRoot, 'dist/stubs');
+
+/** Every stub `configure` publishes. Destinations come from each stub's own header, not from here. */
+const STUBS = [
+  'config/media.stub',
+  'config/media_dashboard.stub',
+  'database/migrations/create_media_table.stub',
+  'database/migrations/create_media_upload_sessions_table.stub',
+];
 
 /**
- * Every stub `configure` publishes, with the path it writes to. All four emit typed TypeScript that
- * imports from this package or from `@adonisjs/lucid`, so all four would break a consumer's build if a
- * signature or an export drifted. The migration filenames are the generator's
- * `${Date.now()}_<name>.ts` shape with the timestamp fixed, so the compiled set is deterministic.
+ * The list above must match what `configure.ts` actually publishes. A stub added there but not here
+ * would leave this gate quietly covering less than the package ships — the same "untested became
+ * tested-and-green" failure this file exists to prevent, one level up.
  */
-const STUBS = [
-  { stub: 'config/media.stub', to: 'config/media.ts' },
-  { stub: 'config/media_dashboard.stub', to: 'config/media_dashboard.ts' },
-  {
-    stub: 'database/migrations/create_media_table.stub',
-    to: 'database/migrations/1785200000000_create_media_table.ts',
-  },
-  {
-    stub: 'database/migrations/create_media_upload_sessions_table.stub',
-    to: 'database/migrations/1785200000001_create_media_upload_sessions_table.ts',
-  },
-];
+function assertStubListMatchesConfigure() {
+  const configure = readFileSync(join(pkgRoot, 'configure.ts'), 'utf8');
+  const published = [...configure.matchAll(/'([\w/]+\.stub)'/g)].map((m) => m[1]);
+  const missing = published.filter((p) => !STUBS.includes(p));
+  const extra = STUBS.filter((p) => !published.includes(p));
+  if (missing.length || extra.length) {
+    throw new Error(
+      `STUBS is out of sync with configure.ts — listed but not published: [${extra}]; published but unchecked: [${missing}]`,
+    );
+  }
+}
 
 /**
  * The commented-out examples inside the config stubs, compiled as extra files.
@@ -70,28 +84,25 @@ const STUBS = [
  * is nearly as dark — `delivery` and the whole `uploads` block are commented, and they are the ONLY
  * users of its `uploadSessions` import.
  *
- * A commented example is still shipped code: a user uncomments it and expects it to compile. So each
- * block below is uncommented mechanically — one comment level stripped, which turns `// uploads: {`
- * into code while leaving the prose inside it (`//   // Session-backed…`) as a comment — and the
- * result is compiled in place, so every key is checked against the position it actually occupies.
+ * A commented example is still shipped code: a user uncomments it and expects it to compile. Each
+ * block is uncommented mechanically — one comment level stripped, which promotes `// uploads: {` to
+ * code while leaving the prose nested inside it (`//   // Session-backed…`) an ordinary comment — and
+ * compiled in place, so every key is checked against the position it actually occupies.
  *
- * Anchors are exact whole lines and must match EXACTLY ONCE. If a stub is reworded the harness fails
- * loudly instead of silently checking less than it claims — the failure mode this whole file exists
- * to prevent.
+ * Anchors are exact whole lines matched against the RENDERED output and must match EXACTLY ONCE. If a
+ * stub is reworded the harness fails loudly instead of silently checking less than it claims.
  */
-const COMMENTED_EXAMPLES = [
-  {
-    stub: 'config/media.stub',
-    to: 'config/media.all-options.ts',
+const COMMENTED_EXAMPLES = {
+  'config/media.stub': {
+    suffix: 'all-options',
     blocks: [
       ["  // disk: 's3', // omit to use Drive's default disk"],
       ["  // delivery: { mode: 'proxy', signedTtlSeconds: 300 },"],
       ['  // uploads: {', '  // },'],
     ],
   },
-  {
-    stub: 'config/media_dashboard.stub',
-    to: 'config/media_dashboard.all-options.ts',
+  'config/media_dashboard.stub': {
+    suffix: 'all-options',
     blocks: [
       [
         '  // enabled: true,',
@@ -100,14 +111,14 @@ const COMMENTED_EXAMPLES = [
       ['  // auth: {', '  // },'],
     ],
     /**
-     * The two symbols the dashboard examples borrow from the host app, so the check stays on what
-     * this package owns — the shape of `auth`, `disks`, `actions` — instead of failing on
-     * `#start/kernel`, which a scratch app has no reason to provide.
+     * The two symbols the dashboard examples borrow from the host app, so the check stays on what this
+     * package owns — the shape of `auth`, `disks`, `actions` — instead of failing on `#start/kernel`,
+     * which a scratch app has no reason to provide.
      *
-     * `auth(): never` deliberately leaves that one VALUE unchecked: what a host's middleware returns
-     * is the host's business, and typing it as this package's own `DashboardMiddleware` would only
-     * assert the check against itself. The `middleware` KEY is still verified — an option that no
-     * longer exists on the config type fails excess-property checking regardless of its value.
+     * `auth(): never` deliberately leaves that one VALUE unchecked: what a host's middleware returns is
+     * the host's business, and typing it as this package's own `DashboardMiddleware` would only assert
+     * the check against itself. The `middleware` KEY is still verified — an option that no longer
+     * exists on the config type fails excess-property checking regardless of its value.
      */
     preamble: [
       'declare const env: { get(key: string): string }',
@@ -115,15 +126,95 @@ const COMMENTED_EXAMPLES = [
       '',
     ].join('\n'),
   },
-];
+};
 
 /**
- * Strip exactly one comment level from every line of each anchored block, leaving the rest of the
- * stub untouched. One level is the load-bearing detail: it promotes `// uploads: {` to code while
- * demoting the nested prose `//   // Session-backed…` to an ordinary comment rather than to syntax.
+ * The published copy must be byte-identical to the source.
+ *
+ * That is the right assertion ONLY because this package's `copy:stubs` is a pure `cp -r` for stubs —
+ * it transforms nothing on the way (the SPA copy in the same script targets `dist/assets`, not
+ * `dist/stubs`). A build that rewrote stubs in transit would need this compared against the expected
+ * TRANSFORMATION instead, so if `copy:stubs` ever grows one, change this rather than deleting it.
+ *
+ * Compared as BYTES, not as text: a set comparison cannot see a copy whose content drifted, and a
+ * string comparison cannot see encoding or line-ending drift — both of which change what a consumer
+ * receives while every file is still present and still "looks" the same.
  */
-function uncomment({ stub, blocks, preamble }) {
-  const rendered = render({ stub });
+function assertPublishedCopyIsIdentical(stubPath) {
+  const from = join(srcStubs, stubPath);
+  const to = join(distStubs, stubPath);
+
+  let published;
+  try {
+    published = readFileSync(to);
+  } catch {
+    throw new Error(
+      `dist/stubs/${stubPath} is missing. Either the build has not run (\`pnpm build\`), or \`copy:stubs\` does not publish this stub — check that its directory is copied wholesale rather than file by file.`,
+    );
+  }
+
+  const source = readFileSync(from);
+  if (source.equals(published)) return;
+
+  const detail =
+    source.length !== published.length
+      ? `${source.length} bytes in stubs/, ${published.length} in dist/stubs/`
+      : 'same length, differing bytes (an encoding or line-ending change)';
+
+  throw new Error(
+    [
+      `dist/stubs/${stubPath} is not byte-identical to stubs/${stubPath} — ${detail}.`,
+      '  If you edited the stub since the last build, this is a STALE BUILD: run `pnpm build`.',
+      '  If a fresh build still differs, `copy:stubs` is REWRITING the stub in transit, which is a bug:',
+      '  a consumer would install something other than what this repo reviews.',
+    ].join('\n'),
+  );
+}
+
+/**
+ * Boot the minimum AdonisJS app the stubs engine needs, rooted AT the scratch consumer app. Rooting it
+ * there is what lets each stub's own `exports({ to: app.configPath(...) })` header resolve to a real
+ * destination inside that app — so nothing here computes a path; the stub declares it.
+ */
+async function bootApp(appRoot) {
+  const app = new AppFactory().create(pathToFileURL(`${appRoot}/`), () => {});
+  await app.init();
+  await app.boot();
+  return app;
+}
+
+/**
+ * Render one stub through the SAME engine `node ace configure` uses. `prepare()` is `generate()`
+ * without the disk write: real template compilation, real header evaluation, real destination.
+ * Throws whatever the engine throws — which is the point.
+ */
+async function renderStub(app, stubPath, source) {
+  // Any throw here is the finding, so it must arrive legible: which stub, and which of the two roots
+  // it came from. A bare stack trace from the engine (an emptied stub, one `copy:stubs` never copied)
+  // reads as a harness crash rather than as the packaging defect it actually is.
+  const label = `${source === distStubs ? 'dist/stubs' : 'stubs'}/${stubPath}`;
+  let prepared;
+  try {
+    const stub = await (await app.stubs.create()).build(stubPath, { source });
+    prepared = await stub.prepare({});
+  } catch (error) {
+    throw new Error(`${label} could not be rendered by the stubs engine: ${error.message}`);
+  }
+  const to = prepared.attributes?.to;
+  if (!to)
+    throw new Error(
+      `${stubPath} declared no destination — its exports() header is missing or empty`,
+    );
+  if (prepared.contents.trim() === '') throw new Error(`${stubPath} rendered to nothing`);
+  return { contents: prepared.contents, to };
+}
+
+/**
+ * Strip exactly one comment level from every line of each anchored block, leaving the rest untouched.
+ * One level is the load-bearing detail: it promotes `// uploads: {` to code while demoting the nested
+ * prose `//   // Session-backed…` to an ordinary comment rather than to syntax.
+ */
+function uncomment(rendered, stubPath, { blocks, preamble }) {
   const lines = rendered.split('\n');
   const marked = new Set();
 
@@ -133,49 +224,21 @@ function uncomment({ stub, blocks, preamble }) {
       for (const [i, line] of lines.entries()) if (line.trimEnd() === needle) hits.push(i);
       if (hits.length !== 1) {
         throw new Error(
-          `anchor ${JSON.stringify(needle)} matched ${hits.length} lines in ${stub} — expected exactly 1. The stub changed; update the anchors in this harness rather than dropping the block.`,
+          `anchor ${JSON.stringify(needle)} matched ${hits.length} lines in ${stubPath} — expected exactly 1. The stub changed; update the anchors in this harness rather than dropping the block.`,
         );
       }
       return hits[0];
     };
     const from = at(start);
     const to = at(end);
-    if (to < from) throw new Error(`anchors are inverted in ${stub}`);
+    if (to < from) throw new Error(`anchors are inverted in ${stubPath}`);
     for (let i = from; i <= to; i += 1) marked.add(i);
   }
 
-  const out = lines
+  const body = lines
     .map((line, i) => (marked.has(i) ? line.replace(/^(\s*)\/\/ ?/, '$1') : line))
     .join('\n');
-
-  return (preamble ?? '') + out;
-}
-
-/**
- * Render a stub the way the generator does. Every stub here carries exactly one template construct —
- * the `{{{ exports({ to: ... }) }}}` destination header — which the generator consumes to decide where
- * the file lands and never emits.
- *
- * Deliberately strict in both directions: a missing header means the render assumption is broken (the
- * file would be checked with a stray header in it), and ANY leftover `{{ … }}` is a hard failure rather
- * than a silent pass. A stub that grows a construct this renderer does not model would otherwise reach
- * `tsc` with literal braces in it — which reads as a compile error nobody can explain, or worse, gets
- * "fixed" by loosening the check until it stops looking at anything.
- */
-function render({ stub }) {
-  const source = readFileSync(join(pkgRoot, 'stubs', stub), 'utf8');
-
-  if (source.trim() === '') throw new Error(`${stub} is empty — nothing would be generated`);
-
-  const out = source.replace(/\{\{\{[\s\S]*?\}\}\}\n/, '');
-  if (out === source)
-    throw new Error(`no {{{ exports() }}} header in ${stub} — render assumption broken`);
-
-  const leftover = out.match(/\{\{.*?\}\}/);
-  if (leftover) throw new Error(`unrendered template syntax ${leftover[0]} left in ${stub}`);
-  if (out.trim() === '') throw new Error(`${stub} renders to nothing but its header`);
-
-  return out;
+  return (preamble ?? '') + body;
 }
 
 /**
@@ -209,6 +272,8 @@ function linkDependencies(appRoot) {
   symlinkSync(pkgRoot, join(to, '@adonis-agora/media'));
 }
 
+assertStubListMatchesConfigure();
+
 const appRoot = mkdtempSync(join(tmpdir(), 'media-stub-typecheck-'));
 try {
   writeFileSync(
@@ -217,16 +282,22 @@ try {
   );
   linkDependencies(appRoot);
 
-  for (const spec of STUBS) {
-    const target = join(appRoot, spec.to);
-    mkdirSync(join(target, '..'), { recursive: true });
-    writeFileSync(target, render(spec));
-  }
+  const app = await bootApp(appRoot);
 
-  for (const spec of COMMENTED_EXAMPLES) {
-    const target = join(appRoot, spec.to);
-    mkdirSync(join(target, '..'), { recursive: true });
-    writeFileSync(target, uncomment(spec));
+  for (const stubPath of STUBS) {
+    // What the consumer installs is `dist/stubs`; `stubs/` is only its source.
+    assertPublishedCopyIsIdentical(stubPath);
+    const fromDist = await renderStub(app, stubPath, distStubs);
+
+    // The stub's OWN header decided this path; nothing here computes it.
+    mkdirSync(dirname(fromDist.to), { recursive: true });
+    writeFileSync(fromDist.to, fromDist.contents);
+
+    const example = COMMENTED_EXAMPLES[stubPath];
+    if (example) {
+      const variant = fromDist.to.replace(/\.ts$/, `.${example.suffix}.ts`);
+      writeFileSync(variant, uncomment(fromDist.contents, stubPath, example));
+    }
   }
 
   /**
@@ -272,11 +343,11 @@ try {
   }
 } finally {
   // `STUB_TYPECHECK_KEEP=1` leaves the scratch app on disk and prints its path — the only practical
-  // way to inspect what was actually compiled, especially the uncommented variants.
+  // way to inspect what was actually rendered and compiled.
   if (process.env.STUB_TYPECHECK_KEEP) console.error(`scratch app kept at ${appRoot}`);
   else rmSync(appRoot, { recursive: true, force: true });
 }
 
 console.log(
-  `stub typecheck: OK (${STUBS.length} stubs, ${COMMENTED_EXAMPLES.length} with their commented examples uncommented)`,
+  `stub typecheck: OK (${STUBS.length} stubs rendered by the real engine from stubs/ and dist/stubs/, ${Object.keys(COMMENTED_EXAMPLES).length} with their commented examples uncommented)`,
 );
