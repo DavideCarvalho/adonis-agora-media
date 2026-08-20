@@ -83,7 +83,7 @@ Each `disks.s3(...)` returns a **lazy thunk**. Calling it in the config file cos
 
 ## The base `Disk` contract
 
-Like any Drive disk, `S3Disk` satisfies the structural [`Disk`](/docs/media/stores-and-processors#the-disk-contract-reusing-drive) contract, so it works everywhere the library already writes:
+Like any Drive disk, `S3Disk` satisfies the structural [`Disk`](/docs/media/stores-and-processors#the-disk-contract--reusing-drive) contract, so it works everywhere the library already writes:
 
 - `put` / `putStream` / `getBytes` / `getStream` / `exists` / `delete` / `getMetaData`
 - `getUrl(key)` — a stable public URL from `publicBaseUrl` (or a synthesised virtual-hosted / path-style URL).
