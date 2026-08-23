@@ -1,0 +1,499 @@
+# Domain map for adonis-media (TanStack Intent agent skills).
+# Produced autonomously (fully-autonomous constraint — NO maintainer interview was run;
+# gaps are recorded in _artifacts/skill_spec.md). Grounded in README.md, REVIEW.md,
+# docs/**, and packages/{adonis,react,dashboard}/{src,package.json}.
+
+library:
+  name: adonis-media
+  version: 0.12.1
+  repository: 'https://github.com/DavideCarvalho/adonis-agora-media'
+  description: >-
+    Media-library for AdonisJS (the spatie/laravel-media-library feel) on top of
+    @adonisjs/drive: owner collections with MIME/content policy, column attachments,
+    eager/lazy image conversions, pluggable content transformers (HLS via mediabunny),
+    proxy/direct-S3/resumable-TUS uploads, configurable delivery, an embedded management
+    console, and a React upload client.
+  primary_framework: AdonisJS
+
+# Versions read from packages/*/package.json at scaffolding time.
+versions:
+  '@adonis-agora/media': 0.12.1
+  '@adonis-agora/media-react': 0.5.0
+  '@adonis-agora/media-dashboard': 8.0.0
+
+primary_packages:
+  - name: '@adonis-agora/media'
+    dir: packages/adonis
+    role: Core library — defineConfig, MediaManager (library/attachments/uploads/
+      resumable/direct accessors), MediaStore + ImageProcessor + Disk SPIs, bundled
+      disks.s3()/processors.sharp()/transformers.hls()+probe(), delivery handlers,
+      embedded dashboard provider, testing kit.
+  - name: '@adonis-agora/media-react'
+    dir: packages/react
+    role: Browser companion — useMediaUpload, MediaUploader, framework-free
+      createMediaUploadClient (./client), console launcher (OpenMediaDashboardButton).
+  - name: '@adonis-agora/media-dashboard'
+    dir: packages/dashboard
+    role: Standalone management console (React SPA build source + thin delegate
+      provider). The console ships embedded in @adonis-agora/media; this package is
+      the legacy/explicit-install variant.
+
+# The mental model an AI agent must hold to use the library correctly.
+concepts:
+  - id: agora-config-idiom
+    summary: >-
+      Drivers live in the core package and are selected BY NAME from factory maps
+      (stores / processors / disks / uploadSessions / transformers). Every factory is a
+      lazy thunk — the heavy optional peer (@adonisjs/lucid, sharp, @aws-sdk/client-s3,
+      mediabunny) is imported only when its driver is SELECTED at boot.
+    source: docs/configuration.mdx, packages/adonis/src/define_config.ts
+  - id: manager-and-layers
+    summary: >-
+      The provider binds one singleton MediaManager; reach it with
+      `import media from '@adonis-agora/media/services/main'` or DI. Accessors:
+      media.library (owner collections), media.attachments (column attachments),
+      media.disk(name?) escape hatch, media.store (cross-owner reads),
+      media.uploads / media.resumable / media.direct (opt-in upload coordinators),
+      media.collections registry.
+    source: docs/getting-started.mdx, packages/adonis/src/media_manager.ts
+  - id: disk-precedence
+    summary: >-
+      Which disk a write targets: per-call disk > collection disk > top-level disk >
+      Drive default. Where the NAME resolves: the config's own `disks` map FIRST, then
+      @adonisjs/drive. Locally-configured disks win by name; Drive is read lazily.
+    source: docs/configuration.mdx, packages/adonis/src/disks/drive.ts
+  - id: collection-policy
+    summary: >-
+      A collection is the policy layer: acceptsMimeTypes (exact-match whitelist +
+      magic-byte content verification, closed vs open whitelist), single:true atomic
+      replace, append-only ordering, per-collection disk, conversion presets +
+      transformers sharing ONE record.conversions namespace (collision = boot-time
+      TransformerConflictError). Undeclared collections are permissive by default.
+    source: docs/collections-and-conversions.mdx, docs/single-file.mdx
+  - id: conversions-vs-transformers
+    summary: >-
+      ConversionPreset are IMAGE-only (sharp), eager on attach or lazy on first
+      url(id, name) then cached. Transformers (hls/probe/yours) persist into the same
+      conversions map but NEVER generate on read — url()/deliver() throw
+      TransformNotReadyError until transform() runs (usually from a job).
+    source: docs/collections-and-conversions.mdx, docs/transformers.mdx
+  - id: attachments-value-object
+    summary: >-
+      AttachmentManager is the adonis-attachment shape: one file on a model JSON
+      column, no owner, no extra table. Variants are ALWAYS eager (no record to cache
+      lazy results onto). Persist att.toJSON(); rebuild with Attachment.fromJSON().
+      delete() removes disk objects but never touches your column.
+    source: docs/attachments.mdx, packages/adonis/src/attachment.ts
+  - id: spi-seams
+    summary: >-
+      Three pluggable seams: MediaStore (save/find/listByOwner/list/delete/nextOrder —
+      list is the cross-owner keyset-paginated read the dashboard needs), ImageProcessor
+      (one convert method), and the structural Disk contract (8 required methods;
+      putStream + getVisibility unlock streaming writes and delivery auto). Detected
+      structurally: MultipartUploadDisk and ExtendedDisk (disks.s3() implements both).
+    source: docs/stores-and-processors.mdx, docs/storage/s3-disk.mdx
+  - id: upload-strategies
+    summary: >-
+      proxy (any disk, bytes through the app), direct (presigned multipart part URLs,
+      multipart-capable disk only — forcing it elsewhere throws UploadNotSupportedError),
+      resumable TUS (byte-offset resume), direct SESSIONS (part-granular resume, state
+      persisted in an UploadSessionStore shared with TUS). Raw upload methods write
+      bytes ONLY — no MediaRecord exists until attach/attachExisting adopts the key.
+    source: docs/uploads/upload-modes.mdx, docs/uploads/resumable-tus.mdx, docs/uploads/direct-sessions.mdx
+  - id: policy-seam
+    summary: >-
+      DirectUploadPolicy owns every app-specific decision: onInitiate returns the
+      SERVER-computed key (keyFor is never called when a policy exists),
+      resolveComplete targets attachExisting, onComplete's return value IS the response
+      body, mapError gets first refusal. Handlers perform NO authorization.
+    source: docs/uploads/direct-upload-policy.mdx
+  - id: delivery-strategy
+    summary: >-
+      delivery.mode auto|public|signed|proxy for reads; auto asks the disk's
+      getVisibility (unknown => signed, NEVER inferred from getUrl; auto never picks
+      proxy). MediaDeliveryHandler/HlsDeliveryHandler are framework-agnostic — you mount
+      the route behind YOUR auth. S3 visibility is declarative, never applied as an ACL.
+    source: docs/delivery.mdx, docs/storage/s3-disk.mdx
+  - id: browser-client
+    summary: >-
+      @adonis-agora/media-react speaks the provider's real routes: tusPath
+      (/media/uploads/tus), directPath (/media/uploads/direct/sessions), uploadsPath
+      (proxy PUT). Keys derive server-side except proxy meta.key; headers/getHeaders go
+      to app requests only, never presigned S3 PUTs; MediaHttpError.status separates
+      definitive (404/410) from transient failures.
+    source: docs/react/index.mdx, docs/react/client.mdx
+  - id: console
+    summary: >-
+      Embedded console (dashboard_provider) + standalone @adonis-agora/media-dashboard
+      delegate. Read-only by default; actions:true enables copy/move/delete (gated 403
+      in DashboardService). Built-in session auth (Mode A mint-from-app-auth / Mode B
+      credentials) composes with host middleware. DashboardService is the framework-free
+      engine; deleteMediaRecord deletes the ROW, not the object.
+    source: docs/dashboard/index.mdx, docs/dashboard/authentication.mdx, docs/dashboard/programmatic.mdx
+
+domains:
+  - id: setup-configuration
+    title: Install, configure, and wire the manager
+    package: '@adonis-agora/media'
+    surface:
+      - 'node ace configure @adonis-agora/media (both providers + 2 stub configs + 2 migrations)'
+      - 'defineConfig keys: disk, disks, store, stores, imageProcessor, collections, uploads, delivery, attachmentKeyPrefix, emitDiagnostics'
+      - "@adonis-agora/media/services/main singleton"
+    key_facts:
+      - Naming a `store` with no matching factory THROWS StoreNotConfiguredError — never a silent fallback to in-memory.
+      - Every factory (stores.lucid/processors.sharp/disks.s3/uploadSessions.lucid/transformers.hls) is a lazy thunk; the optional peer loads only when selected.
+      - A media call at module scope hits @adonisjs/drive before boot => DriveNotReadyError.
+
+  - id: library-collections
+    title: Owner collections and conversions
+    package: '@adonis-agora/media'
+    surface:
+      - 'media.library.attach / attachExisting / for(ownerType, ownerId)'
+      - 'media.library.url / signedUrl / deliver / ensureConversion / transform / find / list / delete'
+      - 'MediaCollectionConfig: single, acceptsMimeTypes, disk, conversions, transformers'
+      - 'detectMimeType / verifyContentAgainstWhitelist / isClosedSignatureWhitelist'
+    key_facts:
+      - MIME check is exact-match (no wildcards) BEFORE any write; then magic-byte signature verification (closed whitelists reject unrecognized bytes).
+      - single:true replaces AFTER the new file is safely persisted; without it attach APPENDS (ordering is append-only).
+      - Converting needs imageProcessor — ImageProcessorMissingError otherwise; conversion format defaults to webp.
+      - Deterministic `id` makes retries overwrite in place instead of orphaning new UUID keys.
+
+  - id: attachments-single-file
+    title: Column attachments and the single-file seam
+    package: '@adonis-agora/media'
+    surface:
+      - 'media.attachments.createFromFile / url / signedUrl / delete'
+      - 'Attachment.toJSON / Attachment.fromJSON; AttachmentData variants/meta'
+      - '@adonis-agora/media/single-file: storeSingleFile / removeSingleFile / *With / isSingleFileStoreAvailable'
+
+  - id: storage-delivery
+    title: Storage SPIs, S3 disk, and delivery
+    package: '@adonis-agora/media'
+    surface:
+      - 'MediaStore SPI + stores.memory()/lucid(); ImageProcessor + processors.sharp()'
+      - 'Disk contract, DiskResolver, StorageManager, createDriveBackedResolver, disks.s3(), presignS3Url'
+      - 'delivery.mode auto|public|signed|proxy; MediaDeliveryHandler; HlsDeliveryHandler; library.deliver()'
+      - '@adonis-agora/media/testing doubles'
+    key_facts:
+      - createDriveBackedResolver needs the drive SERVICE MODULE NAMESPACE (import * as), not a captured default export.
+      - s3 `visibility` is declarative (never probed, never applied as ACL); delivery auto asks getVisibility and degrades to signed when unknown.
+      - Delivery/upload handlers perform NO authorization — mounting them unguarded publishes every record.
+
+  - id: uploads-resumable
+    title: Large-file uploads (proxy, direct-S3, TUS, policies)
+    package: '@adonis-agora/media'
+    surface:
+      - 'uploads.{mode,partSize,presignTtlSeconds,routes}; media.uploads.initiateDirectUpload/completeDirectUpload/abortDirectUpload/proxyUpload'
+      - 'uploads.resumable + media.resumable (createUpload/writeChunk/status/complete/abort/list/listParts); TusUploadHandler'
+      - 'uploads.direct + media.direct (initiate/confirmPart/status/complete/abort); DirectUploadPolicy; completeDirectUploadToLibrary / completeUploadToLibrary'
+    key_facts:
+      - Routes are opt-in and unguarded by design — routes.middleware (+ policy hooks) are the only gates.
+      - Bucket CORS MUST expose ETag or direct uploads cannot confirm parts (the most common direct-upload misconfiguration).
+      - Adopt finished uploads with attachExisting/complete*ToLibrary — never re-read bytes into attach().
+
+  - id: react-uploads
+    title: React/browser upload client
+    package: '@adonis-agora/media-react'
+    surface:
+      - 'useMediaUpload({mode}) -> upload/pause/resume/abort/reset, status, progress, resumable'
+      - 'MediaUploader (render prop headless); createMediaUploadClient (./client, framework-free)'
+      - 'OpenMediaDashboardButton / useOpenMediaDashboard / openMediaDashboard; ConsoleSessionError redirect trap'
+
+  - id: dashboard-console
+    title: Management console (embedded + standalone)
+    package: '@adonis-agora/media-dashboard'
+    surface:
+      - 'config/media_dashboard.ts: basePath, apiBasePath, actions, disks, middleware, enabled, auth, objectInsights'
+      - 'auth.session (Mode A) / auth.login (Mode B) / revalidate; signSessionCookie / verifySessionCookie / resolveConsoleAuth'
+      - 'DashboardService + DashboardError + MediaManagerLike; JSON contract types (@adonis-agora/media-dashboard/types)'
+
+skills:
+  - name: media-setup
+    slug: media-setup
+    domain: setup-configuration
+    type: core
+    packages: ['@adonis-agora/media']
+    covers: [defineConfig, configure hook, media_provider, dashboard_provider,
+             services/main, disk precedence, stores/processors lazy peers,
+             StoreNotConfiguredError, DriveNotReadyError]
+  - name: media-library-collections
+    slug: media-library-collections
+    domain: library-collections
+    type: core
+    packages: ['@adonis-agora/media']
+    covers: [attach, attachExisting, for(), url, signedUrl, ensureConversion, transform,
+             delete, single:true, acceptsMimeTypes, magic-byte verification, ordering,
+             eager/lazy conversions, ConversionPreset, customProperties]
+  - name: media-attachments-single-file
+    slug: media-attachments-single-file
+    domain: attachments-single-file
+    type: core
+    packages: ['@adonis-agora/media']
+    covers: [createFromFile, variants eager, toJSON/fromJSON, AttachmentManager.url/
+             signedUrl/delete, model JSON-column pattern, storeSingleFile,
+             isSingleFileStoreAvailable]
+  - name: media-stores-delivery
+    slug: media-stores-delivery
+    domain: storage-delivery
+    type: core
+    packages: ['@adonis-agora/media']
+    covers: [MediaStore SPI, listByOwner/list keyset paging, LucidMediaStore,
+             ImageProcessor, sharp, Disk contract, putStream/getVisibility,
+             createDriveBackedResolver, disks.s3(), extended operations, presignS3Url,
+             delivery.mode, signedUrl TTL, MediaDeliveryHandler, HlsDeliveryHandler,
+             testing doubles]
+  - name: media-uploads-resumable
+    slug: media-uploads-resumable
+    domain: uploads-resumable
+    type: core
+    packages: ['@adonis-agora/media']
+    covers: [uploads config, resolveUploadMode, proxyUpload, initiateDirectUpload,
+             TusUploadHandler, media.resumable, media.direct, DirectUploadPolicy,
+             completeUploadToLibrary, completeDirectUploadToLibrary, attachExisting]
+  - name: media-react-uploads
+    slug: media-react-uploads
+    domain: react-uploads
+    type: core
+    packages: ['@adonis-agora/media-react']
+    covers: [useMediaUpload, MediaUploader, createMediaUploadClient, xhrPartUploader,
+             MediaHttpError, UploadMeta, storageKey resume, OpenMediaDashboardButton,
+             ConsoleSessionError]
+  - name: media-dashboard-console
+    slug: media-dashboard-console
+    domain: dashboard-console
+    type: core
+    packages: ['@adonis-agora/media-dashboard']
+    covers: [media_dashboard config, actions gate, middleware, auth session/login modes,
+             signSessionCookie, DashboardService, DashboardError, objectInsights]
+
+failure_modes:
+  - mistake: expecting a silent in-memory fallback for an unconfigured store
+    mechanism: Provider throws StoreNotConfiguredError at boot when `store` names a missing `stores` entry — a typo must not swap durable persistence for a process-local Map.
+    source: docs/configuration.mdx (How the provider builds it), docs/errors.mdx
+    priority: HIGH
+    skills: [media-setup]
+  - mistake: calling the media singleton at module scope before Drive boots
+    mechanism: A disk resolution that reaches @adonisjs/drive before its manager boots throws DriveNotReadyError — almost always a media call at module scope instead of inside a request/app.booted.
+    source: docs/errors.mdx, docs/stores-and-processors.mdx
+    priority: CRITICAL
+    skills: [media-setup]
+  - mistake: selecting lucid/sharp/s3 without installing the optional peer or migration
+    mechanism: Factory thunks import heavy peers only when selected; selecting stores.lucid() without the published migration fails on first attach, not at configure time.
+    source: docs/getting-started.mdx, docs/configuration.mdx
+    priority: HIGH
+    skills: [media-setup]
+  - mistake: importing dashboard defineConfig into config/media.ts (or vice versa)
+    mechanism: Both `@adonis-agora/media` and `@adonis-agora/media/dashboard` export a `defineConfig`; the wrong one types the wrong config file and silently drops keys.
+    source: README.md subpath table, docs/dashboard/index.mdx
+    priority: MEDIUM
+    skills: [media-setup]
+  - mistake: requesting conversions with no imageProcessor configured
+    mechanism: Asking for any conversion (or declaring eager ones) with no processor throws ImageProcessorMissingError rather than silently skipping.
+    source: docs/getting-started.mdx warn callout, docs/configuration.mdx
+    priority: HIGH
+    skills: [media-library-collections]
+  - mistake: using wildcard MIME types in acceptsMimeTypes
+    mechanism: The whitelist is an exact string match — 'image/*' matches nothing, so every attach throws MimeNotAllowedError before any write.
+    source: docs/collections-and-conversions.mdx (MIME whitelist)
+    priority: HIGH
+    skills: [media-library-collections]
+  - mistake: assuming attach replaces an existing file without single:true
+    mechanism: Replacement is a property of the COLLECTION; without single:true each attach appends a new record (append-only order), so "the avatar" quietly becomes a growing list.
+    source: docs/collections-and-conversions.mdx, docs/single-file.mdx warn callout
+    priority: CRITICAL
+    skills: [media-library-collections, media-attachments-single-file]
+  - mistake: reading url() on a transformer conversion expecting lazy generation
+    mechanism: Image presets generate lazily on first read, but reads NEVER generate transforms — url()/deliver() throw TransformNotReadyError until transform(id, name) runs.
+    source: docs/transformers.mdx (Reads never generate a transform)
+    priority: CRITICAL
+    skills: [media-library-collections]
+  - mistake: declaring conversion presets on a non-image collection
+    mechanism: Presets decode through sharp (image-only); requesting one for a video/PDF fails inside sharp — transformers are the seam for non-image derivations.
+    source: docs/collections-and-conversions.mdx warn callout
+    priority: HIGH
+    skills: [media-library-collections]
+  - mistake: trusting the declared mimeType as the real content type
+    mechanism: With acceptsMimeTypes present the library verifies magic-byte signatures; a renamed file throws ContentTypeMismatchError even though the declared type is whitelisted.
+    source: docs/collections-and-conversions.mdx (The content is checked too)
+    priority: HIGH
+    skills: [media-library-collections]
+  - mistake: requesting attachment variants that were not declared up front
+    mechanism: Variants are always eager (no record to cache lazy results onto); asking for an ungenerated variant throws VariantNotFoundError.
+    source: docs/attachments.mdx (Variants are eager, Resolving URLs)
+    priority: HIGH
+    skills: [media-attachments-single-file]
+  - mistake: leaving the model column populated after attachments.delete()
+    mechanism: delete() removes disk objects only — a stale column keeps resolving URLs to deleted objects until you clear and save the model yourself.
+    source: docs/attachments.mdx (Deleting)
+    priority: HIGH
+    skills: [media-attachments-single-file]
+  - mistake: calling storeSingleFile against a collection that is not single:true
+    mechanism: Nothing about the single-file functions enforces replacement — an undeclared/non-single collection appends on every call.
+    source: docs/single-file.mdx warn callout
+    priority: CRITICAL
+    skills: [media-attachments-single-file]
+  - mistake: passing the drive service default export instead of the module namespace
+    summary: captured-at-import
+    mechanism: Drive's service assigns its manager inside app.booted(); a destructured default is frozen undefined forever (=> DriveNotReadyError), while the namespace's live binding reflects the assignment.
+    source: docs/stores-and-processors.mdx (createDriveBackedResolver)
+    priority: CRITICAL
+    skills: [media-stores-delivery]
+  - mistake: setting s3 visibility public and expecting an ACL to be applied
+    mechanism: visibility is declarative metadata read by delivery auto — it is never probed or enforced; objects stay private unless the bucket policy allows reads.
+    source: docs/storage/s3-disk.mdx (visibility option)
+    priority: CRITICAL
+    skills: [media-stores-delivery]
+  - mistake: exposing a delivery route without authorization
+    mechanism: MediaDeliveryHandler resolves a media id to bytes/URL and performs NO authorization; mounted unguarded it publishes every record to anyone who can guess an id.
+    source: docs/delivery.mdx error callout
+    priority: CRITICAL
+    skills: [media-stores-delivery]
+  - mistake: relying on auto delivery for storage the browser cannot reach
+    mechanism: auto resolves to signed (never proxy) and presigns against the configured endpoint — an internal MinIO host needs publicEndpoint or the browser gets unresolvable URLs.
+    source: docs/delivery.mdx (auto never picks proxy), docs/storage/s3-disk.mdx (publicEndpoint)
+    priority: HIGH
+    skills: [media-stores-delivery]
+  - mistake: implementing a custom MediaStore without a working list()
+    mechanism: Nothing in attach/url/delete calls list(), so a store that omits or stubs it surfaces only later as EMPTY dashboard collection views.
+    source: docs/stores-and-processors.mdx, docs/dashboard/collections.mdx
+    priority: MEDIUM
+    skills: [media-stores-delivery]
+  - mistake: re-reading finished upload bytes through library.attach()
+    mechanism: attach buffers and rewrites the object — exactly what resumable uploads exist to avoid; adopt in place with completeUploadToLibrary/completeDirectUploadToLibrary/attachExisting.
+    source: docs/uploads/resumable-tus.mdx (Turning a finished upload into a media record)
+    priority: CRITICAL
+    skills: [media-uploads-resumable]
+  - mistake: shipping upload routes without middleware or a policy
+    mechanism: Handlers perform no authorization and routes.middleware defaults to [] — the endpoints are open to the internet unless you gate them.
+    source: docs/uploads/direct-sessions.mdx (routes.middleware), docs/uploads/direct-upload-policy.mdx
+    priority: CRITICAL
+    skills: [media-uploads-resumable]
+  - mistake: expecting bucket CORS to just work for direct uploads
+    mechanism: The browser must read the ETag response header to confirm parts; without ExposeHeaders:["ETag"] every confirmation fails with an explicit xhrPartUploader message.
+    source: docs/react/client.mdx (part transport), docs/uploads/direct-sessions.mdx warn callout
+    priority: CRITICAL
+    skills: [media-uploads-resumable]
+  - mistake: forcing mode:direct on a disk without native multipart
+    mechanism: direct is a requirement, auto is a preference — direct throws UploadNotSupportedError (mapped to 400) rather than silently downgrading.
+    source: docs/uploads/upload-modes.mdx (Resolving the mode yourself)
+    priority: MEDIUM
+    skills: [media-uploads-resumable]
+  - mistake: expecting a media record from policy-less direct completion
+    mechanism: Without a DirectUploadPolicy, complete returns the raw assembled object and creates NO MediaRecord — adopting it is the caller's job.
+    source: docs/uploads/direct-upload-policy.mdx (Without a policy)
+    priority: HIGH
+    skills: [media-uploads-resumable]
+  - mistake: adding Authorization headers to presigned S3 part PUTs
+    mechanism: headers/getHeaders apply to app requests only; an Authorization header on a presigned URL breaks the SigV4 signature.
+    source: docs/react/index.mdx warn callout, docs/react/client.mdx warn callout
+    priority: CRITICAL
+    skills: [media-react-uploads]
+  - mistake: passing meta.key to TUS or direct uploads expecting it honored
+    mechanism: key (and disk) in UploadMeta apply to PROXY only — TUS/direct derive the key server-side, and meta.key is silently ignored there.
+    source: docs/react/index.mdx (UploadMeta table)
+    priority: HIGH
+    skills: [media-react-uploads, media-uploads-resumable]
+  - mistake: treating the TComplete generic as validation
+    mechanism: TComplete is a type assertion over raw server JSON; nothing checks the shape — parse with a schema before trusting it.
+    source: docs/react/index.mdx (typed completion body warn)
+    priority: HIGH
+    skills: [media-react-uploads]
+  - mistake: sharing one storageKey between multiple uploaders
+    mechanism: storageKey should be unique per upload slot — two uploaders sharing a key fight over the same localStorage entry; entries require matching fileName AND size to reuse.
+    source: docs/react/index.mdx (Resuming a direct upload across a reload)
+    priority: MEDIUM
+    skills: [media-react-uploads]
+  - mistake: setting concurrency expecting parallel direct-S3 parts
+    mechanism: concurrency is reserved — direct-S3 uploads are sequential today; the option exists only for forward compatibility.
+    source: docs/react/index.mdx (client options table)
+    priority: MEDIUM
+    skills: [media-react-uploads]
+  - mistake: enabling dashboard actions without an auth gate
+    mechanism: actions:true enables copy/move/delete/folder sweeps/record deletion; the routes are mounted regardless and refuse only via DashboardService's 403 — gate with middleware/auth first.
+    source: docs/dashboard/index.mdx warn callout
+    priority: CRITICAL
+    skills: [media-dashboard-console]
+  - mistake: registering both the embedded and standalone console providers
+    mechanism: media_dashboard_provider (embedded) and @adonis-agora/media-dashboard's delegate provider must not both be registered — register exactly one.
+    source: docs/dashboard/index.mdx (Standalone install)
+    priority: MEDIUM
+    skills: [media-dashboard-console]
+  - mistake: assuming deleteMediaRecord removes the underlying object
+    mechanism: DashboardService.deleteMediaRecord deletes the MediaStore row only — the disk object stays where it is.
+    source: docs/dashboard/programmatic.mdx (Actions table)
+    priority: HIGH
+    skills: [media-dashboard-console]
+  - mistake: configuring dashboard auth with neither a session nor a login hook
+    mechanism: auth requires a non-empty secret AND at least one of session/login — anything else is a boot error by design (fail fast, not lock out).
+    source: docs/dashboard/authentication.mdx
+    priority: HIGH
+    skills: [media-dashboard-console]
+  - mistake: running expensive lookups in an objectInsights resolver
+    mechanism: resolve runs on EVERY preview of EVERY object (providers run concurrently, failures skipped) — a fan-out there slows the whole lightbox.
+    source: docs/dashboard/index.mdx (Object insights)
+    priority: MEDIUM
+    skills: [media-dashboard-console]
+
+tensions:
+  - name: streaming efficiency vs conversion capability
+    skills: [media-uploads-resumable, media-library-collections]
+    description: Zero-copy attach requires a known size AND no conversions; conversions need buffered bytes for the processor.
+    implication: Agents "optimize" attach with size+stream on a converting collection and either get silent buffering anyway or break conversion generation.
+  - name: explicit mode strictness vs auto convenience
+    skills: [media-uploads-resumable, media-stores-delivery]
+    description: direct throws on an incapable disk while auto silently downgrades; delivery auto degrades to signed rather than guessing public.
+    implication: Agents pick one philosophy without seeing the other — expecting auto to throw (it won't) or direct to downgrade (it won't).
+  - name: server-derived keys vs client flexibility
+    skills: [media-react-uploads, media-uploads-resumable]
+    description: Clients cannot choose keys (except proxy) because a client-chosen key is a hole; policies move key derivation fully server-side.
+    implication: Agents building "flexible" clients pass keys in metadata or trust client input, reintroducing the vulnerability the design closes.
+  - name: console power vs exposure surface
+    skills: [media-dashboard-console, media-setup]
+    description: The console's usefulness (actions, insights, breadth of disks) is configured entirely in config files that default to the safe side.
+    implication: Agents flip actions:true/disks lists for capability and forget the gate that must come with it.
+
+cross_references:
+  - from: media-setup
+    to: media-library-collections
+    reason: After configuring, the next developer moment is attaching to a collection; setup's store/disk choices determine collection behavior.
+  - from: media-library-collections
+    to: media-attachments-single-file
+    reason: Choosing between the owner-collection shape and the column-attachment shape is the first fork for any file field.
+  - from: media-uploads-resumable
+    to: media-react-uploads
+    reason: The React client speaks exactly these server routes; server prefix changes must be mirrored in client options.
+  - from: media-uploads-resumable
+    to: media-library-collections
+    reason: Finished uploads become library records via attachExisting — the collection policy re-validates real bytes there.
+  - from: media-stores-delivery
+    to: media-dashboard-console
+    reason: The console browses through ExtendedDisk operations and MediaStore.list; capability gaps explain empty views.
+  - from: media-react-uploads
+    to: media-dashboard-console
+    reason: The console embeds the same upload client; OpenMediaDashboardButton mints the console session.
+
+gaps:
+  - skill: all
+    question: Maintainer priorities among failure modes (which bite hardest in production) could not be confirmed — no maintainer interview was run (fully-autonomous constraint).
+    context: Priorities are inferred from docs callouts, source assertions, and error-table emphasis.
+    status: open
+  - skill: all
+    question: No GitHub issue/discussion mining was performed in this session, so AI-agent failure frequencies are inferred, not observed.
+    context: Failure modes were drawn from doc warnings, error tables, and source-level guards instead.
+    status: open
+  - skill: media-library-collections
+    question: Transformers/HLS have no dedicated skill — declaring them is covered in media-library-collections and serving via HlsDeliveryHandler in media-stores-delivery.
+    context: Right-sizing to 7 skills; a transformers-focused skill (WebCodecs injection, custom Transformer SPI) is the natural eighth if needed.
+    status: open
+  - skill: media-setup
+    question: Telescope integration (mediaTelescopeExtension, MediaWatcher claim registry) is intentionally out of scope.
+    context: Optional peer, niche integration; summarized nowhere beyond docs/integrations/telescope.mdx.
+    status: open
+  - skill: media-library-collections
+    question: The planned Lucid @media model decorator (roadmap) was excluded — it does not exist yet.
+    context: Agents generating @media(...) decorators today produce non-working code; the roadmap page is the guard.
+    status: resolved
+  - skill: media-dashboard-console
+    question: The dashboard SPA internals (views, folder-operation engines) are covered only at the config/service level, not UI level.
+    context: Agents extend the server side; the SPA is prebuilt and not meant to be modified.
+    status: resolved

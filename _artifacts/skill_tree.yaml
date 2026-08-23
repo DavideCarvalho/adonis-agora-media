@@ -1,0 +1,61 @@
+# Skill tree for adonis-media. Flat structure (skills/<name>/SKILL.md per package), no router.
+# Every skill is type `core`. Each entry carries its owning `package`.
+
+structure: flat
+router: false
+
+skills:
+  - name: media-setup
+    type: core
+    package: "@adonis-agora/media"
+    path: packages/adonis/skills/media-setup/SKILL.md
+    covers: [defineConfig, node ace configure, media_provider, dashboard_provider,
+             services/main, disk precedence, lazy peer thunks, StoreNotConfiguredError,
+             DriveNotReadyError]
+
+  - name: media-library-collections
+    type: core
+    package: "@adonis-agora/media"
+    path: packages/adonis/skills/media-library-collections/SKILL.md
+    covers: [attach, attachExisting, for(), url, signedUrl, ensureConversion, transform,
+             single:true, acceptsMimeTypes, magic-byte verification, ordering,
+             ConversionPreset, eager vs lazy, MediaRecord]
+
+  - name: media-attachments-single-file
+    type: core
+    package: "@adonis-agora/media"
+    path: packages/adonis/skills/media-attachments-single-file/SKILL.md
+    covers: [AttachmentManager.createFromFile, eager variants, Attachment.toJSON/fromJSON,
+             JSON-column model pattern, storeSingleFile, isSingleFileStoreAvailable]
+
+  - name: media-stores-delivery
+    type: core
+    package: "@adonis-agora/media"
+    path: packages/adonis/skills/media-stores-delivery/SKILL.md
+    covers: [MediaStore SPI, keyset list(), LucidMediaStore, ImageProcessor, sharp,
+             Disk contract, createDriveBackedResolver, disks.s3(), extended operations,
+             presignS3Url, delivery.mode, MediaDeliveryHandler, HlsDeliveryHandler,
+             testing doubles]
+
+  - name: media-uploads-resumable
+    type: core
+    package: "@adonis-agora/media"
+    path: packages/adonis/skills/media-uploads-resumable/SKILL.md
+    covers: [uploads config, resolveUploadMode, proxyUpload, initiateDirectUpload,
+             TusUploadHandler, media.resumable, media.direct, DirectUploadPolicy,
+             completeUploadToLibrary, completeDirectUploadToLibrary]
+
+  - name: media-react-uploads
+    type: core
+    package: "@adonis-agora/media-react"
+    path: packages/react/skills/media-react-uploads/SKILL.md
+    covers: [useMediaUpload, MediaUploader, createMediaUploadClient, xhrPartUploader,
+             MediaHttpError, UploadMeta, storageKey resume, OpenMediaDashboardButton]
+
+  - name: media-dashboard-console
+    type: core
+    package: "@adonis-agora/media-dashboard"
+    path: packages/dashboard/skills/media-dashboard-console/SKILL.md
+    covers: [media_dashboard defineConfig, actions gate, middleware, auth session/login,
+             revalidate, signSessionCookie, DashboardService, DashboardError,
+             objectInsights]
