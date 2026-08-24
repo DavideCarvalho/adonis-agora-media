@@ -23,6 +23,18 @@ export default defineConfig({
 })
 ```
 
+The hook receives the real `HttpContext`, so it can read the session, a bearer
+token, an IP allow-list — anything your app already trusts. A denied request is
+answered `401 { error: 'Unauthorized' }`, with two refinements shared with the
+other `@adonis-agora` dashboards:
+
+- **A redirect the hook writes wins.** If `authorize` sets a `location` header
+  (typically `ctx.response.redirect(...)`) before returning `false`, the guard
+  leaves that redirect alone instead of overwriting it with `401` JSON — the
+  hook for sending an unauthenticated visitor to your own login page.
+- **A throwing hook fails closed.** If `authorize` throws, the request is denied
+  (`401`) — a buggy hook never accidentally opens the console.
+
 The second is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
 
 The third is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first two options cover only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
