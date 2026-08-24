@@ -90,6 +90,25 @@ export default class MediaDashboardProvider {
         ? config.middleware
         : [config.middleware]
       : [];
+    // Access-decision hook (same shape as the other @adonis-agora dashboards). Runs BEFORE
+    // `middleware` and composes with the built-in `auth` session guard (all must pass).
+    // A denied request gets 401/403 — or honors a redirect the hook wrote (like the telescope
+    // guard, we check for a `location` header so a hook can send visitors to the app login).
+    const authorizeGate = config.authorize
+      ? [
+          async (ctx: HttpContext, next: () => Promise<void>) => {
+            let allowed: boolean;
+            try {
+              allowed = await config.authorize!(ctx);
+            } catch {
+              allowed = false;
+            }
+            if (allowed) return next();
+            if (ctx.response.getHeader('location')) return next();
+            ctx.response.status(401).send({ error: 'Unauthorized' });
+          },
+        ]
+      : [];
     // Built-in session-cookie login (Mode A/B), independent of `middleware` — see
     // `src/dashboard/auth.ts`. `null` when unconfigured, in which case every gate below is a no-op
     // and the API stays open.
@@ -103,9 +122,16 @@ export default class MediaDashboardProvider {
         objectInsights,
       );
 
+    const composedMiddleware = [...authorizeGate, ...middleware];
+
     this.#mountAuthRoutes(router, apiBase, auth);
-    this.#mountApi(router, apiBase, service, middleware, auth);
-    this.#mountSpa(router, basePath, { apiBase, uploadsBase, tusBase, actions }, middleware);
+    this.#mountApi(router, apiBase, service, composedMiddleware, auth);
+    this.#mountSpa(
+      router,
+      basePath,
+      { apiBase, uploadsBase, tusBase, actions },
+      composedMiddleware,
+    );
   }
 
   /**

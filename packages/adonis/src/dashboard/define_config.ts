@@ -6,6 +6,16 @@ import type { ObjectInsightProvider } from './object_insights.js';
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
 
 /**
+ * The access-decision hook gating the console (SPA + JSON API), same shape as the
+ * `authorize` hooks of the other `@adonis-agora` dashboards (telescope, durable, agent):
+ * return `true` to allow, `false` to deny (the guard answers `401`/`403`). Runs BEFORE any
+ * configured `middleware`, and composes with the built-in `auth` session guard (all must
+ * pass). Sync or async. Receives the real AdonisJS `HttpContext`, so it can read the
+ * session, a bearer token, an IP allow-list, etc.
+ */
+export type DashboardAuthorize = (ctx: HttpContext) => boolean | Promise<boolean>;
+
+/**
  * Configuration for the `@adonis-agora/media` dashboard, read by `dashboard_provider.ts` from
  * `config/media_dashboard.ts`. Same config KEY (`media_dashboard`) the standalone
  * `@adonis-agora/media-dashboard` package's provider always read, so an existing
@@ -38,6 +48,14 @@ export interface MediaDashboardConfig {
   tusPrefix?: string;
   /** Host middleware (auth) applied to the whole console — SPA and API. */
   middleware?: DashboardMiddleware | DashboardMiddleware[];
+  /**
+   * Access-decision hook gating the whole console (SPA + API), same shape as the
+   * `authorize` hooks of the other `@adonis-agora` dashboards. Runs BEFORE `middleware`
+   * and composes with the built-in `auth` session guard (all must pass). Denied requests
+   * get `401`/`403` (or honor a redirect the hook writes). Default: allow when not in
+   * production.
+   */
+  authorize?: DashboardAuthorize;
   /**
    * Gate the console's JSON API behind a built-in session-cookie login, mirroring the NestJS sibling
    * console. Omit to leave the API open (front it with your own `middleware`). When set, the SPA

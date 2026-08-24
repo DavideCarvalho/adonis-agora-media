@@ -7,15 +7,30 @@ icon: KeyRound
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The console is served at a literal path (`/media/dashboard` by default), which means a plain browser navigation to it carries none of your app's identity. You have two ways to close that gap.
+The console is served at a literal path (`/media/dashboard` by default), which means a plain browser navigation to it carries none of your app's identity. You have three ways to close that gap.
 
-The first is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
+The first is `authorize` — an access-decision hook, same shape as the other `@adonis-agora`
+dashboards (telescope, durable, agent). Return `true` to allow, `false` to deny; it runs
+**before** `middleware` and composes with the built-in `auth` session guard (all must pass).
+Use it to gate the whole console on your app's session/roles in one line:
 
-The second is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first option covers only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import { authorizeByRoles } from '@adonis-agora/authz'
+
+export default defineConfig({
+  authorize: authorizeByRoles({ roles: ['ADMIN'] }),
+})
+```
+
+The second is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
+
+The third is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first two options cover only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
 
 <Callout type="info" title="They compose">
-  `auth` and `middleware` are independent gates on the same routes. Configure both and a request
-  must pass both — your middleware first, the console's session guard second.
+  `authorize`, `middleware` and `auth` are independent gates on the same routes. Configure
+  multiple and a request must pass all of them — `authorize` first, then `middleware`, then
+  the console's session guard.
 </Callout>
 
 ---
