@@ -1,5 +1,14 @@
 # @adonis-agora/media
 
+## 0.12.2
+
+### Patch Changes
+
+- [#57](https://github.com/DavideCarvalho/adonis-agora-media/pull/57) [`331f53f`](https://github.com/DavideCarvalho/adonis-agora-media/commit/331f53f6294f3b7e4261bdbf65fb8090063aa673) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Ship TanStack Intent agent skills with every package. Each package now publishes a
+  `skills/` directory (`media-*` SKILL.md files) that lands in `node_modules` on install, so
+  AI coding agents can discover them via `npx @tanstack/intent list`; adds `@tanstack/intent`
+  as a devDependency for `intent validate` in CI.
+
 ## 0.12.1
 
 ### Patch Changes
