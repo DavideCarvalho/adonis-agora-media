@@ -1,6 +1,6 @@
 {
   "name": "@adonis-agora/media-react",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "React hook + headless uploader component and a framework-free browser upload client for @adonis-agora/media — resumable TUS, direct-S3 multipart, and proxy uploads. Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
