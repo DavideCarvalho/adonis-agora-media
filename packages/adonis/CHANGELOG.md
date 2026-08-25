@@ -1,5 +1,17 @@
 # @adonis-agora/media
 
+## 0.14.0
+
+### Minor Changes
+
+- [`0851b04`](https://github.com/DavideCarvalho/adonis-agora-media/commit/0851b0472ef8914e9d54ea1fbe27767ed2d7e521) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - feat(media): auto-create the `media` table on first use (ecosystem convention)
+
+  `LucidMediaStore` now auto-creates its table by default (`autoCreateSchema: true`),
+  matching `@adonis-agora/authz` and `@adonis-agora/durable` — a lib owns its own schema.
+  Exports `createMediaTables` / `dropMediaTables` from the package root (and the
+  `@adonis-agora/media/stores/lucid-schema` subpath) so an app that prefers explicit
+  control can set `autoCreateSchema: false` and run the same DDL from a migration.
+
 ## 0.13.0
 
 ### Minor Changes

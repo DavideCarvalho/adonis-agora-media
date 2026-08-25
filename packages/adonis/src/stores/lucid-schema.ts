@@ -115,9 +115,7 @@ export async function createMediaTables(
       updated_at BIGINT NOT NULL
     )`,
   );
-  await run(
-    `CREATE INDEX IF NOT EXISTS ${t.media}_owner_idx ON ${t.media} (owner_type, owner_id)`,
-  );
+  await run(`CREATE INDEX IF NOT EXISTS ${t.media}_owner_idx ON ${t.media} (owner_type, owner_id)`);
   await run(
     `CREATE INDEX IF NOT EXISTS ${t.media}_owner_collection_idx ON ${t.media} (owner_type, owner_id, collection)`,
   );
