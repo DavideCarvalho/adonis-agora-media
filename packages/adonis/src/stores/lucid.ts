@@ -9,12 +9,18 @@ import {
   decodeMediaCursor,
   encodeMediaCursor,
 } from '../media_store.js';
+import { createMediaTables } from './lucid-schema.js';
 
 export interface LucidMediaStoreOptions {
   /** The Lucid connection name. Defaults to the `Database` default connection. */
   connectionName?: string;
   /** Table name. Default `media`. */
   table?: string;
+  /**
+   * Auto-create the `media` table on first use (default `true`). Set to `false` to
+   * manage the schema explicitly via a migration calling {@link createMediaTables}.
+   */
+  autoCreateSchema?: boolean;
 }
 
 /** Physical row shape of the `media` table. JSON columns are stored as text. */
@@ -40,11 +46,18 @@ interface MediaRow {
  * Lucid-backed {@link MediaStore}. Persists media records in a `media` table via `@adonisjs/lucid`'s
  * query builder (Knex), so it works across SQLite / Postgres / MySQL. JSON payloads
  * (`custom_properties`, `conversions`) are stored as TEXT and timestamps as epoch-ms integers, so the
- * schema is portable across engines. Publish the migration with `node ace configure @adonis-agora/media`.
+ * schema is portable across engines.
+ *
+ * The `media` table is auto-created on first use (`autoCreateSchema`, default `true`) — the
+ * ecosystem convention, same as `@adonis-agora/authz` and `@adonis-agora/durable`. An app that
+ * prefers explicit control sets `autoCreateSchema: false` and publishes the migration via
+ * `node ace configure @adonis-agora/media` (or calls {@link createMediaTables} from a migration).
  */
 export class LucidMediaStore implements MediaStore {
   private readonly table: string;
   private readonly connectionName: string | undefined;
+  private readonly autoCreate: boolean;
+  private schemaReady: Promise<void> | undefined;
 
   constructor(
     private readonly db: Database,
@@ -52,6 +65,7 @@ export class LucidMediaStore implements MediaStore {
   ) {
     this.table = options.table ?? 'media';
     this.connectionName = options.connectionName;
+    this.autoCreate = options.autoCreateSchema !== false;
   }
 
   private client(): QueryClientContract {
@@ -62,7 +76,23 @@ export class LucidMediaStore implements MediaStore {
     return this.client().from(this.table);
   }
 
+  /** Ensure the schema exists before the first operation, once per store instance. */
+  private async ready(): Promise<void> {
+    if (!this.autoCreate) return;
+    if (!this.schemaReady) this.schemaReady = this.ensureSchema();
+    return this.schemaReady;
+  }
+
+  /**
+   * Create the `media` table (idempotent). Delegates to the standalone {@link createMediaTables}
+   * so the auto-create path and a migration-based one run identical DDL.
+   */
+  async ensureSchema(): Promise<void> {
+    await createMediaTables(this.db, { table: this.table });
+  }
+
   async save(record: MediaRecord): Promise<MediaRecord> {
+    await this.ready();
     const row = toRow(record);
     // Single atomic upsert (portable Knex `INSERT ... ON CONFLICT (id) DO UPDATE`) instead of a
     // racy read-then-branch: concurrent saves of the same id can't interleave into a lost write.
@@ -71,6 +101,7 @@ export class LucidMediaStore implements MediaStore {
   }
 
   async find(id: string): Promise<MediaRecord | null> {
+    await this.ready();
     const row = (await this.query().where('id', id).first()) as MediaRow | null;
     return row ? fromRow(row) : null;
   }
@@ -80,6 +111,7 @@ export class LucidMediaStore implements MediaStore {
     ownerId: string,
     collection?: string,
   ): Promise<MediaRecord[]> {
+    await this.ready();
     let q = this.query().where('owner_type', ownerType).where('owner_id', ownerId);
     if (collection !== undefined) q = q.where('collection', collection);
     const rows = (await q.orderBy('order', 'asc')) as MediaRow[];
@@ -87,6 +119,7 @@ export class LucidMediaStore implements MediaStore {
   }
 
   async list(options: MediaListOptions = {}): Promise<MediaListPage> {
+    await this.ready();
     const limit = clampMediaListLimit(options.limit);
     let q = this.query();
     if (options.ownerType !== undefined) q = q.where('owner_type', options.ownerType);
@@ -127,10 +160,12 @@ export class LucidMediaStore implements MediaStore {
   }
 
   async delete(id: string): Promise<void> {
+    await this.ready();
     await this.query().where('id', id).delete();
   }
 
   async nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number> {
+    await this.ready();
     const row = (await this.query()
       .where('owner_type', ownerType)
       .where('owner_id', ownerId)

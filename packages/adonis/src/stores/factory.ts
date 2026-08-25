@@ -24,6 +24,11 @@ export interface LucidStoreConfig {
   connection?: string;
   /** Table name. Default `media`. */
   table?: string;
+  /**
+   * Auto-create the `media` table on first use (default `true`). Set to `false` to
+   * manage the schema explicitly via a migration (see `createMediaTables`).
+   */
+  autoCreateSchema?: boolean;
 }
 
 /**
@@ -74,6 +79,9 @@ export const stores = {
       return new LucidMediaStore(db, {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
         ...(config.table !== undefined ? { table: config.table } : {}),
+        ...(config.autoCreateSchema !== undefined
+          ? { autoCreateSchema: config.autoCreateSchema }
+          : {}),
       });
     };
   },

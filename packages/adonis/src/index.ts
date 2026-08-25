@@ -28,6 +28,10 @@ export type {
   LucidUploadSessionStoreConfig,
 } from './define_config.js';
 
+// Schema helpers (ecosystem convention — lib owns its own schema; see `stores/lucid-schema.ts`)
+export { createMediaTables, dropMediaTables } from './stores/lucid-schema.js';
+export type { MediaTableNames } from './stores/lucid-schema.js';
+
 // Manager + layers
 export { MediaManager } from './media_manager.js';
 export type { MediaManagerOptions } from './media_manager.js';
