@@ -4,11 +4,15 @@ import { fileURLToPath } from 'node:url';
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import {
+  type AccessDeniedInfo,
+  resolveAccessDeniedPage,
+} from '../src/dashboard/access_denied_page.js';
+import {
   parseCookieHeader,
   SESSION_COOKIE_NAME,
   serializeSetCookie,
 } from '../src/dashboard/cookie.js';
-import type { MediaDashboardConfig } from '../src/dashboard/define_config.js';
+import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
 import {
   type ConsoleSession,
   type ConsoleSessionUser,
@@ -92,23 +96,35 @@ export default class MediaDashboardProvider {
       : [];
     // Access-decision hook (same shape as the other @adonis-agora dashboards). Runs BEFORE
     // `middleware` and composes with the built-in `auth` session guard (all must pass).
-    // A denied request gets 401/403 — or honors a redirect the hook wrote (like the telescope
-    // guard, we check for a `location` header so a hook can send visitors to the app login).
-    const authorizeGate = config.authorize
-      ? [
-          async (ctx: HttpContext, next: () => Promise<void>) => {
-            let allowed: boolean;
-            try {
-              allowed = await config.authorize!(ctx);
-            } catch {
-              allowed = false;
-            }
-            if (allowed) return next();
-            if (ctx.response.getHeader('location')) return next();
-            ctx.response.status(401).send({ error: 'Unauthorized' });
-          },
-        ]
-      : [];
+    // A denied request honors a redirect the hook wrote (like the telescope guard, we check for a
+    // `location` header so a hook can send visitors to the app login); otherwise it is a `403` —
+    // the hook knew who was asking and said no, same status as every other Agora console — as
+    // `{ error }` JSON for an API request, and as the built-in access-denied page (or the host's
+    // `accessDenied` version of it) for a PAGE navigation (the SPA shell, its assets). The `401`
+    // with `{ auth: { modes } }` stays the SESSION guard's alone: that is what tells the SPA to
+    // show its login screen, and an `authorize` refusal must not be mistaken for it.
+    const authorizeGate = (mode: 'api' | 'page') =>
+      config.authorize
+        ? [
+            async (ctx: HttpContext, next: () => Promise<void>) => {
+              let allowed: boolean;
+              try {
+                allowed = await config.authorize!(ctx);
+              } catch {
+                allowed = false;
+              }
+              if (allowed) return next();
+              if (mode === 'api') {
+                // A redirect the hook wrote stands on its own — the handler must NOT run after it
+                // (it would queue a JSON body onto a 302).
+                if (ctx.response.getHeader('location')) return;
+                ctx.response.status(403).send({ error: 'Forbidden' });
+                return;
+              }
+              await denyPage(ctx, { basePath, accessDenied: config.accessDenied });
+            },
+          ]
+        : [];
     // Built-in session-cookie login (Mode A/B), independent of `middleware` — see
     // `src/dashboard/auth.ts`. `null` when unconfigured, in which case every gate below is a no-op
     // and the API stays open.
@@ -122,16 +138,12 @@ export default class MediaDashboardProvider {
         objectInsights,
       );
 
-    const composedMiddleware = [...authorizeGate, ...middleware];
-
     this.#mountAuthRoutes(router, apiBase, auth);
-    this.#mountApi(router, apiBase, service, composedMiddleware, auth);
-    this.#mountSpa(
-      router,
-      basePath,
-      { apiBase, uploadsBase, tusBase, actions },
-      composedMiddleware,
-    );
+    this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware], auth);
+    this.#mountSpa(router, basePath, { apiBase, uploadsBase, tusBase, actions }, [
+      ...authorizeGate('page'),
+      ...middleware,
+    ]);
   }
 
   /**
@@ -559,6 +571,59 @@ function applyMiddleware(
 ): void {
   if (middleware.length === 0) return;
   (group.use as (m: unknown) => unknown)(middleware);
+}
+
+/* Access-denied page -------------------------------------------------------------------------- */
+
+/**
+ * Answer a refused PAGE navigation with HTML instead of the API's JSON: the built-in page, the
+ * host's tweaked version of it, or whatever the host's `accessDenied` renderer produced. Stands down
+ * when the request is already answered — an `authorize` hook (or the renderer) that wrote a redirect
+ * keeps it; the provider never overwrites a `location` header. `403`, like the API's JSON: the hook
+ * knew who was asking and said no.
+ */
+async function denyPage(
+  ctx: HttpContext,
+  options: { basePath: string; accessDenied: AccessDeniedOption | undefined },
+): Promise<void> {
+  const answered = () => responseAnswered(ctx);
+  if (answered()) return;
+  const nonce = cspNonce(ctx);
+  const info: AccessDeniedInfo = {
+    status: 403,
+    reason: 'forbidden',
+    basePath: options.basePath,
+    ...(nonce !== undefined ? { nonce } : {}),
+  };
+  const html = await resolveAccessDeniedPage(info, options.accessDenied, ctx, answered);
+  if (html === null) return;
+  ctx.response
+    .status(info.status)
+    .header('content-type', 'text/html; charset=utf-8')
+    .header('cache-control', 'no-store, must-revalidate')
+    .send(html);
+}
+
+/**
+ * Whether something already answered this request: a redirect (`location` header — the signal the
+ * `authorize` contract has always honoured) or a body queued on the response. The body check reads
+ * AdonisJS's `response.hasLazyBody` structurally so a plain-object `ctx` double in a unit test
+ * (which has neither) still works.
+ */
+function responseAnswered(ctx: HttpContext): boolean {
+  if (ctx.response.getHeader('location')) return true;
+  const response = ctx.response as unknown as { hasLazyBody?: unknown; headersSent?: unknown };
+  return response.hasLazyBody === true || response.headersSent === true;
+}
+
+/**
+ * The request's CSP nonce when the host runs `@adonisjs/shield` with `@nonce` in its policy (shield
+ * exposes it as `response.nonce`). Read structurally: this package neither depends on shield nor
+ * cares which middleware minted the nonce — only that the page's inline `<style>` carries it.
+ */
+function cspNonce(ctx: HttpContext): string | undefined {
+  const nonce = (ctx.response as unknown as { nonce?: unknown }).nonce;
+  return typeof nonce === 'string' && nonce !== '' ? nonce : undefined;
 }
 
 /* Session-cookie helpers ---------------------------------------------------------------------- */

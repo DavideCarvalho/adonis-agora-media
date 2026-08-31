@@ -1,6 +1,22 @@
 import type { HttpContext } from '@adonisjs/core/http';
+import type {
+  AccessDeniedOption as GenericAccessDeniedOption,
+  AccessDeniedRenderer as GenericAccessDeniedRenderer,
+} from './access_denied_page.js';
 import type { ConsoleAuthOptions } from './auth.js';
 import type { ObjectInsightProvider } from './object_insights.js';
+
+/**
+ * The function form of {@link MediaDashboardConfig.accessDenied}: render (or answer) a refused
+ * page navigation yourself. Receives the refusal ({@link AccessDeniedInfo}) and the AdonisJS
+ * {@link HttpContext}. Return an HTML string to have it served; answer the request yourself (a
+ * redirect, most commonly) and return nothing to make the provider stand down; return nothing
+ * WITHOUT answering and the built-in page is served.
+ */
+export type AccessDeniedRenderer = GenericAccessDeniedRenderer<HttpContext>;
+
+/** `accessDenied` in either form — an options object for the built-in page, or a renderer. */
+export type AccessDeniedOption = GenericAccessDeniedOption<HttpContext>;
 
 /** A minimal middleware handler shape (host auth guard) applied to the console routes. */
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
@@ -51,11 +67,22 @@ export interface MediaDashboardConfig {
   /**
    * Access-decision hook gating the whole console (SPA + API), same shape as the
    * `authorize` hooks of the other `@adonis-agora` dashboards. Runs BEFORE `middleware`
-   * and composes with the built-in `auth` session guard (all must pass). Denied requests
-   * get `401`/`403` (or honor a redirect the hook writes). Default: allow when not in
+   * and composes with the built-in `auth` session guard (all must pass). A denied request
+   * gets `403` (or honors a redirect the hook writes): `{ error: 'Forbidden' }` JSON on the
+   * API, the {@link accessDenied} page on a page navigation. Default: allow when not in
    * production.
    */
   authorize?: DashboardAuthorize;
+  /**
+   * What a BROWSER sees when `authorize` refuses a page navigation — the SPA shell or its assets.
+   * API requests are unaffected: they keep getting `403 { error: 'Forbidden' }` JSON. Omit it for
+   * the built-in page — a dark card in the console's own visual language with the same `403`, a
+   * sentence explaining the refusal and a "Back to app" link. Pass an
+   * object to tweak that page (`brand`, `title`, `message`, `homeHref`, `accent`, …), or a function
+   * to render/answer it yourself — see {@link AccessDeniedRenderer}. A redirect written by
+   * `authorize` still wins: the provider never overwrites a `location` header.
+   */
+  accessDenied?: AccessDeniedOption;
   /**
    * Gate the console's JSON API behind a built-in session-cookie login, mirroring the NestJS sibling
    * console. Omit to leave the API open (front it with your own `middleware`). When set, the SPA
