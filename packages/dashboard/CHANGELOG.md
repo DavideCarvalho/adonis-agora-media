@@ -1,5 +1,12 @@
 # @adonis-agora/media-dashboard
 
+## 8.0.2
+
+### Patch Changes
+
+- [#61](https://github.com/DavideCarvalho/adonis-agora-media/pull/61) [`85979d7`](https://github.com/DavideCarvalho/adonis-agora-media/commit/85979d7014f5d95b01142aac91fe3268bbfa54ef) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Dashboard rebuilt on Tailwind 4, React 19 and Vite 8 — same tokens and layout; opacity
+  modifiers now resolve through `color-mix` instead of the old colour-function trick.
+
 ## 8.0.1
 
 ### Patch Changes
