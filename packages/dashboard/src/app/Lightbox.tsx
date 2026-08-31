@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
 import type { ObjectInsight } from '../types';
-import { DataTable } from './DataTable';
 import { useDashboard } from './context';
+import { DataTable } from './DataTable';
 import { useObjectInsights } from './queries';
 import { Alert, Button, Empty, formatBytes } from './ui';
 import {
@@ -78,7 +78,6 @@ function FallbackCard({ item, message }: { item: PreviewItem; message: string })
         <Button
           tone="accent"
           size="sm"
-          // biome-ignore lint/a11y/useAnchorContent: Base UI's `render` prop clones this element with the Button's children; the link is not empty at runtime
           render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
         >
           Open original ↗
@@ -166,7 +165,7 @@ function TextPreview({ item }: { item: PreviewItem }) {
     ) : flavor === 'tsv' ? (
       <DelimitedTable text={source} delimiter={'\t'} />
     ) : (
-      <pre className="mono min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-black/30 p-3 text-xs text-zinc-300">
+      <pre className="mono min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md border border-border bg-black/30 p-3 text-xs text-zinc-300">
         {flavor === 'json' ? prettyJson(source) : source}
       </pre>
     );
@@ -310,7 +309,7 @@ export function Lightbox({ item, onClose }: { item: PreviewItem | null; onClose:
               <div className="mono tnum mt-0.5 flex items-center gap-2 text-[10px] text-zinc-600">
                 <span>{formatBytes(item.size)}</span>
                 {item.contentType && (
-                  <span className="rounded border border-border px-1 text-zinc-500">
+                  <span className="rounded-sm border border-border px-1 text-zinc-500">
                     {item.contentType}
                   </span>
                 )}
@@ -319,7 +318,6 @@ export function Lightbox({ item, onClose }: { item: PreviewItem | null; onClose:
             <Button
               tone="ghost"
               className="shrink-0"
-              // biome-ignore lint/a11y/useAnchorContent: Base UI's `render` prop clones this element with the Button's children; the link is not empty at runtime
               render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
             >
               Open ↗

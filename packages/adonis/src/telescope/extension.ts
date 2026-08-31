@@ -7,8 +7,8 @@ import {
   mediaRecentUploadsProvider,
   mediaStorageOpsOverTimeProvider,
   mediaUploadSuccessRateProvider,
-  mediaUploadThroughputProvider,
   mediaUploadsOverTimeProvider,
+  mediaUploadThroughputProvider,
 } from './data-providers.js';
 import type { TelescopeExtension } from './telescope-sdk.js';
 

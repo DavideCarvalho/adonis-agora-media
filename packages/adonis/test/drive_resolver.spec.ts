@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDriveBackedResolver } from '../src/disks/drive.js';
 import type { DriveManagerLike, DriveServiceModule } from '../src/disks/drive.js';
+import { createDriveBackedResolver } from '../src/disks/drive.js';
 import { DriveNotReadyError } from '../src/errors.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import type { Disk } from '../src/types.js';

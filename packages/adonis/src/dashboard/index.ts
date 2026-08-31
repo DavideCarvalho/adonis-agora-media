@@ -1,56 +1,54 @@
 // Config idiom — author `config/media_dashboard.ts` against these.
-export { defineConfig } from './define_config.js';
-export type { MediaDashboardConfig, DashboardMiddleware } from './define_config.js';
 
-// Dashboard read/action logic (framework-free — the provider is a thin HTTP shell around this).
-export { DashboardService, DashboardError } from './service.js';
-export type { MediaManagerLike, DashboardServiceOptions } from './service.js';
-
-// Built-in session-cookie login.
-export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
 export type {
+  AuthMode,
   ConsoleAuthOptions,
   ConsoleSession,
   ConsoleSessionUser,
-  ResolvedConsoleAuth,
-  AuthMode,
-  SessionHook,
   LoginHook,
+  ResolvedConsoleAuth,
   RevalidateHook,
+  SessionHook,
 } from './auth.js';
-
+// Built-in session-cookie login.
+export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
+export type { DashboardMiddleware, MediaDashboardConfig } from './define_config.js';
+export { defineConfig } from './define_config.js';
+export type { ObjectInsightContext, ObjectInsightProvider } from './object_insights.js';
 // Host-supplied object annotations.
 export { sanitizeInsight } from './object_insights.js';
-export type { ObjectInsightProvider, ObjectInsightContext } from './object_insights.js';
+export type { DashboardServiceOptions, MediaManagerLike } from './service.js';
+// Dashboard read/action logic (framework-free — the provider is a thin HTTP shell around this).
+export { DashboardError, DashboardService } from './service.js';
 
 // The JSON API contract shared by the SPA client and the provider routes.
 export type {
-  DiskInfo,
-  DiskListResponse,
-  DiskCapabilities,
-  ObjectFolder,
-  ObjectEntry,
-  ObjectListResponse,
-  ObjectDetailResponse,
-  MediaEntry,
-  MediaVariant,
-  MediaDetailResponse,
-  CollectionListResponse,
   CollectionFilter,
+  CollectionListResponse,
   CollectionSummary,
   CollectionsSummaryResponse,
-  UploadInfo,
-  UploadPart,
-  UploadListResponse,
-  UploadDetailResponse,
-  Topology,
+  ConsoleSessionUserInfo,
   CopyMoveBody,
   DeleteBody,
+  DiskCapabilities,
+  DiskInfo,
+  DiskListResponse,
+  LoginBody,
+  MediaDetailResponse,
+  MediaEntry,
+  MediaVariant,
+  MeResponse,
+  ObjectDetailResponse,
+  ObjectEntry,
+  ObjectFolder,
   ObjectInsight,
   ObjectInsightFact,
   ObjectInsightLink,
   ObjectInsightsResponse,
-  ConsoleSessionUserInfo,
-  MeResponse,
-  LoginBody,
+  ObjectListResponse,
+  Topology,
+  UploadDetailResponse,
+  UploadInfo,
+  UploadListResponse,
+  UploadPart,
 } from './types.js';

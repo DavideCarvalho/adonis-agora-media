@@ -16,7 +16,7 @@ import { ResumableUploadManager } from '../src/resumable_upload.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import { InMemoryUploadSessionStore } from '../src/testing/in_memory_upload_session_store.js';
-import { TusUploadHandler, parseTusMetadata } from '../src/tus.js';
+import { parseTusMetadata, TusUploadHandler } from '../src/tus.js';
 import type { Disk } from '../src/types.js';
 
 const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');

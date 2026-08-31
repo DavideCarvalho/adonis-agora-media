@@ -4,7 +4,7 @@ import { UploadNotSupportedError } from './errors.js';
 import { isMultipartCapable } from './multipart.js';
 import type { StorageManager } from './storage_manager.js';
 import type { MultipartPart } from './types.js';
-import { type ResolvedUploadMode, type UploadMode, resolveUploadMode } from './upload_mode.js';
+import { type ResolvedUploadMode, resolveUploadMode, type UploadMode } from './upload_mode.js';
 
 /** Default size of each multipart part when the caller gives none (8 MiB — S3's part minimum is 5 MiB). */
 const DEFAULT_PART_SIZE = 8 * 1024 * 1024;

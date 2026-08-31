@@ -1,7 +1,7 @@
 import {
+  createContext,
   type ReactNode,
   type RefObject,
-  createContext,
   useCallback,
   useContext,
   useEffect,
@@ -29,8 +29,8 @@ import {
  *
  *  `Button` and `Alert` are re-exported here so a view has one import path for the whole kit. */
 
-export { Button, Alert };
 export type { ButtonProps } from './ui/button';
+export { Alert, Button };
 
 /** Human-readable byte size (`1.4 MB`). */
 export function formatBytes(bytes: number | null | undefined): string {
@@ -67,13 +67,7 @@ export function relativeAge(iso: string | null | undefined): string {
 }
 
 /** The dark card container — a bordered panel over the blueprint backdrop. */
-export function Panel({
-  children,
-  className = '',
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
+export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`rounded-lg border border-border bg-panel ${className}`}>{children}</div>;
 }
 
@@ -191,7 +185,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) 
   }, [toast.id, toast.tone, onDismiss]);
   return (
     <div
-      className={`rise mono flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] shadow-2xl backdrop-blur-sm ${
+      className={`rise mono flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] shadow-2xl backdrop-blur-xs ${
         toast.tone === 'error'
           ? 'border-bad/40 bg-bad/15 text-bad'
           : 'border-accent/40 bg-accent/15 text-accent'
@@ -200,7 +194,7 @@ function ToastRow({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) 
       <span className="mt-px shrink-0" aria-hidden>
         {toast.tone === 'error' ? '✕' : '✓'}
       </span>
-      <span className="flex-1 break-words normal-case">{toast.message}</span>
+      <span className="flex-1 wrap-break-word normal-case">{toast.message}</span>
       <button
         type="button"
         aria-label="Dismiss"
@@ -231,7 +225,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         createPortal(
           <div
             aria-live="polite"
-            className="fixed right-4 bottom-4 z-[60] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+            className="fixed right-4 bottom-4 z-60 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
           >
             {toasts.map((toast) => (
               <ToastRow key={toast.id} toast={toast} onDismiss={dismiss} />

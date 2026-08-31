@@ -1,4 +1,4 @@
-import type { TransformResult, Transformer, TransformerContext } from '../transformer.js';
+import type { Transformer, TransformerContext, TransformResult } from '../transformer.js';
 import { compactMeta } from './hls.js';
 import { loadMediabunny } from './mediabunny_loader.js';
 import { withSourceFile } from './source_file.js';

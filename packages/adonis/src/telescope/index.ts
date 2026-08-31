@@ -1,6 +1,4 @@
 export { type MediaDashboardOptions, mediaDashboard } from './dashboard.js';
-export { mediaTelescopeExtension } from './extension.js';
-export { MediaWatcher } from './media_watcher.js';
 export {
   mediaActiveUploadsProvider,
   mediaAttachmentActivityProvider,
@@ -9,18 +7,20 @@ export {
   mediaRecentUploadsProvider,
   mediaStorageOpsOverTimeProvider,
   mediaUploadSuccessRateProvider,
-  mediaUploadThroughputProvider,
   mediaUploadsOverTimeProvider,
+  mediaUploadThroughputProvider,
 } from './data-providers.js';
+export { mediaTelescopeExtension } from './extension.js';
+export { MediaWatcher } from './media_watcher.js';
 export type {
   ContainerLike,
-  DataProvider,
   DashboardSpec,
+  DataProvider,
   ExtensionContext,
   LinkSpec,
-  TelescopeExtension,
-  TelescopeStoreLike,
   TelescopeEntryLike,
+  TelescopeExtension,
   TelescopeRecordInput,
+  TelescopeStoreLike,
   WatcherContext,
 } from './telescope-sdk.js';

@@ -6,8 +6,8 @@ import { MediaLibrary } from '../src/media_library.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
-import { HlsTransformer } from '../src/transformers/hls.js';
 import type { HlsRemuxEngine, HlsRemuxRequest } from '../src/transformers/hls.js';
+import { HlsTransformer } from '../src/transformers/hls.js';
 import { MetadataProbeTransformer } from '../src/transformers/probe.js';
 
 function makeLibrary(transformer: HlsTransformer<string> | MetadataProbeTransformer<string>) {

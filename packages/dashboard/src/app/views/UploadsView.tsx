@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { Route } from '../hash-route';
 import { navigate } from '../hash-route';
 import { useAbortUpload, useTopology, useUploadDetail, useUploads } from '../queries';
-import { Bar, Button, Dot, Empty, Panel, formatBytes, relativeAge } from '../ui';
+import { Bar, Button, Dot, Empty, formatBytes, Panel, relativeAge } from '../ui';
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (

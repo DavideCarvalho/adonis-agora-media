@@ -1,4 +1,4 @@
-import { type ReactNode, createElement, useEffect } from 'react';
+import { createElement, type ReactNode, useEffect } from 'react';
 import type { MediaUploadResult, UploadMeta } from './client.js';
 import { ensureMediaUploaderStyles } from './styles.js';
 import {

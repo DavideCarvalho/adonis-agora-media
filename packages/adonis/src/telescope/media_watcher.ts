@@ -1,8 +1,8 @@
 import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import {
+  claimMediaDiagnostics,
   MEDIA_DIAGNOSTIC_EVENTS,
   type MediaDiagnosticEvent,
-  claimMediaDiagnostics,
 } from '../diagnostics.js';
 import type { WatcherContext } from './telescope-sdk.js';
 

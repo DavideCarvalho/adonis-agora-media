@@ -73,7 +73,7 @@ export function UploadPanel() {
               id="upload-disk"
               value={targetDisk}
               onChange={(e) => setDisk(e.target.value)}
-              className="mono max-w-xs rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-none"
+              className="mono max-w-xs rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
             >
               {browsable.length === 0 && <option value="">(no disks)</option>}
               {browsable.map((d) => (
@@ -86,6 +86,7 @@ export function UploadPanel() {
           </label>
 
           {/* biome-ignore lint/a11y/useKeyWithClickEvents: click opens the native file picker; keyboard users reach it via the hidden input's label semantics */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone; ARIA has no role for drag-and-drop targets and the hidden input is the accessible control */}
           <div
             onClick={() => inputRef.current?.click()}
             onDragOver={(e) => {
@@ -135,8 +136,9 @@ export function UploadPanel() {
             <ul className="flex flex-col gap-1">
               {queue.map((item, i) => (
                 <li
+                  // biome-ignore lint/suspicious/noArrayIndexKey: queue rows are `{ name, status }` with no id and the same file can be re-uploaded; the index is the only stable disambiguator
                   key={`${item.name}-${i}`}
-                  className="mono flex items-center justify-between gap-2 rounded border border-border px-2 py-1 text-[11px]"
+                  className="mono flex items-center justify-between gap-2 rounded-sm border border-border px-2 py-1 text-[11px]"
                 >
                   <span className="min-w-0 flex-1 truncate text-zinc-300">{item.name}</span>
                   <span className={item.status === 'done' ? 's-ok' : 's-error'}>

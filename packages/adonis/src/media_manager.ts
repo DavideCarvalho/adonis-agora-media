@@ -4,12 +4,12 @@ import { DirectUploadManager } from './direct_upload.js';
 import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
-import { MediaLibrary } from './media_library.js';
 import type { AttachExistingInput } from './media_library.js';
+import { MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
-import { ResumableUploadManager } from './resumable_upload.js';
 import type { UploadSessionStore } from './resumable_upload.js';
+import { ResumableUploadManager } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
 import type { DiskResolver, MultipartPart } from './types.js';
 import {

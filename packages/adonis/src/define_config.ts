@@ -1,21 +1,21 @@
 import type { DeliveryMode } from './delivery.js';
-import { disks } from './disks/factory.js';
 import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
+import { disks } from './disks/factory.js';
 import type { ImageProcessor } from './image_processor.js';
 import type { MediaCollectionConfig } from './media_collection.js';
-import { processors } from './processors/factory.js';
 import type { ImageProcessorFactory } from './processors/factory.js';
-import { stores } from './stores/factory.js';
+import { processors } from './processors/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
+import { stores } from './stores/factory.js';
 import { transformers } from './transformers/factory.js';
 import type { DirectUploadPolicy } from './types.js';
 import type { UploadMode } from './upload_mode.js';
-import { uploadSessions } from './upload_sessions/factory.js';
 import type {
   LucidUploadSessionStoreConfig,
   UploadSessionStoreContext,
   UploadSessionStoreFactory,
 } from './upload_sessions/factory.js';
+import { uploadSessions } from './upload_sessions/factory.js';
 
 /**
  * The default export of a lazy `policy` module: a {@link DirectUploadPolicy} CLASS (the provider
@@ -29,8 +29,7 @@ import type {
  * contained here; the handler still sees a fully-typed policy at its own boundary.
  */
 export type DirectUploadPolicyModule =
-  // biome-ignore lint/suspicious/noExplicitAny: invariant `Ctx` — see the doc above.
-  // biome-ignore lint/suspicious/noExplicitAny: invariant `C` — see the doc above.
+  // biome-ignore lint/suspicious/noExplicitAny: invariant `Ctx` and `C` — see the doc above.
   (new (...args: unknown[]) => DirectUploadPolicy<any, any>) | DirectUploadPolicy<any, any>;
 
 /**
@@ -298,18 +297,18 @@ export type InferConversions<T extends MediaConfig> =
   | NonNullable<CollectionOf<T>['conversions']>[number]['name']
   | InferTransformers<T>;
 
-export { stores, processors, disks, uploadSessions, transformers };
 export type {
+  DeliveryMode,
+  DiskFactory,
+  ImageProcessorFactory,
+  LucidStoreConfig,
+  LucidUploadSessionStoreConfig,
+  S3Credentials,
+  S3DiskConfig,
   StoreContext,
   StoreFactory,
-  LucidStoreConfig,
-  ImageProcessorFactory,
-  DiskFactory,
-  S3DiskConfig,
-  S3Credentials,
   UploadMode,
-  DeliveryMode,
   UploadSessionStoreContext,
   UploadSessionStoreFactory,
-  LucidUploadSessionStoreConfig,
 };
+export { disks, processors, stores, transformers, uploadSessions };

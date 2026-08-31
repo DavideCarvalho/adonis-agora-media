@@ -1,10 +1,10 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  SIGNATURE_HEAD_BYTES,
   detectMimeType,
   isClosedSignatureWhitelist,
   isDetectableMimeType,
+  SIGNATURE_HEAD_BYTES,
 } from '../src/content_type.js';
 import {
   ContentSignatureUnrecognizedError,

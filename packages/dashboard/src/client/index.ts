@@ -1,6 +1,6 @@
-export { DashboardClient, readBootstrap } from './dashboard-client.js';
 export type {
+  ConsoleAuthState,
   DashboardBootstrap,
   DashboardClientOptions,
-  ConsoleAuthState,
 } from './dashboard-client.js';
+export { DashboardClient, readBootstrap } from './dashboard-client.js';

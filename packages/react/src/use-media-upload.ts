@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  createMediaUploadClient,
   type DirectUploadOptions,
   type DirectUploadSessionStatus,
   MediaHttpError,
@@ -7,7 +8,6 @@ import {
   type MediaUploadClientOptions,
   type MediaUploadResult,
   type UploadMeta,
-  createMediaUploadClient,
 } from './client.js';
 
 /** Which server strategy the hook drives. `tus` is resumable and the default. */

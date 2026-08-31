@@ -1,4 +1,4 @@
-import type { TransformResult, Transformer, TransformerContext } from '../transformer.js';
+import type { Transformer, TransformerContext, TransformResult } from '../transformer.js';
 
 export interface FakeTransformerOptions<Name extends string = string> {
   /** Conversion name this fake produces. */
