@@ -123,3 +123,120 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
     expect(bootedHandlers).toHaveLength(0);
   });
 });
+
+describe('MediaDashboardProvider — authorize denials: JSON for the API, a page for the browser', () => {
+  interface Recorded {
+    status?: number;
+    body?: unknown;
+    headers: Record<string, string>;
+  }
+
+  function fakeCtx(recorded: Recorded, extra: Record<string, unknown> = {}) {
+    const response = {
+      getHeader: (name: string) => recorded.headers[name.toLowerCase()],
+      status(code: number) {
+        recorded.status = code;
+        return this;
+      },
+      header(name: string, value: string) {
+        recorded.headers[name.toLowerCase()] = value;
+        return this;
+      },
+      send(body: unknown) {
+        recorded.body = body;
+      },
+      ...extra,
+    };
+    return { response, request: { header: () => undefined } };
+  }
+
+  /** Boot with `config`, fire "booted", and return the API and SPA groups' first middleware. */
+  async function gates(config: Record<string, unknown>) {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router, groups } = makeFakeRouter();
+    const { app, bootedHandlers } = makeFakeApp({ media_dashboard: config }, router);
+    await new MediaDashboardProvider(app as never).boot();
+    await bootedHandlers[0]?.();
+    // Groups are created in mount order: auth routes (no middleware), API, SPA.
+    const [, api, spa] = groups;
+    type Gate = (ctx: unknown, next: () => Promise<void>) => Promise<void>;
+    return { api: api?.middleware[0] as Gate, spa: spa?.middleware[0] as Gate };
+  }
+
+  it('answers 403 Forbidden JSON on the API group', async () => {
+    const { api } = await gates({ authorize: () => false });
+    const recorded: Recorded = { headers: {} };
+    const next = vi.fn(async () => {});
+    await api(fakeCtx(recorded), next);
+    expect(next).not.toHaveBeenCalled();
+    expect(recorded.status).toBe(403);
+    expect(recorded.body).toEqual({ error: 'Forbidden' });
+  });
+
+  it('serves the built-in 403 page on the SPA group', async () => {
+    const { spa } = await gates({ authorize: () => false });
+    const recorded: Recorded = { headers: {} };
+    const next = vi.fn(async () => {});
+    await spa(fakeCtx(recorded), next);
+    expect(next).not.toHaveBeenCalled();
+    expect(recorded.status).toBe(403);
+    expect(recorded.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(recorded.headers['cache-control']).toBe('no-store, must-revalidate');
+    expect(recorded.body).toContain('<!doctype html>');
+    expect(recorded.body).toContain('<h1>Access denied</h1>');
+    expect(recorded.body).toContain('Media');
+    expect(recorded.body).not.toContain('<script');
+  });
+
+  it('applies the accessDenied options, a renderer, and stands down on a redirect', async () => {
+    const tweaked = await gates({
+      authorize: () => false,
+      accessDenied: { brand: 'Entre Textos', title: 'Sem acesso', homeHref: '/admin' },
+    });
+    const a: Recorded = { headers: {} };
+    await tweaked.spa(fakeCtx(a), async () => {});
+    expect(a.body).toContain('<h1>Sem acesso</h1>');
+    expect(a.body).toContain('Entre Textos');
+    expect(a.body).toContain('href="/admin"');
+
+    const custom = await gates({
+      authorize: () => false,
+      accessDenied: (info: { status: number; basePath: string }) =>
+        `<p>custom ${info.status} ${info.basePath}</p>`,
+    });
+    const b: Recorded = { headers: {} };
+    await custom.spa(fakeCtx(b), async () => {});
+    expect(b.body).toBe('<p>custom 403 /media/dashboard</p>');
+
+    const redirected = await gates({
+      authorize: () => false,
+      accessDenied: (_info: unknown, ctx: { response: { header(n: string, v: string): void } }) => {
+        ctx.response.header('location', '/entrar');
+      },
+    });
+    const c: Recorded = { headers: {} };
+    await redirected.spa(fakeCtx(c), async () => {});
+    expect(c.headers.location).toBe('/entrar');
+    expect(c.body).toBeUndefined();
+  });
+
+  it('never overwrites a redirect the authorize hook wrote, and honours the CSP nonce', async () => {
+    const { spa } = await gates({
+      authorize: (ctx: { response: { header(n: string, v: string): void } }) => {
+        ctx.response.header('location', '/login');
+        return false;
+      },
+    });
+    const a: Recorded = { headers: {} };
+    await spa(fakeCtx(a), async () => {});
+    expect(a.headers.location).toBe('/login');
+    expect(a.body).toBeUndefined();
+
+    const plain = await gates({ authorize: () => false });
+    const b: Recorded = { headers: {} };
+    await plain.spa(fakeCtx(b, { nonce: 'n0nce' }), async () => {});
+    expect(b.body).toContain('<style nonce="n0nce">');
+  });
+});

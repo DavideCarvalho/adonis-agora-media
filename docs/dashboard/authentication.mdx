@@ -24,20 +24,60 @@ export default defineConfig({
 ```
 
 The hook receives the real `HttpContext`, so it can read the session, a bearer
-token, an IP allow-list — anything your app already trusts. A denied request is
-answered `401 { error: 'Unauthorized' }`, with two refinements shared with the
-other `@adonis-agora` dashboards:
+token, an IP allow-list — anything your app already trusts. A denied request is a `403` — the
+hook knew who was asking and said no, the same status every other `@adonis-agora` console
+answers with: `{ error: 'Forbidden' }` JSON for an **API** request, the
+[access-denied page](#the-access-denied-page) for a **page** navigation (the SPA shell or its
+assets). The `401` with `{ auth: { modes } }` belongs to the session guard alone — it is what
+tells the SPA to show its login screen. Two refinements are shared with the other dashboards:
 
 - **A redirect the hook writes wins.** If `authorize` sets a `location` header
   (typically `ctx.response.redirect(...)`) before returning `false`, the guard
-  leaves that redirect alone instead of overwriting it with `401` JSON — the
+  leaves that redirect alone instead of overwriting it with the `403` — the
   hook for sending an unauthenticated visitor to your own login page.
 - **A throwing hook fails closed.** If `authorize` throws, the request is denied
-  (`401`) — a buggy hook never accidentally opens the console.
+  (`403`) — a buggy hook never accidentally opens the console.
 
 The second is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
 
 The third is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first two options cover only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
+
+### The access-denied page
+
+What a browser sees when `authorize` refuses it: the same `403` the API answers with, as a page
+— a dark card in the console's visual language showing the status, a sentence explaining the
+refusal and a "Back to app" link.
+It carries no inline script, so a nonce'd `script-src` CSP cannot break it (its one inline
+`<style>` picks up `@adonisjs/shield`'s request nonce).
+
+Tweak it with `accessDenied` — every field optional:
+
+```ts title="config/media_dashboard.ts"
+export default defineConfig({
+  authorize: authorizeByRoles({ roles: ['ADMIN'] }),
+  accessDenied: {
+    brand: 'Entre Textos',           // eyebrow + <title>; default "Media"
+    title: 'Sem acesso',             // default "Access denied"
+    message: 'Peça ao admin para liberar o console de mídia.',
+    homeHref: '/admin',              // "Back to app"; default "/", `false` hides it
+    homeLabel: 'Voltar',
+    accent: '#f59e0b',               // any CSS colour; default: the console's cyan
+  },
+})
+```
+
+Or replace it. Pass a function and it receives the refusal (`status`, `reason`, `basePath`, and
+the CSP `nonce` when there is one) plus the `HttpContext`. Return an HTML string to have it
+served with the right status; answer the request yourself and return nothing to make the
+provider stand down:
+
+```ts title="config/media_dashboard.ts"
+export default defineConfig({
+  accessDenied: (info, ctx) => {
+    ctx.response.redirect(`/login?next=${encodeURIComponent(info.basePath)}`)
+  },
+})
+```
 
 <Callout type="info" title="They compose">
   `authorize`, `middleware` and `auth` are independent gates on the same routes. Configure

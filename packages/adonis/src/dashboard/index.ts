@@ -1,6 +1,18 @@
 // Config idiom — author `config/media_dashboard.ts` against these.
 
 export type {
+  AccessDeniedInfo,
+  AccessDeniedPageOptions,
+  AccessDeniedReason,
+} from './access_denied_page.js';
+// The built-in "access denied" page (what a browser sees on a refused page navigation).
+export {
+  CONSOLE as ACCESS_DENIED_CONSOLE,
+  escapeHtml,
+  renderAccessDeniedPage,
+  resolveAccessDeniedPage,
+} from './access_denied_page.js';
+export type {
   AuthMode,
   ConsoleAuthOptions,
   ConsoleSession,
@@ -12,7 +24,13 @@ export type {
 } from './auth.js';
 // Built-in session-cookie login.
 export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
-export type { DashboardMiddleware, MediaDashboardConfig } from './define_config.js';
+export type {
+  AccessDeniedOption,
+  AccessDeniedRenderer,
+  DashboardAuthorize,
+  DashboardMiddleware,
+  MediaDashboardConfig,
+} from './define_config.js';
 export { defineConfig } from './define_config.js';
 export type { ObjectInsightContext, ObjectInsightProvider } from './object_insights.js';
 // Host-supplied object annotations.
