@@ -109,7 +109,7 @@ export function DataTable({ header, body }: { header: string[]; body: string[][]
             value={globalFilter}
             onChange={(event) => setGlobalFilter(event.target.value)}
             placeholder="filter all columns…"
-            className="mono w-full bg-transparent py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none"
+            className="mono w-full bg-transparent py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-hidden"
           />
         </div>
         {hasControls && (
@@ -154,7 +154,7 @@ export function DataTable({ header, body }: { header: string[]; body: string[][]
                         }))
                       }
                       placeholder="filter"
-                      className="mono mt-1 w-full min-w-[5rem] rounded border border-border bg-transparent px-1 py-0.5 text-[10px] font-normal normal-case tracking-normal text-zinc-300 placeholder:text-zinc-700 focus:border-accent/40 focus:outline-none"
+                      className="mono mt-1 w-full min-w-20 rounded-sm border border-border bg-transparent px-1 py-0.5 text-[10px] font-normal normal-case tracking-normal text-zinc-300 placeholder:text-zinc-700 focus:border-accent/40 focus:outline-hidden"
                     />
                   </th>
                 );

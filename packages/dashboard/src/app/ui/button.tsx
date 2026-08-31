@@ -1,5 +1,5 @@
 import { useRender } from '@base-ui/react/use-render';
-import { type VariantProps, cva } from 'class-variance-authority';
+import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from './cn';
 
 /**
@@ -17,7 +17,7 @@ import { cn } from './cn';
  * lands, and `destructive` follows `--bad`.
  */
 export const buttonVariants = cva(
-  'mono inline-flex items-center justify-center gap-1.5 rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-40',
+  'mono inline-flex items-center justify-center gap-1.5 rounded-md border transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-40',
   {
     variants: {
       // Hover is plain `hover:`, not `enabled:hover:` — `:enabled` only ever matches form controls,

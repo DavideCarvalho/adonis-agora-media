@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { HlsUriRef } from '../src/hls/playlist.js';
 import {
   classifyUri,
   isRelativeUri,
   resolvePackagePath,
   rewriteHlsPlaylist,
 } from '../src/hls/playlist.js';
-import type { HlsUriRef } from '../src/hls/playlist.js';
 
 /** Rewriter that records every ref it saw and tags the output so replacements are visible. */
 function recordingRewriter() {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MediaHttpError, createMediaUploadClient, mediaUrl, xhrPartUploader } from './client';
+import { createMediaUploadClient, MediaHttpError, mediaUrl, xhrPartUploader } from './client';
 
 function blobOf(bytes: number): Blob {
   return new Blob([new Uint8Array(bytes)]);
@@ -70,7 +70,7 @@ describe('uploadTus (target TUS endpoints)', () => {
 
     // PATCH uses the resumable content type + Upload-Offset
     const patch = fetchImpl.mock.calls.find((c) => (c[1] as RequestInit).method === 'PATCH');
-    const patchHeaders = (patch?.[1] as RequestInit).headers as Record<string, string>;
+    const patchHeaders = (patch![1] as RequestInit).headers as Record<string, string>;
     expect(patchHeaders['Content-Type']).toBe('application/offset+octet-stream');
     expect(progress.at(-1)).toBe(1);
     // 1 POST + 1 HEAD (resumeFrom flow not used here) + ceil(5/2)=3 PATCH — but no resume, so no HEAD.
@@ -140,7 +140,7 @@ describe('uploadTus (target TUS endpoints)', () => {
     const patches = fetchImpl.mock.calls.filter((c) => (c[1] as RequestInit).method === 'PATCH');
     expect(patches).toHaveLength(1);
     expect(
-      (patches[0]?.[1] as RequestInit & { headers: Record<string, string> }).headers[
+      (patches[0]![1] as RequestInit & { headers: Record<string, string> }).headers[
         'Upload-Offset'
       ],
     ).toBe('6');

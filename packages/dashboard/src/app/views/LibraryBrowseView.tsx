@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import type { DiskInfo, ObjectEntry } from '../../types';
-import { DRAG_MIME, type DragItem, FolderTree } from '../FolderTree';
-import { Lightbox, type PreviewItem } from '../Lightbox';
 import { useDashboard } from '../context';
+import { DRAG_MIME, type DragItem, FolderTree } from '../FolderTree';
 import { navigate } from '../hash-route';
+import { Lightbox, type PreviewItem } from '../Lightbox';
 import {
   useCopy,
   useCopyFolder,
@@ -17,7 +17,7 @@ import {
   useTopology,
   useUploadObject,
 } from '../queries';
-import { Alert, Button, Empty, Modal, Panel, formatBytes, formatDate, useToasts } from '../ui';
+import { Alert, Button, Empty, formatBytes, formatDate, Modal, Panel, useToasts } from '../ui';
 
 interface Crumb {
   label: string;
@@ -136,6 +136,7 @@ function UploadDialog({
       }
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: click opens the native file picker; keyboard users reach it via the hidden input */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone; ARIA has no role for drag-and-drop targets and the hidden input is the accessible control */}
       <div
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => {
@@ -170,8 +171,9 @@ function UploadDialog({
         <ul className="mt-3 max-h-48 space-y-1 overflow-auto">
           {files.map((file, index) => (
             <li
+              // biome-ignore lint/suspicious/noArrayIndexKey: the same file can be picked twice and `File` has no id; the index is the only thing that disambiguates duplicates
               key={`${file.name}-${index}`}
-              className="mono flex items-center justify-between gap-2 rounded border border-border px-2 py-1 text-[11px]"
+              className="mono flex items-center justify-between gap-2 rounded-sm border border-border px-2 py-1 text-[11px]"
             >
               <span className="truncate text-zinc-300">{file.name}</span>
               <span className="flex shrink-0 items-center gap-2">
@@ -265,7 +267,7 @@ function FolderDialog({
             if (e.key === 'Enter') submit();
           }}
           placeholder="reports"
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-none"
+          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
         />
       </label>
       <p className="mono mt-2 text-[10px] text-zinc-600">
@@ -401,7 +403,7 @@ function CopyMoveDialog({
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-none"
+          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
         />
       </label>
       <p className="mono mt-2 text-[10px] text-zinc-600">
@@ -495,7 +497,7 @@ function RenameDialog({
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-none"
+          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
         />
       </label>
       <p className="mono mt-2 text-[10px] text-zinc-600">
@@ -655,6 +657,7 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
         </Panel>
 
         <Panel className="p-3">
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: whole-panel drop target for uploads; ARIA has no role for drag-and-drop targets and every control inside stays keyboard-reachable */}
           <div
             onDragOver={
               actions

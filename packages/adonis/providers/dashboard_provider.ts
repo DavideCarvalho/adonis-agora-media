@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import {
-  SESSION_COOKIE_NAME,
   parseCookieHeader,
+  SESSION_COOKIE_NAME,
   serializeSetCookie,
 } from '../src/dashboard/cookie.js';
 import type { MediaDashboardConfig } from '../src/dashboard/define_config.js';

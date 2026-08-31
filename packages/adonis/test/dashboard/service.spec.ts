@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DashboardError, DashboardService } from '../../src/dashboard/service.js';
 import type { MediaManagerLike } from '../../src/dashboard/service.js';
+import { DashboardError, DashboardService } from '../../src/dashboard/service.js';
 
 /** A fake extended (S3-like) disk with spied ops so the service's real-surface calls are asserted. */
 function fakeDisk(overrides: Record<string, unknown> = {}) {

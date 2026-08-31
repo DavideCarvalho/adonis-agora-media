@@ -1,9 +1,8 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hlsArtifactContentType } from '../hls/playlist.js';
-import type { TransformResult, Transformer, TransformerContext } from '../transformer.js';
+import type { Transformer, TransformerContext, TransformResult } from '../transformer.js';
 import { loadMediabunny } from './mediabunny_loader.js';
 import { withSourceFile } from './source_file.js';
 

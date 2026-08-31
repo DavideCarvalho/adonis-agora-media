@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { CollectionFilter } from '../../types';
-import { type Route, navigate } from '../hash-route';
+import { navigate, type Route } from '../hash-route';
 import {
   useCollections,
   useCollectionsSummary,
@@ -8,7 +8,7 @@ import {
   useMediaRecord,
   useTopology,
 } from '../queries';
-import { Button, Empty, Panel, formatBytes, formatDate, useToasts } from '../ui';
+import { Button, Empty, formatBytes, formatDate, Panel, useToasts } from '../ui';
 
 const EMPTY_FILTER: CollectionFilter = {};
 
@@ -39,7 +39,10 @@ function withCollection(filter: CollectionFilter, key: string | undefined): Coll
 function CollectionsBar({
   selected,
   onSelect,
-}: { selected: string | undefined; onSelect: (key: string | undefined) => void }) {
+}: {
+  selected: string | undefined;
+  onSelect: (key: string | undefined) => void;
+}) {
   const summary = useCollectionsSummary();
   const collections = summary.data?.collections ?? [];
   if (collections.length === 0) return null;
@@ -154,7 +157,7 @@ function RecordDetail({ route }: { route: Route }) {
                     <img
                       src={variant.url}
                       alt={variant.name}
-                      className="max-h-40 rounded border border-border"
+                      className="max-h-40 rounded-sm border border-border"
                     />
                   ) : (
                     <a
@@ -199,7 +202,7 @@ function FilterField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         {...(placeholder ? { placeholder } : {})}
-        className={`rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-none ${mono ? 'mono' : ''}`}
+        className={`rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-hidden ${mono ? 'mono' : ''}`}
       />
     </label>
   );

@@ -1,7 +1,7 @@
-import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
-import { DashboardClient, readBootstrap } from '../client/dashboard-client';
+import { createContext, useContext } from 'react';
 import type { DashboardBootstrap } from '../client/dashboard-client';
+import { DashboardClient, readBootstrap } from '../client/dashboard-client';
 
 export interface DashboardApi {
   client: DashboardClient;

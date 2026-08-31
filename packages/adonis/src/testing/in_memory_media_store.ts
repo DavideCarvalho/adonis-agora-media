@@ -1,11 +1,11 @@
 import type { MediaRecord } from '../media_record.js';
 import {
-  type MediaListOptions,
-  type MediaListPage,
-  type MediaStore,
   clampMediaListLimit,
   decodeMediaCursor,
   encodeMediaCursor,
+  type MediaListOptions,
+  type MediaListPage,
+  type MediaStore,
 } from '../media_store.js';
 
 /** In-memory {@link MediaStore} for tests and scratch apps. */

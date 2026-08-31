@@ -92,6 +92,7 @@ function TreeRow({
     | undefined;
 }) {
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a drag-and-drop target row; ARIA has no role for drop zones, and the row's real controls are the buttons inside it
     <div
       onDragOver={dropProps?.onDragOver}
       onDragLeave={dropProps?.onDragLeave}

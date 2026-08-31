@@ -1,6 +1,74 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Tailwind is wired so the semantic class names shadcn generates (`bg-background`, `text-muted-
+  foreground`, `border-border`, `bg-primary`, …) resolve to the Aviary console tokens declared in
+  `:root` below — NOT to shadcn's default zinc/slate palette. Vendored primitives under
+  `src/app/ui/` can then be pasted in near-verbatim and come out looking like the NestJS sibling
+  console (`@dudousxd/nestjs-media-dashboard`), which this token mapping is copied from verbatim
+  so the two stay pixel-for-pixel identical.
+
+  Token names follow AVIARY-UI.md, which is the source of truth for the shared set. Note that
+  `accent` here means the Aviary brand accent (one per console), not shadcn's "hover surface" —
+  the vendored components use `bg-muted`-style neutrals for hover instead.
+
+  `@theme inline` makes the utilities reference `var(--panel)` etc. directly, and Tailwind v4's
+  native `color-mix()` opacity modifiers (`bg-accent/10`) work on those variables — the v3-era
+  `token()` helper in the old `tailwind.config.ts` is no longer needed.
+*/
+@theme inline {
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Aviary tokens, under their own names. */
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  /* The shadcn vocabulary, pointed at the same tokens. */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--panel-2);
+  --color-popover-foreground: var(--text);
+  --color-muted: var(--line-soft);
+  --color-muted-foreground: var(--muted);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--bg);
+  --color-secondary: var(--line-soft);
+  --color-secondary-foreground: var(--text);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--bg);
+  --color-destructive: var(--bad);
+  --color-destructive-foreground: var(--bg);
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /* Design system shared by every Aviary console (agent, durable, media, telescope): a dark
    "blueprint" surface, Space Grotesk display + JetBrains Mono for identifiers, one accent per
@@ -57,13 +125,18 @@ body {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: radial-gradient(
+  background-image:
+    radial-gradient(
       900px 400px at 78% -8%,
       color-mix(in srgb, var(--accent) 8%, transparent),
       transparent 70%
-    ), linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
+    ),
+    linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
     linear-gradient(to bottom, var(--line-soft) 1px, transparent 1px);
-  background-size: 100% 100%, 44px 44px, 44px 44px;
+  background-size:
+    100% 100%,
+    44px 44px,
+    44px 44px;
   mask-image: linear-gradient(to bottom, black, black 60%, transparent);
   opacity: 0.5;
 }

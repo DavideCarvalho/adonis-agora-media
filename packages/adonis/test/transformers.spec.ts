@@ -1,12 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import { defineConfig, transformers } from '../src/define_config.js';
 import type { InferConversions, InferTransformers } from '../src/define_config.js';
+import { defineConfig, transformers } from '../src/define_config.js';
 import {
   ConversionArtifactMissingError,
-  TransformNotReadyError,
   TransformerConflictError,
   TransformerNotDefinedError,
   TransformerOutputError,
+  TransformNotReadyError,
 } from '../src/errors.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaLibrary } from '../src/media_library.js';

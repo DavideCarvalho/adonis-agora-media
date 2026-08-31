@@ -1,5 +1,5 @@
 import { createMediaUploadClient } from '@adonis-agora/media-react/client';
-import { Qs, Router, defineConfig as httpDefineConfig } from '@adonisjs/core/http';
+import { defineConfig as httpDefineConfig, Qs, Router } from '@adonisjs/core/http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MediaConfig } from '../src/define_config.js';
 import { MIN_DIRECT_PART_SIZE } from '../src/direct_upload.js';

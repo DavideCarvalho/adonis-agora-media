@@ -1,7 +1,7 @@
 import type { Database } from '@adonisjs/lucid/database';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ResumableUploadManager } from '../src/resumable_upload.js';
 import type { UploadSession } from '../src/resumable_upload.js';
+import { ResumableUploadManager } from '../src/resumable_upload.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
 import { LucidUploadSessionStore } from '../src/upload_sessions/lucid.js';

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MediaCollectionRegistry } from '../src/media_collection.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
+import { MediaCollectionRegistry } from '../src/media_collection.js';
 import { ResumableUploadManager } from '../src/resumable_upload.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';

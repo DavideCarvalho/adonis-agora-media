@@ -73,7 +73,7 @@ export function AuthScreen({ modes }: { modes: string[] }) {
                   autoComplete="username"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-none"
+                  className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-hidden"
                 />
               </label>
               <label className="flex flex-col gap-1">
@@ -85,7 +85,7 @@ export function AuthScreen({ modes }: { modes: string[] }) {
                   autoComplete="current-password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-none"
+                  className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-hidden"
                 />
               </label>
               {error && (

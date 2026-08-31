@@ -29,7 +29,7 @@ import type {
   SignedUrlOptions,
 } from '../types.js';
 import { hardenBodyStream } from './harden_body_stream.js';
-import { type SigV4Credentials, presignS3Url } from './sigv4.js';
+import { presignS3Url, type SigV4Credentials } from './sigv4.js';
 import { extractListObjectsV2FromXml, isXmlEntityDeserializationError } from './xml_fallback.js';
 
 /**

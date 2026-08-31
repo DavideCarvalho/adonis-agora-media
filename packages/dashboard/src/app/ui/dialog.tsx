@@ -24,7 +24,7 @@ export const DialogBackdrop = forwardRef<HTMLDivElement, BaseDialog.Backdrop.Pro
   ({ className, ...props }, ref) => (
     <BaseDialog.Backdrop
       ref={ref}
-      className={cn('fixed inset-0 z-50 bg-black/80 backdrop-blur-sm', className)}
+      className={cn('fixed inset-0 z-50 bg-black/80 backdrop-blur-xs', className)}
       {...props}
     />
   ),
@@ -38,7 +38,7 @@ export const DialogPopup = forwardRef<HTMLDivElement, BaseDialog.Popup.Props>(
       className={cn(
         // `--panel-2` is the shared elevated surface: a dialog sits above the page, so it must not
         // be the same colour as the panels behind it.
-        'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-3rem)] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-panel-2 text-foreground shadow-2xl outline-none',
+        'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-3rem)] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-panel-2 text-foreground shadow-2xl outline-hidden',
         className,
       )}
       {...props}
