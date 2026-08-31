@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { contentTypeFor, normalizePath, renderIndexHtml } from '../../src/dashboard/spa.js';
+import {
+  CONFIG_ELEMENT_ID,
+  contentTypeFor,
+  normalizePath,
+  renderIndexHtml,
+} from '../../src/dashboard/spa.js';
 
 describe('dashboard spa helpers', () => {
   it('normalises mount paths', () => {
@@ -28,9 +33,28 @@ describe('dashboard spa helpers', () => {
     const out = renderIndexHtml(html, '/admin/media', bootstrap);
     expect(out).toContain('src="/admin/media/assets/index.js"');
     expect(out).not.toContain('__MEDIA_DASHBOARD__/assets');
-    expect(out).toContain('window.__MEDIA_DASHBOARD__={');
-    expect(out).toContain('"apiBase":"/admin/media/api"');
+    // A JSON DATA block, never an executable inline script: a host CSP of
+    // `script-src 'self' 'nonce-…'` drops an inline script without a word, the SPA falls back to
+    // its default mount, and every request 404s from a page that rendered fine.
+    const match = new RegExp(
+      `<script type="application/json" id="${CONFIG_ELEMENT_ID}">([^]*?)</script>`,
+    ).exec(out);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match?.[1] ?? '')).toEqual(bootstrap);
+    expect(out).not.toContain('window.__MEDIA_DASHBOARD__');
     // injected before the closing head tag
-    expect(out.indexOf('window.__MEDIA_DASHBOARD__')).toBeLessThan(out.indexOf('</head>'));
+    expect(out.indexOf(CONFIG_ELEMENT_ID)).toBeLessThan(out.indexOf('</head>'));
+  });
+
+  it('escapes a bootstrap value that would otherwise close the data block early', () => {
+    const out = renderIndexHtml('<head></head><body></body>', '/m', {
+      apiBase: '/m</script><b>',
+      uploadsBase: '/u',
+      tusBase: '/t',
+      actions: false,
+    });
+    expect(out.split('</script>')).toHaveLength(2);
+    const match = new RegExp(`id="${CONFIG_ELEMENT_ID}">([^]*?)</script>`).exec(out);
+    expect(JSON.parse(match?.[1] ?? '').apiBase).toBe('/m</script><b>');
   });
 });

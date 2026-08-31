@@ -36,11 +36,38 @@ const DEFAULT_BOOTSTRAP: DashboardBootstrap = {
   actions: false,
 };
 
-/** Read the provider-injected bootstrap, falling back to conventional defaults for standalone dev. */
+/** `id` of the JSON data block the provider injects into `index.html` (`spa.ts`'s `CONFIG_ELEMENT_ID`). */
+export const CONFIG_ELEMENT_ID = 'media-dashboard-config';
+
+/**
+ * Read the provider-injected bootstrap, falling back to conventional defaults for standalone dev.
+ *
+ * It arrives as a `<script type="application/json">` DATA block, not as a `window.__MEDIA_DASHBOARD__`
+ * global set by an inline script. The difference is the whole bug it fixes: a host
+ * Content-Security-Policy of `script-src 'self' 'nonce-…'` (shield's `@nonce`) refuses an un-nonced
+ * inline script without a word, so the global was never set, the defaults below took over, and a
+ * console mounted anywhere else answered 404 to all of its own requests while rendering perfectly.
+ * A data block is never executed, so no policy can refuse it. The global is still honoured, AFTER
+ * the block, so a test or a hand-embedding host can set it.
+ */
 export function readBootstrap(): DashboardBootstrap {
-  const injected = (globalThis as { __MEDIA_DASHBOARD__?: Partial<DashboardBootstrap> })
+  const global = (globalThis as { __MEDIA_DASHBOARD__?: Partial<DashboardBootstrap> })
     .__MEDIA_DASHBOARD__;
-  return { ...DEFAULT_BOOTSTRAP, ...injected };
+  return { ...DEFAULT_BOOTSTRAP, ...global, ...readConfigBlock() };
+}
+
+function readConfigBlock(): Partial<DashboardBootstrap> {
+  if (typeof document === 'undefined') return {};
+  const element = document.getElementById(CONFIG_ELEMENT_ID);
+  if (element === null) return {};
+  try {
+    const parsed: unknown = JSON.parse(element.textContent ?? '');
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Partial<DashboardBootstrap>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 export interface DashboardClientOptions {

@@ -47,9 +47,22 @@ export function contentTypeFor(file: string): string {
   return CONTENT_TYPES[ext] ?? 'application/octet-stream';
 }
 
+/** `id` of the JSON data block `renderIndexHtml` injects; the SPA's `readBootstrap()` reads it. */
+export const CONFIG_ELEMENT_ID = 'media-dashboard-config';
+
 /**
- * Rewrite the built `index.html` for serving: point Vite's placeholder base at `basePath` and inject
- * the runtime bootstrap the SPA reads from `window.__MEDIA_DASHBOARD__`.
+ * Rewrite the built `index.html` for serving: point Vite's placeholder base at `basePath` and hand
+ * the SPA its runtime bootstrap.
+ *
+ * The bootstrap goes in as a JSON DATA BLOCK (`<script type="application/json">`), not as an inline
+ * script assigning `window.__MEDIA_DASHBOARD__`. A data block is never executed, so no
+ * Content-Security-Policy can refuse it; an inline script IS, and a host with
+ * `script-src 'self' 'nonce-…'` (`@adonisjs/shield`'s `@nonce`, the recommended setup) silently
+ * dropped ours. The global was then undefined, the SPA fell back to its `/media/dashboard/api`
+ * default, and on any other mount path EVERY request from a console that had rendered perfectly
+ * well answered 404 — the module script Vite emits is a same-origin file, so the page itself kept
+ * loading and the failure looked like a routing bug rather than a policy one. The global is still
+ * read by the SPA as a fallback, but this is no longer how the provider speaks.
  */
 export function renderIndexHtml(
   html: string,
@@ -57,6 +70,9 @@ export function renderIndexHtml(
   bootstrap: DashboardBootstrap,
 ): string {
   const based = html.split(BASE_PLACEHOLDER).join(`${basePath === '/' ? '' : basePath}/`);
-  const inject = `<script>window.__MEDIA_DASHBOARD__=${JSON.stringify(bootstrap)}</script>`;
-  return based.replace('</head>', `${inject}</head>`);
+  // `<` escaped as `\u003c` inside the JSON: a data block ends at the first `</script`, and a
+  // config value must not be able to close it early. Valid JSON either way.
+  const json = JSON.stringify(bootstrap).replace(/</g, '\\u003c');
+  const inject = `<script type="application/json" id="${CONFIG_ELEMENT_ID}">${json}</script>`;
+  return based.includes('</head>') ? based.replace('</head>', `${inject}</head>`) : inject + based;
 }
