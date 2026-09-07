@@ -25,6 +25,7 @@ import {
   signSessionCookie,
   verifySessionCookie,
 } from '../src/dashboard/index.js';
+import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
 import { MediaManager } from '../src/media_manager.js';
 
@@ -139,7 +140,7 @@ export default class MediaDashboardProvider {
         {
           diskNames,
           actions,
-          objectUrls: { strategy: config.objectUrls ?? 'auto', apiBasePath: apiBase },
+          objectUrls: { strategy: this.#resolveObjectUrlStrategy(config), apiBasePath: apiBase },
         },
         objectInsights,
       );
@@ -526,6 +527,19 @@ export default class MediaDashboardProvider {
     });
     group.prefix(basePath);
     applyMiddleware(group, middleware);
+  }
+
+  /**
+   * Which `url` the console reports for an object's bytes. An explicit `objectUrls` always wins;
+   * when unset, the console follows the core media config: a host already streaming every read
+   * through the app (`delivery.mode: 'proxy'`) has declared its store unreachable from a browser,
+   * so a signed URL minted for the internal endpoint would be a link the console cannot open.
+   * Anything else keeps the historical `'auto'`.
+   */
+  #resolveObjectUrlStrategy(config: MediaDashboardConfig): ObjectUrlStrategy {
+    if (config.objectUrls) return config.objectUrls;
+    const media = this.app.config.get<{ delivery?: { mode?: string } }>('media', {});
+    return media.delivery?.mode === 'proxy' ? 'proxy' : 'auto';
   }
 
   /** Derive browsable disk names from the media config when the console config does not list them. */

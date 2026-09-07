@@ -155,6 +155,138 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
     expect(body?.url).toBe('/media/api/object/raw?disk=s3&key=a.txt');
   });
 
+  it('follows the media delivery mode when objectUrls is unset: delivery proxy ⇒ console proxy URLs', async () => {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router } = makeFakeRouter();
+    // Same extended-disk fake as the test above — `stat` path, as in production.
+    const disk = {
+      capabilities: { presign: true, multipart: true, publicUrls: true, list: true },
+      copy: vi.fn(),
+      move: vi.fn(),
+      deleteMany: vi.fn(),
+      list: vi.fn(),
+      size: vi.fn(),
+      stat: vi.fn(async () => ({ size: 42 })),
+      getSignedUrl: vi.fn(async () => 'https://internal.invalid/signed'),
+    };
+    const manager = {
+      storage: { defaultDisk: 's3', disk: () => disk },
+      hasResumable: false,
+    };
+    // No `objectUrls` in the console config — but the host already streams every read through
+    // the app (`delivery.mode: 'proxy'`), i.e. it declared the store unreachable from a browser.
+    const { app, bootedHandlers } = makeFakeApp(
+      { media_dashboard: { basePath: '/media' }, media: { delivery: { mode: 'proxy' } } },
+      router,
+      manager,
+    );
+
+    const provider = new MediaDashboardProvider(app as never);
+    await provider.boot();
+    await bootedHandlers[0]?.();
+
+    const handler = router.get.mock.calls.find((call) => call[0] === '/object')?.[1] as (
+      ctx: unknown,
+    ) => Promise<unknown>;
+    let body: { url?: string } | undefined;
+    await handler({
+      request: { input: (key: string) => ({ disk: 's3', key: 'a.txt' })[key] },
+      response: { status: () => ({ json: (payload: unknown) => (body = payload as never) }) },
+    });
+
+    expect(disk.getSignedUrl).not.toHaveBeenCalled();
+    expect(body?.url).toBe('/media/api/object/raw?disk=s3&key=a.txt');
+  });
+
+  it('an explicit objectUrls always wins over the media delivery mode', async () => {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router } = makeFakeRouter();
+    const disk = {
+      capabilities: { presign: true, multipart: true, publicUrls: true, list: true },
+      copy: vi.fn(),
+      move: vi.fn(),
+      deleteMany: vi.fn(),
+      list: vi.fn(),
+      size: vi.fn(),
+      stat: vi.fn(async () => ({ size: 42 })),
+      getSignedUrl: vi.fn(async () => 'https://internal.invalid/signed'),
+    };
+    const manager = {
+      storage: { defaultDisk: 's3', disk: () => disk },
+      hasResumable: false,
+    };
+    const { app, bootedHandlers } = makeFakeApp(
+      {
+        media_dashboard: { basePath: '/media', objectUrls: 'auto' },
+        media: { delivery: { mode: 'proxy' } },
+      },
+      router,
+      manager,
+    );
+
+    const provider = new MediaDashboardProvider(app as never);
+    await provider.boot();
+    await bootedHandlers[0]?.();
+
+    const handler = router.get.mock.calls.find((call) => call[0] === '/object')?.[1] as (
+      ctx: unknown,
+    ) => Promise<unknown>;
+    let body: { url?: string } | undefined;
+    await handler({
+      request: { input: (key: string) => ({ disk: 's3', key: 'a.txt' })[key] },
+      response: { status: () => ({ json: (payload: unknown) => (body = payload as never) }) },
+    });
+
+    expect(disk.getSignedUrl).toHaveBeenCalled();
+    expect(body?.url).toBe('https://internal.invalid/signed');
+  });
+
+  it('keeps the historical auto default when neither objectUrls nor a proxy delivery is configured', async () => {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router } = makeFakeRouter();
+    const disk = {
+      capabilities: { presign: true, multipart: true, publicUrls: true, list: true },
+      copy: vi.fn(),
+      move: vi.fn(),
+      deleteMany: vi.fn(),
+      list: vi.fn(),
+      size: vi.fn(),
+      stat: vi.fn(async () => ({ size: 42 })),
+      getSignedUrl: vi.fn(async () => 'https://internal.invalid/signed'),
+    };
+    const manager = {
+      storage: { defaultDisk: 's3', disk: () => disk },
+      hasResumable: false,
+    };
+    const { app, bootedHandlers } = makeFakeApp(
+      { media_dashboard: { basePath: '/media' } },
+      router,
+      manager,
+    );
+
+    const provider = new MediaDashboardProvider(app as never);
+    await provider.boot();
+    await bootedHandlers[0]?.();
+
+    const handler = router.get.mock.calls.find((call) => call[0] === '/object')?.[1] as (
+      ctx: unknown,
+    ) => Promise<unknown>;
+    let body: { url?: string } | undefined;
+    await handler({
+      request: { input: (key: string) => ({ disk: 's3', key: 'a.txt' })[key] },
+      response: { status: () => ({ json: (payload: unknown) => (body = payload as never) }) },
+    });
+
+    expect(disk.getSignedUrl).toHaveBeenCalled();
+    expect(body?.url).toBe('https://internal.invalid/signed');
+  });
+
   it('enabled: false skips registration entirely — no "booted" hook is even queued', async () => {
     const { default: MediaDashboardProvider } = await import(
       '../../providers/dashboard_provider.js'
