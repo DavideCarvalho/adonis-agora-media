@@ -15,8 +15,9 @@ import { UnsafeFileNameError } from './errors.js';
  * traversal-shaped input is never something to normalize into place.
  *
  * Every call site that builds a storage key from a client-supplied file name must route it through
- * here first: `MediaLibrary#layoutPath`, and the default `keyFor` of `DirectUploadHandler` and
- * `TusUploadHandler`.
+ * here first: `MediaLibrary#layoutPath`, the default `keyFor` of `DirectUploadHandler` and
+ * `TusUploadHandler`, and `AttachmentManager#createFromFile` (the separate adonis-attachment-style
+ * API in `attachment.ts`).
  */
 export function sanitizeFileName(fileName: string): string {
   const normalized = fileName.replace(/\\/g, '/');

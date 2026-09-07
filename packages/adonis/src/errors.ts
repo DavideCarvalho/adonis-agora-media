@@ -318,9 +318,10 @@ export class UploadPartsIncompleteError extends Error {
  * A client-supplied upload file name is unsafe to interpolate into a storage key: it contains a
  * path separator (so, after normalizing `\` to `/`, more than one segment), resolves to `.`/`..`,
  * is empty, or carries a control character. Raised by {@link sanitizeFileName} before the name ever
- * reaches a storage key — `MediaLibrary`'s `attach`/`attachExisting`, and the default `keyFor` of
- * `DirectUploadHandler` and `TusUploadHandler` — so a traversal attempt (`../../etc/passwd`) or an
- * absolute path never gets the chance to escape the upload's directory. Mirrors
+ * reaches a storage key — `MediaLibrary`'s `attach`/`attachExisting`, the default `keyFor` of
+ * `DirectUploadHandler` and `TusUploadHandler`, and `AttachmentManager#createFromFile` — so a
+ * traversal attempt (`../../etc/passwd`) or an absolute path never gets the chance to escape the
+ * upload's directory. Mirrors
  * {@link TransformerOutputError}'s stance on hostile-shaped paths: reject outright, never silently
  * normalize into place.
  */
