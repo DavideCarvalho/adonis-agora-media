@@ -130,6 +130,7 @@ export {
   TransformerOutputError,
   TransformerRuntimeMissingError,
   TransformNotReadyError,
+  UnsafeFileNameError,
   UploadNotSupportedError,
   UploadOffsetConflictError,
   UploadPartOutOfRangeError,
@@ -141,6 +142,9 @@ export {
   VariantNotFoundError,
 } from './errors.js';
 export { isExtendedDisk } from './extended_disk.js';
+// Validates a client-supplied upload file name before it reaches a storage key; the same guard the
+// built-in `keyFor` defaults and `MediaLibrary#layoutPath` run every file name through.
+export { sanitizeFileName } from './file_name.js';
 export type {
   HlsDeliveryHandlerOptions,
   HlsDeliveryRequest,

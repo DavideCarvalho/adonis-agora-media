@@ -378,6 +378,28 @@ describe('DirectUploadHandler', () => {
     );
   });
 
+  it('initiate: 400 (not a crash) when the default keyFor is fed a path-traversal-shaped fileName', async () => {
+    const handler = makeHandler();
+    const res = await handler.handle({
+      action: 'initiate',
+      fileName: '../../etc/passwd',
+      size: PART,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: 'E_MEDIA_UNSAFE_FILE_NAME' });
+  });
+
+  it('initiate: 400 for an absolute-path fileName; a normal one still keys as before', async () => {
+    const handler = makeHandler();
+    expect(
+      (await handler.handle({ action: 'initiate', fileName: '/etc/passwd', size: PART })).status,
+    ).toBe(400);
+
+    const ok = await handler.handle({ action: 'initiate', fileName: 'movie.mp4', size: PART });
+    expect(ok.status).toBe(201);
+    expect(ok.body).toMatchObject({ key: 'uploads/tok/movie.mp4' });
+  });
+
   it('status: 200 for a live session, 404 for an unknown one, 410 once expired', async () => {
     let nowMs = Date.parse('2026-01-01T00:00:00Z');
     const handler = makeHandler({}, { sessionTtlSeconds: 60, clock: () => new Date(nowMs) });

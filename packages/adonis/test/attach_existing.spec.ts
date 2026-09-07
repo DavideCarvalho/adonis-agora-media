@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MediaObjectMissingError, MimeNotAllowedError } from '../src/errors.js';
+import {
+  MediaObjectMissingError,
+  MimeNotAllowedError,
+  UnsafeFileNameError,
+} from '../src/errors.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
 import { FakeImageProcessor } from '../src/testing/fake_image_processor.js';
@@ -271,6 +275,25 @@ describe('MediaLibrary.attachExisting', () => {
 
     expect(record.ownerType).toBe('Patient');
     expect(record.ownerId).toBe('7');
+  });
+
+  it('rejects a path-traversal-shaped fileName when moving the object into the owner layout', async () => {
+    const { manager, disks } = makeManager([{ name: 'exams' }]);
+    await landObject(disks, 'incoming/scan.pdf');
+
+    await expect(
+      manager.library.attachExisting({
+        ownerType: 'Patient',
+        ownerId: 7,
+        collection: 'exams',
+        key: 'incoming/scan.pdf',
+        fileName: '../../../../etc/passwd',
+        mimeType: 'application/pdf',
+        moveIntoLayout: true,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+    // Rejected before any move happens: the object is exactly where it landed.
+    expect(disks.fs.files.has('incoming/scan.pdf')).toBe(true);
   });
 });
 

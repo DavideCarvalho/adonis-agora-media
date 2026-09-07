@@ -24,6 +24,7 @@ import {
   UploadNotSupportedError,
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
+import { sanitizeFileName } from './file_name.js';
 import type { ImageProcessor } from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
@@ -337,7 +338,12 @@ export class MediaLibrary {
     throw new ContentTypeMismatchError(collection, declared, verdict.detected, accepted);
   }
 
-  /** Storage key layout every record written by this library follows. */
+  /**
+   * Storage key layout every record written by this library follows. `fileName` is client-supplied
+   * (a form field, or the original name of an already-uploaded object) and goes through
+   * {@link sanitizeFileName} first — otherwise `../../etc/passwd` or an absolute path would
+   * interpolate straight into the key and escape the owner/collection/id prefix.
+   */
   #layoutPath(
     ownerType: string,
     ownerId: string,
@@ -345,7 +351,7 @@ export class MediaLibrary {
     id: string,
     fileName: string,
   ): string {
-    return `${ownerType}/${ownerId}/${collection}/${id}/${fileName}`;
+    return `${ownerType}/${ownerId}/${collection}/${id}/${sanitizeFileName(fileName)}`;
   }
 
   /**

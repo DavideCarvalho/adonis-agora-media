@@ -3,6 +3,7 @@ import { traceMedia } from './diagnostics.js';
 import type { DirectUploadCreatedSession, DirectUploadManager } from './direct_upload.js';
 import {
   MimeNotAllowedError,
+  UnsafeFileNameError,
   UploadNotSupportedError,
   UploadPartOutOfRangeError,
   UploadPartSizeError,
@@ -10,6 +11,7 @@ import {
   UploadSessionExpiredError,
   UploadSessionNotFoundError,
 } from './errors.js';
+import { sanitizeFileName } from './file_name.js';
 import type { AttachExistingInput } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type {
@@ -121,7 +123,8 @@ export class DirectUploadHandler {
     this.disk = options.disk;
     this.collection = options.collection;
     this.maxSize = options.maxSize;
-    this.keyFor = options.keyFor ?? ((fileName, token) => `uploads/${token}/${fileName}`);
+    this.keyFor =
+      options.keyFor ?? ((fileName, token) => `uploads/${token}/${sanitizeFileName(fileName)}`);
     this.newId = options.idGenerator ?? (() => randomUUID());
     this.policy = options.policy;
     this.adopt = options.adopt;
@@ -363,6 +366,9 @@ export class DirectUploadHandler {
     }
     if (err instanceof MimeNotAllowedError) {
       return { status: 415, body: { error: err.message, code: err.code } };
+    }
+    if (err instanceof UnsafeFileNameError) {
+      return { status: 400, body: { error: err.message, code: err.code } };
     }
     // Not-yet-uploaded parts are client state out of sync with the session, not a bad request.
     if (err instanceof UploadPartsIncompleteError) {

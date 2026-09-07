@@ -261,6 +261,43 @@ describe('TusUploadHandler — TUS 1.0.0 protocol', () => {
     expect(res.status).toBe(413);
   });
 
+  it('POST: the default keyFor rejects a path-traversal-shaped filename with 400 instead of crashing', async () => {
+    // No `keyFor` override here — exercises the built-in `uploads/<token>/<filename>` default.
+    const defaultKeyFor = new TusUploadHandler({
+      manager: new ResumableUploadManager({
+        storage: storageOf(disk),
+        sessions: new InMemoryUploadSessionStore(),
+        idGenerator: () => 'tok',
+        emitDiagnostics: false,
+      }),
+      disk: 'local',
+      idGenerator: () => 'tok',
+    });
+
+    const traversal = await defaultKeyFor.handle({
+      method: 'POST',
+      headers: {
+        'upload-length': '5',
+        'upload-metadata': `filename ${b64('../../etc/passwd')}`,
+      },
+    });
+    expect(traversal.status).toBe(400);
+
+    const absolute = await defaultKeyFor.handle({
+      method: 'POST',
+      headers: { 'upload-length': '5', 'upload-metadata': `filename ${b64('/etc/passwd')}` },
+    });
+    expect(absolute.status).toBe(400);
+
+    // A normal filename still keys the way the doc comment promises.
+    const ok = await defaultKeyFor.handle({
+      method: 'POST',
+      headers: { 'upload-length': '5', 'upload-metadata': `filename ${b64('a.png')}` },
+    });
+    expect(ok.status).toBe(201);
+    expect(ok.headers.Location).toBe('/uploads/tok');
+  });
+
   it('HEAD reports the current offset + length; 404 when unknown', async () => {
     await handler.handle({ method: 'POST', headers: { 'upload-length': '5' } });
     const head = await handler.handle({ method: 'HEAD', uploadId: 's-1', headers: {} });

@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { UnsafeFileNameError } from '../src/errors.js';
 import { MediaLibrary } from '../src/media_library.js';
 import type { MediaRecord } from '../src/media_record.js';
 import { StorageManager } from '../src/storage_manager.js';
@@ -167,6 +168,53 @@ describe('MediaLibrary.attach / list / delete', () => {
     const list = await post.list('gallery');
     expect(list).toHaveLength(1);
     expect(list[0]?.ownerId).toBe('7');
+  });
+});
+
+describe('MediaLibrary.attach — client-supplied fileName is never trusted as a path', () => {
+  it('rejects a path-traversal-shaped fileName instead of interpolating it into the storage key', async () => {
+    const { library, disks } = makeLibrary();
+
+    await expect(
+      library.attach({
+        ownerType: 'Post',
+        ownerId: '42',
+        collection: 'gallery',
+        fileName: '../../../../etc/passwd',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+    // Nothing was written to the disk: rejection happens before the key is built.
+    expect([...disks.fs.files.keys()]).toEqual([]);
+  });
+
+  it('rejects an absolute-path fileName', async () => {
+    const { library } = makeLibrary();
+    await expect(
+      library.attach({
+        ownerType: 'Post',
+        ownerId: '42',
+        collection: 'gallery',
+        fileName: '/etc/passwd',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+  });
+
+  it('a normal fileName still lands at the expected owner/collection/id layout', async () => {
+    const { library, disks } = makeLibrary();
+    const record = await library.attach({
+      ownerType: 'Post',
+      ownerId: '42',
+      collection: 'gallery',
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+    expect(record.path).toBe('Post/42/gallery/id-1/photo.png');
+    expect(disks.fs.files.has(record.path)).toBe(true);
   });
 });
 

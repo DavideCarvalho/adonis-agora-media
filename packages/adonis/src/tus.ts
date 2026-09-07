@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_type.js';
 import {
+  UnsafeFileNameError,
   UploadOffsetConflictError,
   UploadSessionExpiredError,
   UploadSessionNotFoundError,
 } from './errors.js';
+import { sanitizeFileName } from './file_name.js';
 import type { MediaCollectionRegistry } from './media_collection.js';
 import type { CreateUploadInput, ResumableUploadManager } from './resumable_upload.js';
 
@@ -113,7 +115,8 @@ export class TusUploadHandler {
         : undefined;
     this.basePath = (options.basePath ?? '/uploads').replace(/\/+$/, '');
     this.maxSize = options.maxSize;
-    this.keyFor = options.keyFor ?? ((filename, token) => `uploads/${token}/${filename}`);
+    this.keyFor =
+      options.keyFor ?? ((filename, token) => `uploads/${token}/${sanitizeFileName(filename)}`);
     this.newId = options.idGenerator ?? (() => randomUUID());
   }
 
@@ -148,9 +151,18 @@ export class TusUploadHandler {
         }
         const filename = metadata.filename ?? 'upload';
         const token = this.newId();
+        let key: string;
+        try {
+          key = this.keyFor(filename, token, metadata);
+        } catch (err) {
+          if (err instanceof UnsafeFileNameError) {
+            return { status: 400, headers: base, body: err.message };
+          }
+          throw err;
+        }
         const input: CreateUploadInput = {
           disk: this.disk,
-          key: this.keyFor(filename, token, metadata),
+          key,
           metadata,
         };
         if (Number.isFinite(length)) input.size = length;
