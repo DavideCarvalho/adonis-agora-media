@@ -1,5 +1,18 @@
 # @adonis-agora/media
 
+## 0.17.0
+
+### Minor Changes
+
+- [#78](https://github.com/DavideCarvalho/adonis-agora-media/pull/78) [`b042623`](https://github.com/DavideCarvalho/adonis-agora-media/commit/b042623f1ae31713d0485361a9e60f483bf68c9f) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console: `objectUrls` follows the core `delivery.mode` when unset.
+  
+  A host already streaming every read through the app (`delivery.mode: 'proxy'` in
+  `config/media.ts`) has declared its store unreachable from a browser — minting the console a
+  signed URL for the internal endpoint anyway handed it a link that resolves nowhere. With no
+  explicit `objectUrls` in `config/media_dashboard.ts`, the console now implies `'proxy'` from a
+  proxy delivery mode and keeps `'auto'` otherwise. An explicit `objectUrls` always wins, so
+  nothing moves for hosts that set it.
+
 ## 0.16.0
 
 ### Minor Changes
