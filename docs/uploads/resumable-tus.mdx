@@ -116,7 +116,7 @@ With `routes.enabled`, these routes are mounted under `routes.prefix` (default `
 | `PATCH` | `/:id` | Append bytes at `Upload-Offset` (`Content-Type: application/offset+octet-stream`); auto-completes at the declared length. |
 | `DELETE` | `/:id` | Terminate (abort) an in-flight upload. |
 
-Storage errors map onto TUS status codes: offset conflict → `409`, expired session → `410 Gone`, unknown session → `404`. The final object key defaults to `uploads/<token>/<filename>` (from the `filename` metadata field).
+Storage errors map onto TUS status codes: offset conflict → `409`, expired session → `410 Gone`, unknown session → `404`. The final object key defaults to `uploads/<token>/<filename>` (from the `filename` metadata field). That `filename` is validated as a single, safe path segment before it is used — a traversal attempt (`../../etc/passwd`) or an absolute path throws [`UnsafeFileNameError`](/docs/media/errors#uploads) rather than being written somewhere unexpected.
 
 <Callout type="info">
   A standard tus client (e.g. `tus-js-client`) points straight at `routes.prefix` and works unchanged. `@adonis-agora/media-react` includes a matching client so you don't need a separate dependency.
