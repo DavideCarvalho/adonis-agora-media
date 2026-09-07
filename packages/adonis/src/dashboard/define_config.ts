@@ -5,6 +5,7 @@ import type {
 } from './access_denied_page.js';
 import type { ConsoleAuthOptions } from './auth.js';
 import type { ObjectInsightProvider } from './object_insights.js';
+import type { ObjectUrlStrategy } from './object_urls.js';
 
 /**
  * The function form of {@link MediaDashboardConfig.accessDenied}: render (or answer) a refused
@@ -97,6 +98,17 @@ export interface MediaDashboardConfig {
    * how it learns what the file *means* to your app. Omit for no annotation (the default).
    */
   objectInsights?: ObjectInsightProvider[];
+  /**
+   * Where the `url` the console reports for an object's bytes points — the "Open ↗" link and the
+   * `src` of the image/video/audio previews. `'auto'` (default) signs a URL straight to the object
+   * store; `'proxy'` routes it through this server's own `<apiBase>/object/raw`, for a deployment
+   * whose browsers cannot reach the store at all (private bucket on an internal network, no CORS
+   * grant). See {@link ObjectUrlStrategy}.
+   *
+   * Set `'proxy'` whenever the store is not internet-reachable — with `'auto'` the console mints a
+   * URL signed for the INTERNAL endpoint, which resolves nowhere in a browser.
+   */
+  objectUrls?: ObjectUrlStrategy;
 }
 
 /** Identity helper for authoring a typed `config/media_dashboard.ts`. */

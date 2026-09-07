@@ -134,7 +134,13 @@ export default class MediaDashboardProvider {
     const service = async () =>
       new DashboardService(
         await this.app.container.make(MediaManager),
-        { diskNames, actions },
+        // Strategy and mount path travel together: a strategy without the path it needs would be a
+        // half-configured state that builds `/object/raw` URLs rooted at nothing.
+        {
+          diskNames,
+          actions,
+          objectUrls: { strategy: config.objectUrls ?? 'auto', apiBasePath: apiBase },
+        },
         objectInsights,
       );
 

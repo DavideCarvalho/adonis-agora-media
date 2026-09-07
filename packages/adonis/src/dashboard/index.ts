@@ -35,6 +35,9 @@ export { defineConfig } from './define_config.js';
 export type { ObjectInsightContext, ObjectInsightProvider } from './object_insights.js';
 // Host-supplied object annotations.
 export { sanitizeInsight } from './object_insights.js';
+export type { ObjectUrlConfig, ObjectUrlStrategy } from './object_urls.js';
+// Where the reported object `url` points (store-signed vs. this console's proxy).
+export { objectProxyUrl } from './object_urls.js';
 export type { DashboardServiceOptions, MediaManagerLike } from './service.js';
 // Dashboard read/action logic (framework-free — the provider is a thin HTTP shell around this).
 export { DashboardError, DashboardService } from './service.js';
