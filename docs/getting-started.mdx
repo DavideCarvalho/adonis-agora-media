@@ -181,6 +181,7 @@ export default class PostImagesController {
 A few things happen on `attach`, driven by the collection's config:
 
 - If the collection has an `acceptsMimeTypes` whitelist and the file's type isn't on it, a `MimeNotAllowedError` (`E_MEDIA_MIME_NOT_ALLOWED`) is thrown **before** anything is written.
+- `fileName` (`image.clientName` above) must be a single safe path segment — a traversal attempt or an absolute path throws `UnsafeFileNameError` (`E_MEDIA_UNSAFE_FILE_NAME`) instead of being silently normalized.
 - If the collection is `single`, the new file *replaces* any existing media in it (for this owner). The previous file is removed only **after** the new one is safely written and persisted, so a failed upload leaves the old media intact.
 - The file is written to `${ownerType}/${ownerId}/${collection}/${id}/${fileName}` on the resolved disk (per-call `disk` → collection `disk` → storage default).
 - Any **eager** conversions are generated synchronously; lazy ones wait for the first `url()`.

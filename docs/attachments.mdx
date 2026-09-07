@@ -84,7 +84,7 @@ The `input` is `{ fileName, mimeType, contents, size? }`. The `options` are all 
 | `name` | the file name | Display name stored on the attachment. |
 | `meta` | `{}` | Free-form metadata bag stored on the attachment. |
 
-The file lands at `${keyPrefix}/${id}/${fileName}` (with a generated id), and variants at `${keyPrefix}/${id}/variants/${name}.${format}`.
+The file lands at `${keyPrefix}/${id}/${fileName}` (with a generated id), and variants at `${keyPrefix}/${id}/variants/${name}.${format}`. `fileName` (typically a client-supplied name like `avatar.clientName` above) must be a single safe path segment — a traversal attempt or an absolute path throws [`UnsafeFileNameError`](/docs/media/errors#uploads) before anything is written.
 
 <Callout type="info" title="Variants are eager">
   Unlike the media library's lazy conversions, attachment **variants are always generated eagerly** inside `createFromFile`. There's no per-attachment record to cache a lazily-generated variant onto, so you declare exactly the variants you want up front. They use the same `ConversionPreset` shape (`width` / `height` / `fit` / `format` / `quality`) and the same image processor.

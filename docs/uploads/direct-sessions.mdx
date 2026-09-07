@@ -201,6 +201,8 @@ The client sends a **`fileName`, never a key** — the key is always resolved se
 
 That second branch is where a real app lives — see [Direct upload policy](/docs/media/uploads/direct-upload-policy).
 
+Either way, `fileName` itself is validated before it can reach a storage key — a path separator, an absolute path, `.`/`..`, or a control character gets the initiate call rejected with [`UnsafeFileNameError`](/docs/media/errors#uploads) rather than silently normalized.
+
 And like the TUS and delivery handlers, **no authorization is performed** by the handler. Guard the routes with `routes.middleware`, and put per-resource checks in the policy hooks.
 
 ---
