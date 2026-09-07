@@ -38,11 +38,11 @@ function makeFakeRouter() {
  * `test/media_provider.spec.ts`'s fake, so route registration can be asserted ONLY after the queued
  * hook actually runs, mirroring the real `Application#booted()` ordering.
  */
-function makeFakeApp(config: Record<string, unknown>, router: unknown) {
+function makeFakeApp(config: Record<string, unknown>, router: unknown, manager: unknown = {}) {
   const bootedHandlers: Array<() => Promise<void> | void> = [];
   const make = vi.fn(async (token: unknown) => {
     if (token === 'router') return router;
-    return {}; // MediaManager (or anything else) — never resolved unless a handler actually runs.
+    return manager; // MediaManager — `{}` unless a test actually runs a route handler.
   });
   const app = {
     config: { get: (key: string, def: unknown) => config[key] ?? def },
@@ -108,6 +108,51 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
     await bootedHandlers[0]?.();
 
     expect(groups.flatMap((g) => g.middleware)).not.toContain(guard);
+  });
+
+  it('wires objectUrls (and the API mount it needs) from config through to the service', async () => {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router } = makeFakeRouter();
+    // Extended-disk shaped (`isExtendedDisk`) so `object()` takes the `stat` path, as in production.
+    const disk = {
+      capabilities: { presign: true, multipart: true, publicUrls: true, list: true },
+      copy: vi.fn(),
+      move: vi.fn(),
+      deleteMany: vi.fn(),
+      list: vi.fn(),
+      size: vi.fn(),
+      stat: vi.fn(async () => ({ size: 42 })),
+      getSignedUrl: vi.fn(async () => 'https://internal.invalid/signed'),
+    };
+    const manager = {
+      storage: { defaultDisk: 's3', disk: () => disk },
+      hasResumable: false,
+    };
+    const { app, bootedHandlers } = makeFakeApp(
+      { media_dashboard: { basePath: '/media', objectUrls: 'proxy' } },
+      router,
+      manager,
+    );
+
+    const provider = new MediaDashboardProvider(app as never);
+    await provider.boot();
+    await bootedHandlers[0]?.();
+
+    // Run the real `GET /object` handler the provider registered, so the assertion covers the whole
+    // config → service path (including that `proxy` is rooted at the DERIVED api mount, not a guess).
+    const handler = router.get.mock.calls.find((call) => call[0] === '/object')?.[1] as (
+      ctx: unknown,
+    ) => Promise<unknown>;
+    let body: { url?: string } | undefined;
+    await handler({
+      request: { input: (key: string) => ({ disk: 's3', key: 'a.txt' })[key] },
+      response: { status: () => ({ json: (payload: unknown) => (body = payload as never) }) },
+    });
+
+    expect(disk.getSignedUrl).not.toHaveBeenCalled();
+    expect(body?.url).toBe('/media/api/object/raw?disk=s3&key=a.txt');
   });
 
   it('enabled: false skips registration entirely — no "booted" hook is even queued', async () => {

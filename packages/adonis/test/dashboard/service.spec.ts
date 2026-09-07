@@ -156,6 +156,32 @@ describe('DashboardService', () => {
     });
   });
 
+  it('returns the console proxy URL, not a signed one, under objectUrls proxy', async () => {
+    const disk = fakeDisk();
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+      objectUrls: { strategy: 'proxy', apiBasePath: '/media/api' },
+    });
+    const res = await svc.object('s3', 'exam-uploads/7cb1efab');
+    // The whole point: on a store the browser cannot reach, the console must never mint a URL
+    // pointing at it — not even as a fallback.
+    expect(disk.getSignedUrl).not.toHaveBeenCalled();
+    expect(res.url).toBe('/media/api/object/raw?disk=s3&key=exam-uploads%2F7cb1efab');
+  });
+
+  it('signs the object URL when objectUrls is auto', async () => {
+    const disk = fakeDisk();
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+      objectUrls: { strategy: 'auto', apiBasePath: '/media/api' },
+    });
+    const res = await svc.object('s3', 'a.txt');
+    expect(disk.getSignedUrl).toHaveBeenCalledWith('a.txt', { expiresIn: 300 });
+    expect(res.url).toBe('https://signed.example/a.txt');
+  });
+
   it('projects resumable upload sessions to UploadInfo', async () => {
     const resumable = {
       list: vi.fn(async () => [
@@ -559,6 +585,26 @@ describe('DashboardService', () => {
     });
     const result = await svc.mediaRecord('m1');
     expect(result.variants).toEqual([{ name: 'thumb', url: 'https://signed.example/thumb.jpg' }]);
+  });
+
+  it('mediaRecord variant URLs follow the objectUrls proxy strategy too', async () => {
+    const disk = fakeDisk();
+    const store = {
+      find: vi.fn(async () =>
+        mediaRecord({ conversions: { thumb: { path: 't.jpg', disk: 's3' } } }),
+      ),
+      delete: vi.fn(),
+    };
+    const svc = new DashboardService(managerWith({ s3: disk }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+      objectUrls: { strategy: 'proxy', apiBasePath: '/media/api' },
+    });
+    const result = await svc.mediaRecord('m1');
+    expect(disk.getSignedUrl).not.toHaveBeenCalled();
+    expect(result.variants).toEqual([
+      { name: 'thumb', url: '/media/api/object/raw?disk=s3&key=t.jpg' },
+    ]);
   });
 
   it('mediaRecord 404s for an unknown id', async () => {

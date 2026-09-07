@@ -6,6 +6,8 @@ import type { UploadSession } from '../resumable_upload.js';
 import type { Disk, ExtendedDisk, MultipartPart } from '../types.js';
 import type { ObjectInsightProvider } from './object_insights.js';
 import { sanitizeInsight } from './object_insights.js';
+import type { ObjectUrlConfig } from './object_urls.js';
+import { objectProxyUrl } from './object_urls.js';
 import type {
   CollectionFilter,
   CollectionListResponse,
@@ -76,6 +78,12 @@ export interface DashboardServiceOptions {
   diskNames: string[];
   /** Whether mutating actions (copy/move/delete) are permitted. */
   actions: boolean;
+  /**
+   * How to build the `url` reported for an object's bytes — see {@link ObjectUrlConfig}. Omit (or
+   * `undefined`) for `auto`: a signed URL straight to the store, which is what this service always
+   * did before the option existed.
+   */
+  objectUrls?: ObjectUrlConfig;
 }
 
 /** An error carrying an HTTP status for the provider to surface verbatim. */
@@ -154,12 +162,24 @@ export class DashboardService {
     return { folders, files, ...(result.cursor !== undefined ? { cursor: result.cursor } : {}) };
   }
 
-  /** Object metadata + a short-lived signed URL for preview/download. */
+  /**
+   * The URL to report for an object's bytes, under the host's {@link ObjectUrlStrategy}. `auto`
+   * signs a short-lived URL straight to the store; `proxy` routes through this server, for a host
+   * whose browser cannot reach the store at all.
+   */
+  private objectUrl(disk: Disk, diskName: string, key: string): Promise<string> {
+    if (this.options.objectUrls?.strategy === 'proxy') {
+      return Promise.resolve(objectProxyUrl(this.options.objectUrls.apiBasePath, diskName, key));
+    }
+    return disk.getSignedUrl(key, { expiresIn: URL_TTL_SECONDS });
+  }
+
+  /** Object metadata + a URL for preview/download (signed, or this console's proxy — see `objectUrls`). */
   async object(diskName: string, key: string): Promise<ObjectDetailResponse> {
     if (!key) throw new DashboardError('key is required', 400);
     const disk = this.manager.storage.disk(diskName);
     const stat = isExtendedDisk(disk) ? await disk.stat(key) : await metaAsStat(disk, key);
-    const url = await disk.getSignedUrl(key, { expiresIn: URL_TTL_SECONDS });
+    const url = await this.objectUrl(disk, diskName, key);
     return {
       key,
       size: stat.size,
@@ -294,9 +314,10 @@ export class DashboardService {
   }
 
   /**
-   * Full detail of one stored `MediaRecord`, plus signed URLs for its generated conversions. Only
-   * conversions carrying a concrete `{disk, path}` artifact get a link — a metadata-only conversion
-   * (probe results with no output file) has nothing to preview.
+   * Full detail of one stored `MediaRecord`, plus a URL per generated conversion (signed, or this
+   * console's proxy — same `objectUrls` strategy as {@link object}). Only conversions carrying a
+   * concrete `{disk, path}` artifact get a link — a metadata-only conversion (probe results with no
+   * output file) has nothing to preview.
    */
   async mediaRecord(id: string): Promise<MediaDetailResponse> {
     const record = await this.manager.store.find(id);
@@ -308,7 +329,7 @@ export class DashboardService {
     const variants = await Promise.all(
       linkable.map(async ([name, conversion]) => {
         const disk = this.manager.storage.disk(conversion.disk);
-        const url = await disk.getSignedUrl(conversion.path, { expiresIn: URL_TTL_SECONDS });
+        const url = await this.objectUrl(disk, conversion.disk, conversion.path);
         return { name, url };
       }),
     );

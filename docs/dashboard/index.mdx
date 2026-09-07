@@ -53,6 +53,7 @@ export default defineConfig({
 | `enabled` | `boolean` | `true` | Mount the console at all. `false` registers the provider — so its config type stays available — without exposing a single route. |
 | `auth` | `ConsoleAuthOptions` | — | Built-in session-cookie login. See [Console authentication](/docs/media/dashboard/authentication). |
 | `objectInsights` | `ObjectInsightProvider[]` | `[]` | Host-supplied annotations rendered in the object preview. See [below](#object-insights). |
+| `objectUrls` | `'auto' \| 'proxy'` | `'auto'` | Where the `url` reported for an object's bytes points — the store (signed), or this console's own `/object/raw`. See [below](#object-urls). |
 
 `enabled: false` is the per-environment switch: keep the provider registered (and `config/media_dashboard.ts` type-checked) in every environment, and let the config decide where the console actually exists. It short-circuits in `boot()`, before any route is registered — not a 403, simply nothing mounted.
 
@@ -77,7 +78,7 @@ The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`)
 | `GET` | `/topology` | capability probe (`{ disks, hasUploads, actions }`) |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
 | `GET` | `/objects?disk&prefix&cursor&limit` | disk `list` |
-| `GET` | `/object?disk&key` | disk `stat` + signed URL |
+| `GET` | `/object?disk&key` | disk `stat` + the object's `url` (signed, or the proxy — see [`objectUrls`](#object-urls)) |
 | `POST` | `/object?disk&key&type` | raw-body object upload (the console's convenience upload) — `actions` only |
 | `GET` | `/object/raw?disk&key` | streams the object's bytes through the app, `content-disposition: inline` |
 | `GET` | `/object/insights?disk&key` | the registered [object-insight providers](#object-insights) |
@@ -99,6 +100,23 @@ The `actions`-only routes are always *mounted*; the gate is enforced one layer d
 Two upload paths coexist, on purpose. `POST /object` is the console's own convenience upload: raw bytes as `application/octet-stream` (so your app's body parsers never consume the stream), the real MIME riding as the `type` query param, buffered in memory and therefore capped at 100 MB. Anything larger belongs on the core `@adonis-agora/media` TUS / direct routes, which the console drives through `@adonis-agora/media-react`.
 
 `GET /object/raw` exists for the preview: a signed URL is fine for an image tag, but streaming through the app is what lets the lightbox read a text/CSV body without a cross-origin fetch, and what works at all on a disk the browser cannot reach directly.
+
+## Object URLs
+
+Every object the console shows has a `url`: what "Open ↗" links to, and what the image / video / audio previews set as their `src`. By default (`objectUrls: 'auto'`) that is a short-lived **signed URL straight to the object store** — a real link, one that survives a copy-paste out of the console and needs nothing from your app to resolve.
+
+That default assumes the browser can reach the store. On a deployment where it cannot — a private bucket on an internal network, a MinIO addressed by an in-cluster hostname, a policy against client-to-bucket traffic — the signed URL is minted against the **internal** endpoint and resolves nowhere in a browser (`ERR_NAME_NOT_RESOLVED`, or a CORS wall). Set `objectUrls: 'proxy'` and the console reports its own same-origin `<apiBasePath>/object/raw` instead, so every byte travels through your app, under the same auth as the rest of the console:
+
+```ts title="config/media_dashboard.ts"
+export default defineConfig({
+  basePath: '/media',
+  objectUrls: 'proxy',
+})
+```
+
+The trade-off is the mirror image of the default: a proxied URL only means something to a session that can reach your app, and your app pays the bandwidth. The PDF and text previews are unaffected either way — they always read through `/object/raw`, because rendering them needs same-origin bytes.
+
+This is the same option, with the same two values, as the NestJS sibling console.
 
 ---
 
