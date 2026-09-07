@@ -21,10 +21,11 @@ export default defineConfig({
   // disks: ['s3', 'backups'],           // default: derived from config/media.ts
   // middleware: middleware.auth(),      // gate the whole console — SPA + API
 
-  // Where the 'url' the console reports for an object points: 'auto' (default) signs a URL straight
+  // Where the 'url' the console reports for an object points: 'auto' signs a URL straight
   // to the store; 'proxy' routes it through this app's own '<apiBasePath>/object/raw'. Use 'proxy'
   // when the store is not reachable from a browser (private bucket / internal hostname / no CORS) --
-  // a signed URL for an internal endpoint resolves nowhere in a browser.
+  // a signed URL for an internal endpoint resolves nowhere in a browser. When unset, the console
+  // follows config/media.ts: 'delivery.mode: proxy' there implies 'proxy' here.
   // objectUrls: 'proxy',
 
   // Built-in session-cookie login, independent of (and composable with) 'middleware'. At least one of

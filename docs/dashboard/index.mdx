@@ -116,6 +116,8 @@ export default defineConfig({
 
 The trade-off is the mirror image of the default: a proxied URL only means something to a session that can reach your app, and your app pays the bandwidth. The PDF and text previews are unaffected either way — they always read through `/object/raw`, because rendering them needs same-origin bytes.
 
+When `objectUrls` is unset, the console follows your core media config: `delivery.mode: 'proxy'` in `config/media.ts` implies `'proxy'` here — a host already streaming every read through the app has declared its store unreachable from a browser, so the console does the same without being told twice. Anything else keeps `'auto'`. An explicit `objectUrls` always wins over the delivery mode.
+
 This is the same option, with the same two values, as the NestJS sibling console.
 
 ---

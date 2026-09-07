@@ -100,13 +100,18 @@ export interface MediaDashboardConfig {
   objectInsights?: ObjectInsightProvider[];
   /**
    * Where the `url` the console reports for an object's bytes points — the "Open ↗" link and the
-   * `src` of the image/video/audio previews. `'auto'` (default) signs a URL straight to the object
-   * store; `'proxy'` routes it through this server's own `<apiBase>/object/raw`, for a deployment
-   * whose browsers cannot reach the store at all (private bucket on an internal network, no CORS
-   * grant). See {@link ObjectUrlStrategy}.
+   * `src` of the image/video/audio previews. `'auto'` signs a URL straight to the object store;
+   * `'proxy'` routes it through this server's own `<apiBase>/object/raw`, for a deployment whose
+   * browsers cannot reach the store at all (private bucket on an internal network, no CORS grant).
+   * See {@link ObjectUrlStrategy}.
    *
    * Set `'proxy'` whenever the store is not internet-reachable — with `'auto'` the console mints a
    * URL signed for the INTERNAL endpoint, which resolves nowhere in a browser.
+   *
+   * When unset, the console follows the core media config: `delivery.mode: 'proxy'` in
+   * `config/media.ts` implies `'proxy'` here (a host already streaming every read through the app
+   * has declared its store unreachable from a browser); anything else keeps `'auto'`. An explicit
+   * value always wins.
    */
   objectUrls?: ObjectUrlStrategy;
 }
