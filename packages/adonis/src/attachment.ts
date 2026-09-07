@@ -3,6 +3,7 @@ import type { Readable } from 'node:stream';
 import { asBuffer, toBytes } from './contents.js';
 import { publishMedia } from './diagnostics.js';
 import { ImageProcessorMissingError, VariantNotFoundError } from './errors.js';
+import { sanitizeFileName } from './file_name.js';
 import type { ConversionPreset, ImageProcessor } from './image_processor.js';
 import type { StorageManager } from './storage_manager.js';
 import type { SignedUrlOptions } from './types.js';
@@ -128,7 +129,11 @@ export class AttachmentManager {
     const prefix = options.keyPrefix ?? this.keyPrefix;
     const id = this.newId();
     const dir = `${prefix}/${id}`;
-    const path = `${dir}/${input.fileName}`;
+    // input.fileName is client-supplied (an upload's original name) and goes through
+    // sanitizeFileName before it is interpolated into the storage key — otherwise
+    // "../../etc/passwd" or an absolute path would escape the `${prefix}/${id}` prefix. See
+    // MediaLibrary#layoutPath for the sibling call site this mirrors.
+    const path = `${dir}/${sanitizeFileName(input.fileName)}`;
     const target = this.storage.disk(disk);
     const presets = options.variants ?? [];
 

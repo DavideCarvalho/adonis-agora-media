@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { UnsafeFileNameError } from '../src/errors.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
 import { removeSingleFileWith, storeSingleFileWith } from '../src/single_file_store.js';
@@ -93,6 +94,26 @@ describe('storeSingleFileWith', () => {
     const list = await store.listByOwner('AuthAccount', 'acc-1', 'avatar');
     expect(list).toHaveLength(1);
     expect(list[0]?.fileName).toBe('new.png');
+  });
+
+  // storeSingleFileWith builds no storage key of its own — it delegates straight to
+  // MediaManager.library.attach, whose `#layoutPath` already runs `fileName` through
+  // `sanitizeFileName`. This just confirms that a path-traversal-shaped fileName is rejected
+  // end-to-end through this seam too, not silently re-introduced by a future refactor.
+  it('rejects a path-traversal-shaped fileName instead of interpolating it into the storage key', async () => {
+    const { manager, disks } = makeManager([{ name: 'avatar', single: true }]);
+
+    await expect(
+      storeSingleFileWith(manager, {
+        ownerType: 'AuthAccount',
+        ownerId: 'acc-1',
+        collection: 'avatar',
+        fileName: '../../../../etc/passwd',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+    expect(disks.fs.files.size).toBe(0);
   });
 });
 

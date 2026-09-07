@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { Attachment, AttachmentManager } from '../src/attachment.js';
+import { UnsafeFileNameError } from '../src/errors.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { FakeImageProcessor } from '../src/testing/fake_image_processor.js';
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
@@ -77,5 +78,43 @@ describe('AttachmentManager (column model)', () => {
     await manager.delete(att);
     expect(disks.fs.files.has(att.path)).toBe(false);
     expect(disks.fs.files.has(att.variants.thumb?.path ?? '')).toBe(false);
+  });
+});
+
+describe('AttachmentManager.createFromFile — client-supplied fileName is never trusted as a path', () => {
+  it('rejects a path-traversal-shaped fileName instead of interpolating it into the storage key', async () => {
+    const { manager, disks } = makeManager();
+
+    await expect(
+      manager.createFromFile({
+        fileName: '../../../../etc/passwd',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+    // Nothing was written to the disk: rejection happens before the key is built.
+    expect([...disks.fs.files.keys()]).toEqual([]);
+  });
+
+  it('rejects an absolute-path fileName', async () => {
+    const { manager } = makeManager();
+    await expect(
+      manager.createFromFile({
+        fileName: '/etc/passwd',
+        mimeType: 'image/png',
+        contents: png,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeFileNameError);
+  });
+
+  it('a normal fileName still lands at the expected attachments/<id> layout', async () => {
+    const { manager, disks } = makeManager();
+    const att = await manager.createFromFile({
+      fileName: 'avatar.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+    expect(att.path).toBe('attachments/att-1/avatar.png');
+    expect(disks.fs.files.has(att.path)).toBe(true);
   });
 });
