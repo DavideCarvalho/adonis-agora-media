@@ -13,18 +13,18 @@ describe('DashboardClient', () => {
   it('builds object listing requests with query params and same-origin credentials', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ folders: [], files: [] }));
     const client = new DashboardClient({ apiBase: '/media/dashboard/api', fetchImpl });
-    await client.objects('s3', { prefix: 'photos/', cursor: 'c1', limit: 50 });
+    await client.objects('s3', { prefix: 'photos/', after: 'c1', first: 50 });
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/media/dashboard/api/objects?disk=s3&prefix=photos%2F&cursor=c1&limit=50');
+    expect(url).toBe('/media/dashboard/api/objects?disk=s3&prefix=photos%2F&after=c1&first=50');
     expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
   });
 
   it('builds collections requests with only the present filters', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ items: [], nextCursor: null }));
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-    await client.collections({ ownerType: 'Post', ownerId: '42', cursor: 'c1', limit: 50 });
+    await client.collections({ ownerType: 'Post', ownerId: '42', after: 'c1', first: 50 });
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/api/collections?ownerType=Post&ownerId=42&cursor=c1&limit=50');
+    expect(url).toBe('/api/collections?ownerType=Post&ownerId=42&after=c1&first=50');
     expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
   });
 

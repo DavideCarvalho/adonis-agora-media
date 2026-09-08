@@ -3,6 +3,7 @@ import type {
   CollectionListResponse,
   CollectionsSummaryResponse,
   CopyMoveBody,
+  CursorParams,
   DeleteBody,
   DiskListResponse,
   FolderBody,
@@ -151,9 +152,12 @@ export class DashboardClient {
     return this.get<DiskListResponse>('/disks');
   }
 
+  /** One page of a disk listing. Cursor-paginated through the ecosystem's `{ after, first }`
+   *  interface (mirrors `@adonis-agora/filter`'s `CursorParams`); forward-only, so there is no
+   *  `before`/`last`. Pass a previous page's `nextCursor` as `after`. */
   objects(
     disk: string,
-    params: { prefix?: string; cursor?: string; limit?: number } = {},
+    params: CursorParams & { prefix?: string } = {},
   ): Promise<ObjectListResponse> {
     return this.get<ObjectListResponse>('/objects', { disk, ...params });
   }
@@ -166,16 +170,15 @@ export class DashboardClient {
     return this.get<UploadListResponse>('/uploads', params);
   }
 
-  collections(
-    params: CollectionFilter & { cursor?: string; limit?: number } = {},
-  ): Promise<CollectionListResponse> {
+  /** One page of stored media records. Same `{ after, first }` cursor interface as {@link objects}. */
+  collections(params: CollectionFilter & CursorParams = {}): Promise<CollectionListResponse> {
     return this.get<CollectionListResponse>('/collections', {
       collection: params.collection,
       ownerType: params.ownerType,
       ownerId: params.ownerId,
       prefix: params.prefix,
-      cursor: params.cursor,
-      limit: params.limit,
+      after: params.after,
+      first: params.first,
     });
   }
 

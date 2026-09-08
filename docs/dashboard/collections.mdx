@@ -55,7 +55,17 @@ Ordering is a **stable keyset** — `createdAt` desc, then `id` desc — so pagi
 
 ## The dashboard Collections view
 
-The console's `GET /collections` route projects each `MediaRecord` into a `MediaEntry` (id, owner, collection, name, file name, MIME type, size, disk, path, the names of generated conversions, and timestamps) and returns a `CollectionListResponse` — `{ items, nextCursor }` — driven directly by `media.store.list`. The same filters (`collection` / `ownerType` / `ownerId` / `prefix`) are exposed as query parameters, so you can drill into one collection or one owner from the UI.
+The console's `GET /collections` route projects each `MediaRecord` into a `MediaEntry` (id, owner, collection, name, file name, MIME type, size, disk, path, the names of generated conversions, and timestamps) and returns a `CollectionListResponse` — `{ items, nextCursor, prevCursor, hasNext, hasPrev }` — driven directly by `media.store.list`. The same filters (`collection` / `ownerType` / `ownerId` / `prefix`) are exposed as query parameters, so you can drill into one collection or one owner from the UI.
+
+<Callout type="info" title="Two vocabularies, one mechanism">
+  The **route** paginates with `?after=&first=` and returns the ecosystem's cursor page (see
+  [Cursor pagination](/docs/media/dashboard#cursor-pagination)) — the shape every `@adonis-agora/*`
+  library shares. The **store SPI** underneath it keeps its own `{ cursor, limit }` → `{ items,
+  nextCursor }` vocabulary: it is a persistence contract that your custom store implements, not a
+  listing API a client calls, and every bundled and third-party store already speaks it. The route
+  maps `after` → `cursor` and `first` → `limit`; `prevCursor` / `hasPrev` are always `null` /
+  `false`, because the keyset walks forward only.
+</Callout>
 
 Two more routes hang off the same view. `GET /collections/summary` returns a per-collection rollup — record count and total bytes — which the UI renders as one-click filter chips; it walks `list()` in pages and sums client-side, bounded so a very large library degrades to a partial summary rather than an unbounded scan. And `GET /media-record?id` drills into a single row, returning the record plus a **signed URL per conversion** (only conversions that actually wrote an artifact get one — a metadata-only probe result has nothing to link to). With `actions: true`, `POST /media-record/delete` removes the row; note that it deletes the *record*, not the object on disk.
 

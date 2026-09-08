@@ -71,13 +71,13 @@ Note what is *not* there: nothing about attaching, converting or transforming. T
 |---|---|---|
 | `topology()` | `Topology` | `{ disks, hasUploads, actions }` — the capability probe the SPA enables affordances from. Synchronous. |
 | `disks()` | `DiskListResponse` | Each exposed disk with its `DiskCapabilities`. A non-extended disk reports `list: false` and is not browsable. Synchronous. |
-| `objects(disk, { prefix?, cursor?, limit? })` | `ObjectListResponse` | One page of delimiter listing: `folders` (common prefixes) + `files`, plus a `cursor` when truncated. |
+| `objects(disk, { prefix?, after?, first? })` | `ObjectListResponse` | One page of delimiter listing: `folders` (common prefixes) + `files`, plus the cursor envelope (`nextCursor` / `hasNext`). See [Cursor pagination](#cursor-pagination). |
 | `object(disk, key)` | `ObjectDetailResponse` | Metadata plus a signed URL, 300s TTL. |
 | `objectStream(disk, key)` | `{ stream, contentType, size }` | The raw bytes, for streaming through your own route. |
 | `objectInsights(disk, key)` | `ObjectInsightsResponse` | Runs every registered provider concurrently, sanitizes the links, skips (and logs) any that throw. `{ insights: [] }` when none are registered. |
 | `uploads({ disk?, prefix? })` | `UploadListResponse` | In-progress resumable sessions. `{ uploads: [] }` — not an error — when no session store is configured. |
 | `uploadDetail(id)` | `UploadDetailResponse` | One session plus its recorded parts. `404` for an unknown id, and `404` when no session store exists. |
-| `collections({ collection?, ownerType?, ownerId?, prefix?, cursor?, limit? })` | `CollectionListResponse` | Delegates straight to `MediaStore.list` — no bespoke query. |
+| `collections({ collection?, ownerType?, ownerId?, prefix?, after?, first? })` | `CollectionListResponse` | Delegates straight to `MediaStore.list` — no bespoke query. [Cursor-paginated](#cursor-pagination). |
 | `collectionsSummary()` | `CollectionsSummaryResponse` | Per-collection count + total bytes. |
 | `mediaRecord(id)` | `MediaDetailResponse` | The record plus a signed URL per conversion. |
 
@@ -88,6 +88,35 @@ Note what is *not* there: nothing about attaching, converting or transforming. T
   unbounded**: a very large library degrades to an approximate-but-instant summary instead of a
   full-table scan behind a spinner.
 </Callout>
+
+### Cursor pagination
+
+`objects` and `collections` take `{ after?, first? }` and return a cursor page — the interface every
+`@adonis-agora/*` library paginates through (mirroring `@adonis-agora/filter`'s `CursorParams` /
+`CursorPage` structurally; there is no dependency on that package).
+
+```ts
+let after: string | undefined
+do {
+  const page = await dashboard.objects('s3', { prefix: 'photos/', first: 100, ...(after ? { after } : {}) })
+  handle(page.folders, page.files)
+  after = page.nextCursor ?? undefined
+} while (after !== undefined)
+```
+
+<Callout type="warn" title="Forward-only">
+  The backend is S3's `ListObjectsV2` continuation token (and, for `collections`, an equally
+  forward-only `createdAt`/`id` keyset) — an opaque handle to *what comes next*, with no inverse and
+  no offset. So `before` / `last` are **not part of the input** here, and `prevCursor` / `hasPrev` in
+  the response are always `null` / `false`. The fields stay so the page is the ecosystem's
+  `CursorPage` rather than a near-miss of it. The cursor is opaque: hand `nextCursor` back as
+  `after`, never parse it.
+</Callout>
+
+`collections` returns `CursorPage<MediaEntry>` verbatim (`items` + the envelope). `objects` carries
+the same envelope but keeps **two** payload arrays — `folders` (common prefixes) and `files` —
+because a delimiter listing yields both in one page and collapsing them into a single `items` array
+would lose the distinction; its type is therefore `CursorPageInfo & { folders, files }`.
 
 ### Actions
 
@@ -127,8 +156,8 @@ router
     try {
       return await dashboard.objects(request.input('disk'), {
         prefix: request.input('prefix', ''),
-        cursor: request.input('cursor'),
-        limit: 100,
+        after: request.input('after'),
+        first: 100,
       })
     } catch (error) {
       if (error instanceof DashboardError) {
@@ -164,10 +193,12 @@ The second subpath is the one to import from a frontend: it carries only these d
 | `DiskCapabilities` | `{ presign, multipart, publicUrls, list }` |
 | `DiskInfo` / `DiskListResponse` | `{ name, default, capabilities }` / `{ disks }` |
 | `ObjectFolder` / `ObjectEntry` | `{ name, prefix }` / `{ key, name, sizeBytes, lastModified }` |
-| `ObjectListResponse` | `{ folders, files, cursor? }` |
+| `CursorParams` | `{ after?, first? }` — the input half of the cursor interface. |
+| `CursorPage<T>` / `CursorPageInfo` | `{ items, nextCursor, prevCursor, hasNext, hasPrev }` / the same without `items`. |
+| `ObjectListResponse` | `{ folders, files, nextCursor, prevCursor, hasNext, hasPrev }` |
 | `ObjectDetailResponse` | `{ key, size, contentType?, lastModified?, url }` |
 | `MediaEntry` | A `MediaRecord` projected for the console — ids, owner, collection, name/fileName, mimeType, `sizeBytes`, disk, path, `conversions: string[]` (names only), ISO timestamps. |
-| `CollectionListResponse` | `{ items: MediaEntry[], nextCursor: string \| null }` |
+| `CollectionListResponse` | `CursorPage<MediaEntry>` — `{ items, nextCursor, prevCursor, hasNext, hasPrev }` |
 | `CollectionFilter` | `{ collection?, ownerType?, ownerId?, prefix? }` — every field optional, `AND`ed server-side. |
 | `CollectionSummary` / `CollectionsSummaryResponse` | `{ key, count, sumSize }` / `{ collections }` |
 | `MediaVariant` / `MediaDetailResponse` | `{ name, url }` / `{ record, variants }` |

@@ -106,12 +106,15 @@ import { DashboardService, DashboardError } from '@adonis-agora/media/dashboard'
 const media = await app.container.make(MediaManager)
 const dashboard = new DashboardService(media, { diskNames: ['s3'], actions: true })
 
+// Listings page through the ecosystem cursor interface: `{ after, first }` in, a page with
+// `{ nextCursor, prevCursor, hasNext, hasPrev }` out. Forward-only (S3 continuation token), so
+// there is no `before`/`last` and `prevCursor`/`hasPrev` are always `null`/`false`.
 router.get('/admin/storage/objects', async ({ request, response }) => {
   try {
     return await dashboard.objects(request.input('disk'), {
       prefix: request.input('prefix', ''),
-      cursor: request.input('cursor'),
-      limit: 100,
+      after: request.input('after'),
+      first: 100,
     })
   } catch (error) {
     if (error instanceof DashboardError) {

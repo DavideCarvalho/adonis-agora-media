@@ -12,6 +12,7 @@ import type {
   CollectionFilter,
   CollectionListResponse,
   CollectionsSummaryResponse,
+  CursorParams,
   DiskInfo,
   DiskListResponse,
   MediaDetailResponse,
@@ -133,16 +134,24 @@ export class DashboardService {
     return { disks };
   }
 
-  /** List one page of a bucket under `prefix` (cursor-based, folders rolled up on the `/` delimiter). */
+  /**
+   * List one page of a bucket under `prefix` (folders rolled up on the `/` delimiter), paginated
+   * through the ecosystem's cursor interface ({@link CursorParams} → the `CursorPageInfo` envelope):
+   * `after` is the previous page's `nextCursor`, `first` its size.
+   *
+   * `after`/`first` map onto the driver's own `cursor`/`limit` — S3's `ListObjectsV2` continuation
+   * token — which is why the response's `prevCursor`/`hasPrev` are pinned to `null`/`false`: there is
+   * no backwards token to hand out.
+   */
   async objects(
     diskName: string,
-    params: { prefix?: string; cursor?: string; limit?: number } = {},
+    params: CursorParams & { prefix?: string } = {},
   ): Promise<ObjectListResponse> {
     const disk = this.extended(diskName);
     const result = await disk.list(params.prefix ?? '', {
       delimiter: '/',
-      ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
-      ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      ...(params.after !== undefined ? { cursor: params.after } : {}),
+      ...(params.first !== undefined ? { limit: params.first } : {}),
     });
     // Drop phantom folders whose name is empty — a CommonPrefix of only slashes (`/`, `//`),
     // produced by a stray key with a leading slash. The S3 driver normalizes such a prefix back
@@ -159,7 +168,16 @@ export class DashboardService {
       sizeBytes: entry.sizeBytes,
       lastModified: entry.lastModified ? entry.lastModified.toISOString() : null,
     }));
-    return { folders, files, ...(result.cursor !== undefined ? { cursor: result.cursor } : {}) };
+    return {
+      folders,
+      files,
+      nextCursor: result.cursor ?? null,
+      // Forward-only backend: the continuation token walks one way, so there is never a previous
+      // cursor to report. The fields stay, pinned, so the shape matches the ecosystem's page type.
+      prevCursor: null,
+      hasNext: result.cursor !== undefined,
+      hasPrev: false,
+    };
   }
 
   /**
@@ -269,19 +287,27 @@ export class DashboardService {
   /**
    * One cursor-paginated page of stored media-library records across owners/collections, projected to
    * the SPA's {@link MediaEntry}. Delegates to the real {@link MediaStore.list} — no bespoke query.
+   *
+   * Paginated through the ecosystem's cursor interface ({@link CursorParams} → `CursorPage`):
+   * `after`/`first` map onto the store's `cursor`/`limit` keyset page, which — like the disk listing —
+   * only walks forward, hence the pinned `prevCursor: null` / `hasPrev: false`.
    */
-  async collections(
-    params: CollectionFilter & { cursor?: string; limit?: number } = {},
-  ): Promise<CollectionListResponse> {
+  async collections(params: CollectionFilter & CursorParams = {}): Promise<CollectionListResponse> {
     const page = await this.manager.store.list({
       ...(params.collection !== undefined ? { collection: params.collection } : {}),
       ...(params.ownerType !== undefined ? { ownerType: params.ownerType } : {}),
       ...(params.ownerId !== undefined ? { ownerId: params.ownerId } : {}),
       ...(params.prefix !== undefined ? { prefix: params.prefix } : {}),
-      ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
-      ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      ...(params.after !== undefined ? { cursor: params.after } : {}),
+      ...(params.first !== undefined ? { limit: params.first } : {}),
     });
-    return { items: page.items.map(toMediaEntry), nextCursor: page.nextCursor };
+    return {
+      items: page.items.map(toMediaEntry),
+      nextCursor: page.nextCursor,
+      prevCursor: null,
+      hasNext: page.nextCursor !== null,
+      hasPrev: false,
+    };
   }
 
   /**

@@ -25,7 +25,8 @@ export function useDisks() {
   return useQuery({ queryKey: ['disks'], queryFn: () => client.disks() });
 }
 
-const PAGE_LIMIT = 50;
+/** Page size requested as `first` — the `limit` of the pre-cursor-interface API, renamed only. */
+const PAGE_SIZE = 50;
 
 /** Cursor-paginated listing of one disk under `prefix`, flattened across loaded pages. */
 export function useObjects(disk: string | undefined, prefix: string | undefined) {
@@ -37,10 +38,10 @@ export function useObjects(disk: string | undefined, prefix: string | undefined)
     queryFn: ({ pageParam }) =>
       client.objects(disk as string, {
         ...(prefix ? { prefix } : {}),
-        ...(pageParam ? { cursor: pageParam } : {}),
-        limit: PAGE_LIMIT,
+        ...(pageParam ? { after: pageParam } : {}),
+        first: PAGE_SIZE,
       }),
-    getNextPageParam: (last) => last.cursor,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 
   const folders = useMemo<ObjectFolder[]>(
@@ -70,8 +71,8 @@ export function useCollections(filter: CollectionFilter) {
     queryFn: ({ pageParam }) =>
       client.collections({
         ...filter,
-        ...(pageParam ? { cursor: pageParam } : {}),
-        limit: PAGE_LIMIT,
+        ...(pageParam ? { after: pageParam } : {}),
+        first: PAGE_SIZE,
       }),
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });

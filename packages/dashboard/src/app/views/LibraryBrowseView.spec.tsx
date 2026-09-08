@@ -18,6 +18,10 @@ const TOPOLOGY: Topology = { disks: 1, hasUploads: true, actions: true };
 const OBJECTS: ObjectListResponse = {
   folders: [{ name: '2024', prefix: 'photos/2024/' }],
   files: [{ key: 'a.txt', name: 'a.txt', sizeBytes: 12, lastModified: '2026-07-13T10:00:00.000Z' }],
+  nextCursor: null,
+  prevCursor: null,
+  hasNext: false,
+  hasPrev: false,
 };
 
 function baseClient(overrides: Record<string, unknown> = {}) {
@@ -38,7 +42,7 @@ describe('LibraryBrowseView', () => {
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('2024')).toBeTruthy());
     expect(screen.getByText('a.txt')).toBeTruthy();
-    expect(client.objects).toHaveBeenCalledWith('s3', expect.objectContaining({ limit: 50 }));
+    expect(client.objects).toHaveBeenCalledWith('s3', expect.objectContaining({ first: 50 }));
   });
 
   it('copies an object across a chosen destination key', async () => {

@@ -264,12 +264,14 @@ export default class MediaDashboardProvider {
             const disk = str(ctx, 'disk');
             if (!disk) throw new DashboardError('disk is required', 400);
             const prefix = str(ctx, 'prefix');
-            const cursor = str(ctx, 'cursor');
-            const limit = ctx.request.input('limit');
+            // `?after=&first=` — the ecosystem's cursor pagination interface (mirrors
+            // `@adonis-agora/filter`'s `CursorParams`). Forward-only: no `before`/`last`.
+            const after = str(ctx, 'after');
+            const first = ctx.request.input('first');
             return svc.objects(disk, {
               ...(prefix !== undefined ? { prefix } : {}),
-              ...(cursor !== undefined ? { cursor } : {}),
-              ...(limit !== undefined ? { limit: Number(limit) } : {}),
+              ...(after !== undefined ? { after } : {}),
+              ...(first !== undefined ? { first: Number(first) } : {}),
             });
           }),
         )
@@ -373,15 +375,16 @@ export default class MediaDashboardProvider {
             const ownerType = str(ctx, 'ownerType');
             const ownerId = str(ctx, 'ownerId');
             const prefix = str(ctx, 'prefix');
-            const cursor = str(ctx, 'cursor');
-            const limit = ctx.request.input('limit');
+            // Same `?after=&first=` cursor interface as `/objects` — see that route.
+            const after = str(ctx, 'after');
+            const first = ctx.request.input('first');
             return svc.collections({
               ...(collection !== undefined ? { collection } : {}),
               ...(ownerType !== undefined ? { ownerType } : {}),
               ...(ownerId !== undefined ? { ownerId } : {}),
               ...(prefix !== undefined ? { prefix } : {}),
-              ...(cursor !== undefined ? { cursor } : {}),
-              ...(limit !== undefined ? { limit: Number(limit) } : {}),
+              ...(after !== undefined ? { after } : {}),
+              ...(first !== undefined ? { first: Number(first) } : {}),
             });
           }),
         )

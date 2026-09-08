@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { DiskInfo } from '../types';
+import type { DiskInfo, ObjectListResponse } from '../types';
 import { FolderTree } from './FolderTree';
 import { renderView } from './testkit';
 
@@ -18,9 +18,21 @@ const DISKS: DiskInfo[] = [
   },
 ];
 
+/** An empty object page — the cursor envelope pinned as the forward-only backend always reports it. */
+function emptyPage(): ObjectListResponse {
+  return {
+    folders: [],
+    files: [],
+    nextCursor: null,
+    prevCursor: null,
+    hasNext: false,
+    hasPrev: false,
+  };
+}
+
 describe('FolderTree', () => {
   it('renders every disk root and marks the unlistable one', () => {
-    const client = { objects: vi.fn(async () => ({ folders: [], files: [] })) };
+    const client = { objects: vi.fn(async () => emptyPage()) };
     renderView(
       <FolderTree disks={DISKS} selectedDisk="s3" currentPrefix={undefined} onNavigate={vi.fn()} />,
       client,
@@ -33,8 +45,8 @@ describe('FolderTree', () => {
   it('fetches and renders sub-folders once a node expands', async () => {
     const client = {
       objects: vi.fn(async () => ({
+        ...emptyPage(),
         folders: [{ name: '2024', prefix: 'photos/2024/' }],
-        files: [],
       })),
     };
     renderView(
@@ -47,7 +59,7 @@ describe('FolderTree', () => {
   });
 
   it('navigates when a disk root is clicked', () => {
-    const client = { objects: vi.fn(async () => ({ folders: [], files: [] })) };
+    const client = { objects: vi.fn(async () => emptyPage()) };
     const onNavigate = vi.fn();
     renderView(
       <FolderTree
