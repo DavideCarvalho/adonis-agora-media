@@ -7,6 +7,60 @@
  * `UploadSessionStore.list()` — never a bespoke server model.
  */
 
+/**
+ * Cursor (keyset) pagination parameters for every paginated console listing.
+ *
+ * These fields intentionally MIRROR `@adonis-agora/filter`'s `CursorParams` so that every
+ * `@adonis-agora/*` library paginates through the same interface. The mirroring is *structural* on
+ * purpose — this package does not depend on `@adonis-agora/filter`, it just refuses to invent a
+ * second vocabulary for the same idea.
+ *
+ * Only the FORWARD half of that interface exists here: the console's listings are backed by S3's
+ * `ListObjectsV2` continuation token, an opaque, forward-only handle. There is no token for "the
+ * page before this one" and no way to seek to an arbitrary offset, so `before` / `last` are
+ * deliberately ABSENT rather than accepted-and-silently-ignored.
+ */
+export interface CursorParams {
+  /** Opaque cursor from a previous page's `nextCursor`; omit for the first page. */
+  after?: string;
+  /** Page size for the forward page. */
+  first?: number;
+}
+
+/**
+ * One page of a cursor-paginated console listing.
+ *
+ * Mirrors `@adonis-agora/filter`'s `CursorPage<T>` field-for-field (again structurally, not through
+ * a dependency), so generic pagination code written against the ecosystem's cursor interface works
+ * here unchanged.
+ *
+ * Because the backend is forward-only (see {@link CursorParams}), `prevCursor` is ALWAYS `null` and
+ * `hasPrev` ALWAYS `false`. They are still present — dropping them would make this a different
+ * interface from filter's, and a caller that walks pages forward and keeps them client-side (which
+ * is what the SPA does) needs no backward paging anyway.
+ *
+ * The cursor value is opaque: never parse it, never build one, just hand a `nextCursor` back as
+ * `after`.
+ */
+export interface CursorPage<T> {
+  items: T[];
+  /** Opaque cursor for the next forward page, or `null` when this is the last page. */
+  nextCursor: string | null;
+  /** Always `null` — the backend is forward-only. */
+  prevCursor: string | null;
+  hasNext: boolean;
+  /** Always `false` — the backend is forward-only. */
+  hasPrev: boolean;
+}
+
+/**
+ * The pagination envelope of {@link CursorPage} without `items` — for a page that carries more than
+ * one kind of item and so cannot collapse into a single `items` array. Only the object listing needs
+ * it: a delimiter listing returns folders (common prefixes) AND files in the same page, and merging
+ * two different shapes into one array would lose that distinction for every consumer.
+ */
+export type CursorPageInfo = Omit<CursorPage<never>, 'items'>;
+
 /** Coarse capability descriptor for a disk, mirroring `@adonis-agora/media`'s `DiskCapabilities`. */
 export interface DiskCapabilities {
   presign: boolean;
@@ -43,12 +97,14 @@ export interface ObjectEntry {
   lastModified: string | null;
 }
 
-/** One page of a bucket listing (cursor-based, from the disk `list`). */
-export interface ObjectListResponse {
+/**
+ * One page of a bucket listing (cursor-based, from the disk `list`), carrying the shared
+ * {@link CursorPageInfo} envelope. `nextCursor` is `null` on the last page; `prevCursor` / `hasPrev`
+ * are always `null` / `false` because S3's continuation token only walks forward.
+ */
+export interface ObjectListResponse extends CursorPageInfo {
   folders: ObjectFolder[];
   files: ObjectEntry[];
-  /** Present only when the page is truncated; pass back as `cursor`. */
-  cursor?: string;
 }
 
 /** Object metadata plus a short-lived signed URL for preview/download. */
@@ -97,12 +153,11 @@ export interface MediaEntry {
   updatedAt: string;
 }
 
-/** One page of the cross-owner collections listing (cursor-based, from the `MediaStore.list`). */
-export interface CollectionListResponse {
-  items: MediaEntry[];
-  /** Present (non-null) only when a further page exists; pass back as `cursor`. */
-  nextCursor: string | null;
-}
+/**
+ * One page of the cross-owner collections listing (cursor-based, from the `MediaStore.list`) — the
+ * canonical {@link CursorPage} shape, with `prevCursor` / `hasPrev` always `null` / `false`.
+ */
+export type CollectionListResponse = CursorPage<MediaEntry>;
 
 /** Filters for the collections listing — every field optional and `AND`ed server-side. */
 export interface CollectionFilter {

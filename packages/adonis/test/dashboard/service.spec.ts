@@ -102,13 +102,14 @@ describe('DashboardService', () => {
     expect(disks[1]).toMatchObject({ name: 'backup', default: false });
   });
 
-  it('maps object listings (folders + files) with ISO dates and cursor', async () => {
+  it('maps object listings (folders + files) with ISO dates and a cursor page', async () => {
     const disk = fakeDisk();
     const svc = new DashboardService(managerWith({ s3: disk }), {
       diskNames: ['s3'],
       actions: false,
     });
-    const res = await svc.objects('s3', { prefix: 'photos/', limit: 50 });
+    // `{ after, first }` in — the ecosystem cursor interface — `{ cursor, limit }` down to the driver.
+    const res = await svc.objects('s3', { prefix: 'photos/', first: 50 });
     expect(disk.list).toHaveBeenCalledWith('photos/', { delimiter: '/', limit: 50 });
     expect(res.folders).toEqual([{ name: '2024', prefix: 'photos/2024/' }]);
     expect(res.files[0]).toEqual({
@@ -118,7 +119,27 @@ describe('DashboardService', () => {
       lastModified: '2026-07-13T10:00:00.000Z',
     });
     expect(res.files[1].lastModified).toBeNull();
-    expect(res.cursor).toBe('next-token');
+    expect(res.nextCursor).toBe('next-token');
+    expect(res.hasNext).toBe(true);
+    // Forward-only backend (S3 continuation token): the backward half is always pinned.
+    expect(res.prevCursor).toBeNull();
+    expect(res.hasPrev).toBe(false);
+  });
+
+  it('forwards `after` as the driver cursor, and reports a last page as such', async () => {
+    const disk = fakeDisk({
+      list: vi.fn(async () => ({ folders: [], files: [], cursor: undefined })),
+    });
+    const svc = new DashboardService(managerWith({ s3: disk }), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    const res = await svc.objects('s3', { after: 'next-token' });
+    expect(disk.list).toHaveBeenCalledWith('', { delimiter: '/', cursor: 'next-token' });
+    expect(res.nextCursor).toBeNull();
+    expect(res.hasNext).toBe(false);
+    expect(res.prevCursor).toBeNull();
+    expect(res.hasPrev).toBe(false);
   });
 
   it('drops phantom empty-name folders (leading-slash CommonPrefix) from a listing', async () => {
@@ -229,9 +250,13 @@ describe('DashboardService', () => {
       diskNames: ['s3'],
       actions: false,
     });
-    const res = await svc.collections({ ownerType: 'Post', ownerId: '42', limit: 25 });
+    const res = await svc.collections({ ownerType: 'Post', ownerId: '42', first: 25 });
     expect(store.list).toHaveBeenCalledWith({ ownerType: 'Post', ownerId: '42', limit: 25 });
     expect(res.nextCursor).toBe('cursor-2');
+    expect(res.hasNext).toBe(true);
+    // Forward-only: the keyset page only walks one way, so the backward half is pinned.
+    expect(res.prevCursor).toBeNull();
+    expect(res.hasPrev).toBe(false);
     expect(res.items[0]).toEqual({
       id: 'm1',
       ownerType: 'Post',
@@ -255,8 +280,25 @@ describe('DashboardService', () => {
       diskNames: ['s3'],
       actions: false,
     });
-    await svc.collections({ collection: 'gallery' });
+    const res = await svc.collections({ collection: 'gallery' });
     expect(store.list).toHaveBeenCalledWith({ collection: 'gallery' });
+    expect(res).toEqual({
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      hasNext: false,
+      hasPrev: false,
+    });
+  });
+
+  it('maps `after` onto the store cursor', async () => {
+    const store = { list: vi.fn(async () => ({ items: [], nextCursor: null })) };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, undefined, store), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await svc.collections({ after: 'cursor-2', first: 10 });
+    expect(store.list).toHaveBeenCalledWith({ cursor: 'cursor-2', limit: 10 });
   });
 
   it('copies within the same disk via the driver', async () => {

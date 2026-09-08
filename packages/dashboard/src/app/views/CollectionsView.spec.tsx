@@ -24,7 +24,13 @@ function entry(over: Partial<MediaEntry> = {}): MediaEntry {
   };
 }
 
-const PAGE: CollectionListResponse = { items: [entry()], nextCursor: null };
+const PAGE: CollectionListResponse = {
+  items: [entry()],
+  nextCursor: null,
+  prevCursor: null,
+  hasNext: false,
+  hasPrev: false,
+};
 
 function baseClient(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +49,7 @@ describe('CollectionsView', () => {
     expect(screen.getByText('gallery')).toBeTruthy();
     expect(screen.getByText('thumb')).toBeTruthy();
     expect(screen.getByText('Post/42/gallery/m1/sunset.jpg')).toBeTruthy();
-    expect(client.collections).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }));
+    expect(client.collections).toHaveBeenCalledWith(expect.objectContaining({ first: 50 }));
   });
 
   it('applies the owner/collection filters on submit', async () => {
@@ -57,14 +63,23 @@ describe('CollectionsView', () => {
 
     await waitFor(() =>
       expect(client.collections).toHaveBeenCalledWith(
-        expect.objectContaining({ ownerType: 'User', collection: 'avatar', limit: 50 }),
+        expect.objectContaining({ ownerType: 'User', collection: 'avatar', first: 50 }),
       ),
     );
   });
 
   it('renders the empty state when nothing matches', async () => {
     const client = baseClient({
-      collections: vi.fn(async () => ({ items: [], nextCursor: null }) as CollectionListResponse),
+      collections: vi.fn(
+        async () =>
+          ({
+            items: [],
+            nextCursor: null,
+            prevCursor: null,
+            hasNext: false,
+            hasPrev: false,
+          }) as CollectionListResponse,
+      ),
     });
     renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
     await waitFor(() =>
@@ -75,8 +90,20 @@ describe('CollectionsView', () => {
   it('loads a further page via the cursor', async () => {
     const collections = vi
       .fn()
-      .mockResolvedValueOnce({ items: [entry({ id: 'm1', name: 'first' })], nextCursor: 'c2' })
-      .mockResolvedValueOnce({ items: [entry({ id: 'm2', name: 'second' })], nextCursor: null });
+      .mockResolvedValueOnce({
+        items: [entry({ id: 'm1', name: 'first' })],
+        nextCursor: 'c2',
+        prevCursor: null,
+        hasNext: true,
+        hasPrev: false,
+      })
+      .mockResolvedValueOnce({
+        items: [entry({ id: 'm2', name: 'second' })],
+        nextCursor: null,
+        prevCursor: null,
+        hasNext: false,
+        hasPrev: false,
+      });
     renderView(<CollectionsView route={{ tab: 'collections' }} />, {
       collections,
       collectionsSummary: vi.fn(async () => ({ collections: [] })),
@@ -85,6 +112,6 @@ describe('CollectionsView', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(screen.getByText('second')).toBeTruthy());
-    expect(collections).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'c2' }));
+    expect(collections).toHaveBeenLastCalledWith(expect.objectContaining({ after: 'c2' }));
   });
 });

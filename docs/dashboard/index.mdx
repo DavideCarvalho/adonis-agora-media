@@ -77,7 +77,7 @@ The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`)
 | `POST` | `/logout` | Clears the cookie. `204` always. **Ungated.** |
 | `GET` | `/topology` | capability probe (`{ disks, hasUploads, actions }`) |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
-| `GET` | `/objects?disk&prefix&cursor&limit` | disk `list` |
+| `GET` | `/objects?disk&prefix&after&first` | disk `list` ([cursor pagination](#cursor-pagination)) |
 | `GET` | `/object?disk&key` | disk `stat` + the object's `url` (signed, or the proxy — see [`objectUrls`](#object-urls)) |
 | `POST` | `/object?disk&key&type` | raw-body object upload (the console's convenience upload) — `actions` only |
 | `GET` | `/object/raw?disk&key` | streams the object's bytes through the app, `content-disposition: inline` |
@@ -85,7 +85,7 @@ The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`)
 | `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
 | `GET` | `/uploads/:id` | one session in full, plus its recorded parts |
 | `POST` | `/uploads/:id/abort` | discard an in-flight session — `actions` only |
-| `GET` | `/collections?collection&ownerType&ownerId&prefix&cursor&limit` | `MediaStore.list` (see [Collections view](/docs/media/dashboard/collections)) |
+| `GET` | `/collections?collection&ownerType&ownerId&prefix&after&first` | `MediaStore.list`, [cursor-paginated](#cursor-pagination) (see [Collections view](/docs/media/dashboard/collections)) |
 | `GET` | `/collections/summary` | per-collection rollup (count + total bytes) for the filter chips |
 | `GET` | `/media-record?id` | one `MediaRecord` plus a signed URL per conversion |
 | `POST` | `/media-record/delete` | `MediaStore.delete` — `actions` only |
@@ -100,6 +100,48 @@ The `actions`-only routes are always *mounted*; the gate is enforced one layer d
 Two upload paths coexist, on purpose. `POST /object` is the console's own convenience upload: raw bytes as `application/octet-stream` (so your app's body parsers never consume the stream), the real MIME riding as the `type` query param, buffered in memory and therefore capped at 100 MB. Anything larger belongs on the core `@adonis-agora/media` TUS / direct routes, which the console drives through `@adonis-agora/media-react`.
 
 `GET /object/raw` exists for the preview: a signed URL is fine for an image tag, but streaming through the app is what lets the lightbox read a text/CSV body without a cross-origin fetch, and what works at all on a disk the browser cannot reach directly.
+
+---
+
+## Cursor pagination
+
+The two listing routes — `GET /objects` and `GET /collections` — page through the **cursor**
+interface shared by every `@adonis-agora/*` library (it mirrors [`@adonis-agora/filter`][filter]'s
+`CursorParams` / `CursorPage`, structurally: the console does not depend on that package, it just
+refuses to invent a second vocabulary for the same idea).
+
+| Query param | Meaning |
+|---|---|
+| `after` | Opaque cursor from the previous page's `nextCursor`. Omit for the first page. |
+| `first` | Page size (the console SPA asks for 50). |
+
+Every paginated response carries the same envelope:
+
+```jsonc
+{
+  // …the page's payload: `items` for /collections, `folders` + `files` for /objects
+  "nextCursor": "eyJ…",  // hand back as ?after= — null on the last page
+  "prevCursor": null,    // always null here — see below
+  "hasNext": true,
+  "hasPrev": false       // always false here — see below
+}
+```
+
+<Callout type="warn" title="Forward-only, by the backend's nature">
+  This console pages **forward only**. Its listings are backed by S3's `ListObjectsV2` continuation
+  token (and, for `/collections`, an equally forward-only `createdAt`/`id` keyset): an opaque handle
+  to "what comes next" with no inverse and no notion of an offset. So `before` / `last` are **not
+  accepted** — rather than accepted and silently ignored — and `prevCursor` / `hasPrev` are always
+  `null` / `false`. They stay in the response so the shape is the ecosystem's `CursorPage`, not a
+  near-miss of it. Walk forward and keep the pages you've seen (which is exactly what the SPA does).
+</Callout>
+
+The cursor is **opaque**: never parse it, never construct one — hand a `nextCursor` straight back as
+`after`.
+
+[filter]: https://github.com/DavideCarvalho/adonis-agora-filter
+
+---
 
 ## Object URLs
 

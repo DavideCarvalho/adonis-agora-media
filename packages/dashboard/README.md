@@ -81,11 +81,13 @@ Registered under `apiBasePath` (default `<basePath>/api`), behind your `middlewa
 | --- | --- | --- |
 | `GET` | `/topology` | capability probe |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
-| `GET` | `/objects?disk&prefix&cursor&limit` | disk `list` |
+| `GET` | `/objects?disk&prefix&after&first` | disk `list` |
 | `GET` | `/object?disk&key` | disk `stat` + signed URL |
 | `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
 | `POST` | `/copy` · `/move` | disk `copy`/`move` (streamed for cross-disk) |
 | `POST` | `/delete` | disk `deleteMany` |
+
+Listings page through the ecosystem's **cursor** interface — `?after=<previous nextCursor>&first=<page size>` in, `{ …payload, nextCursor, prevCursor, hasNext, hasPrev }` out — mirroring `@adonis-agora/filter`'s `CursorParams` / `CursorPage`. The backend (S3's `ListObjectsV2` continuation token) is **forward-only**, so `before` / `last` are not accepted and `prevCursor` / `hasPrev` are always `null` / `false`.
 
 Uploads use the core `@adonis-agora/media` TUS/direct routes via `@adonis-agora/media-react`.
 
