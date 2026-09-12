@@ -167,10 +167,10 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.5.12
+        specifier: 2.5.12
         version: 2.5.12
       '@changesets/changelog-github':
-        specifier: ^1.0.1
+        specifier: 1.0.1
         version: 1.0.1
       '@changesets/cli':
         specifier: 3.0.2
@@ -182,7 +182,7 @@ importers:
         specifier: 2.10.12
         version: 2.10.12
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
       unplugin-swc:
         specifier: 1.6.0
@@ -195,7 +195,7 @@ importers:
     dependencies:
       '@adonis-agora/telescope':
         specifier: '>=0.4.0 <1.0.0'
-        version: 0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))
+        version: 0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2))
     devDependencies:
       '@adonis-agora/media-dashboard':
         specifier: workspace:*
@@ -204,62 +204,62 @@ importers:
         specifier: workspace:*
         version: link:../react
       '@adonisjs/assembler':
-        specifier: ^8.5.1
+        specifier: 8.5.1
         version: 8.5.1(typescript@7.0.2)
       '@adonisjs/core':
         specifier: 7.5.0
         version: 7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1)
       '@adonisjs/drive':
-        specifier: ^4.0.0
+        specifier: 4.0.0
         version: 4.0.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1127.0)(@aws-sdk/s3-request-presigner@3.1085.0)
       '@adonisjs/lucid':
-        specifier: ^22.4.2
+        specifier: 22.4.2
         version: 22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)
       '@aws-sdk/client-s3':
         specifier: 3.1127.0
         version: 3.1127.0
       '@smithy/util-stream':
-        specifier: ^4.8.2
+        specifier: 4.8.2
         version: 4.8.2
       '@tanstack/intent':
-        specifier: ^0.4.0
+        specifier: 0.4.0
         version: 0.4.0
       '@types/better-sqlite3':
-        specifier: ^9.6.0
+        specifier: 9.6.0
         version: 9.6.0
       '@types/node':
-        specifier: ^26.4.1
-        version: 26.4.1
+        specifier: 26.5.1
+        version: 26.5.1
       aws-sdk-client-mock:
-        specifier: ^4.1.0
+        specifier: 4.1.0
         version: 4.1.0
       better-sqlite3:
-        specifier: ^13.0.3
+        specifier: 13.0.3
         version: 13.0.3
       luxon:
-        specifier: ^3.7.2
+        specifier: 3.7.2
         version: 3.7.2
       mediabunny:
         specifier: 1.55.7
         version: 1.55.7
       sharp:
-        specifier: ^0.35.4
-        version: 0.35.4(@types/node@26.4.1)
+        specifier: 0.35.4
+        version: 0.35.4(@types/node@26.5.1)
       tempura:
         specifier: 0.4.1
         version: 0.4.1
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
       vitest:
         specifier: 5.0.0
-        version: 5.0.0(@types/node@26.4.1)(jsdom@30.0.1)(vite@8.3.0(@types/node@26.4.1)(jiti@2.7.0)(yaml@2.9.0))
+        version: 5.0.0(@types/node@26.5.1)(jsdom@30.0.1)(vite@8.3.0(@types/node@26.5.1)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/dashboard:
     devDependencies:
       '@adonis-agora/media':
         specifier: npm:@adonis-agora/media@0.18.0
-        version: 0.18.0(1158997687e7c9d01992821408a0aa9b)
+        version: 0.18.0(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1127.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1127.0)(mediabunny@1.55.7)(sharp@0.35.4(@types/node@26.5.1))
       '@adonis-agora/media-react':
         specifier: workspace:*
         version: link:../react
@@ -270,19 +270,19 @@ importers:
         specifier: 1.8.0
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@tailwindcss/postcss':
-        specifier: ^4.3.3
+        specifier: 4.3.3
         version: 4.3.3
       '@tanstack/intent':
-        specifier: ^0.4.0
+        specifier: 0.4.0
         version: 0.4.0
       '@tanstack/react-query':
         specifier: 5.102.8
         version: 5.102.8(react@19.3.0)
       '@testing-library/react':
-        specifier: ^16.3.3
+        specifier: 16.3.3
         version: 16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@types/node':
-        specifier: ^26.5.0
+        specifier: 26.5.1
         version: 26.5.1
       '@types/react':
         specifier: 19.3.0
@@ -291,7 +291,7 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
-        specifier: ^6.1.1
+        specifier: 6.1.1
         version: 6.1.1(vite@8.3.0(@types/node@26.5.1)(jiti@2.7.0)(yaml@2.9.0))
       class-variance-authority:
         specifier: 0.7.1
@@ -300,7 +300,7 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
       jsdom:
-        specifier: ^30.0.1
+        specifier: 30.0.1
         version: 30.0.1
       postcss:
         specifier: 8.5.28
@@ -318,10 +318,10 @@ importers:
         specifier: 4.3.3
         version: 4.3.3
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
       vite:
-        specifier: ^8.3.0
+        specifier: 8.3.0
         version: 8.3.0(@types/node@26.5.1)(jiti@2.7.0)(yaml@2.9.0)
       vitest:
         specifier: 5.0.0
@@ -330,19 +330,19 @@ importers:
   packages/react:
     devDependencies:
       '@tanstack/intent':
-        specifier: ^0.4.0
+        specifier: 0.4.0
         version: 0.4.0
       '@testing-library/react':
-        specifier: ^16.3.3
+        specifier: 16.3.3
         version: 16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@19.2.7(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@types/node':
-        specifier: ^26.5.0
+        specifier: 26.5.1
         version: 26.5.1
       '@types/react':
         specifier: 19.3.0
         version: 19.3.0
       jsdom:
-        specifier: ^30.0.1
+        specifier: 30.0.1
         version: 30.0.1
       react:
         specifier: 19.3.0
@@ -351,7 +351,7 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
       vitest:
         specifier: 5.0.0
@@ -3541,18 +3541,18 @@ packages:
 
 snapshots:
 
-  '@adonis-agora/media@0.18.0(1158997687e7c9d01992821408a0aa9b)':
+  '@adonis-agora/media@0.18.0(@adonis-agora/telescope@0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1127.0)(@aws-sdk/s3-request-presigner@3.1085.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1127.0)(mediabunny@1.55.7)(sharp@0.35.4(@types/node@26.5.1))':
     dependencies:
       '@adonisjs/core': 7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1)
       '@adonisjs/drive': 4.0.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1127.0)(@aws-sdk/s3-request-presigner@3.1085.0)
     optionalDependencies:
-      '@adonis-agora/telescope': 0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))
+      '@adonis-agora/telescope': 0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2))
       '@adonisjs/lucid': 22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)
       '@aws-sdk/client-s3': 3.1127.0
       mediabunny: 1.55.7
       sharp: 0.35.4(@types/node@26.5.1)
 
-  '@adonis-agora/telescope@0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))':
+  '@adonis-agora/telescope@0.4.0(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.1(typescript@7.0.2))(@adonisjs/core@7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(luxon@3.7.2)(supports-color@10.2.2))':
     dependencies:
       '@adonisjs/core': 7.5.0(@adonisjs/assembler@8.5.1(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1)
     optionalDependencies:
@@ -4923,7 +4923,7 @@ snapshots:
 
   '@types/better-sqlite3@9.6.0':
     dependencies:
-      '@types/node': 26.4.1
+      '@types/node': 26.5.1
 
   '@types/chai@5.2.3':
     dependencies:
@@ -4947,6 +4947,7 @@ snapshots:
   '@types/node@26.4.1':
     dependencies:
       undici-types: 8.3.0
+    optional: true
 
   '@types/node@26.5.1':
     dependencies:
@@ -5968,39 +5969,6 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sharp@0.35.4(@types/node@26.4.1):
-    dependencies:
-      '@img/colour': 1.1.0
-      detect-libc: 2.1.2
-      semver: 7.8.5
-    optionalDependencies:
-      '@img/sharp-darwin-arm64': 0.35.4
-      '@img/sharp-darwin-x64': 0.35.4
-      '@img/sharp-freebsd-wasm32': 0.35.4
-      '@img/sharp-libvips-darwin-arm64': 1.3.3
-      '@img/sharp-libvips-darwin-x64': 1.3.3
-      '@img/sharp-libvips-linux-arm': 1.3.3
-      '@img/sharp-libvips-linux-arm64': 1.3.3
-      '@img/sharp-libvips-linux-ppc64': 1.3.3
-      '@img/sharp-libvips-linux-riscv64': 1.3.3
-      '@img/sharp-libvips-linux-s390x': 1.3.3
-      '@img/sharp-libvips-linux-x64': 1.3.3
-      '@img/sharp-libvips-linuxmusl-arm64': 1.3.3
-      '@img/sharp-libvips-linuxmusl-x64': 1.3.3
-      '@img/sharp-linux-arm': 0.35.4
-      '@img/sharp-linux-arm64': 0.35.4
-      '@img/sharp-linux-ppc64': 0.35.4
-      '@img/sharp-linux-riscv64': 0.35.4
-      '@img/sharp-linux-s390x': 0.35.4
-      '@img/sharp-linux-x64': 0.35.4
-      '@img/sharp-linuxmusl-arm64': 0.35.4
-      '@img/sharp-linuxmusl-x64': 0.35.4
-      '@img/sharp-webcontainers-wasm32': 0.35.4
-      '@img/sharp-win32-arm64': 0.35.4
-      '@img/sharp-win32-ia32': 0.35.4
-      '@img/sharp-win32-x64': 0.35.4
-      '@types/node': 26.4.1
-
   sharp@0.35.4(@types/node@26.5.1):
     dependencies:
       '@img/colour': 1.1.0
@@ -6033,7 +6001,6 @@ snapshots:
       '@img/sharp-win32-ia32': 0.35.4
       '@img/sharp-win32-x64': 0.35.4
       '@types/node': 26.5.1
-    optional: true
 
   shebang-command@2.0.0:
     dependencies:
@@ -6226,7 +6193,8 @@ snapshots:
 
   uint8array-extras@1.5.0: {}
 
-  undici-types@8.3.0: {}
+  undici-types@8.3.0:
+    optional: true
 
   undici-types@8.9.0: {}
 
