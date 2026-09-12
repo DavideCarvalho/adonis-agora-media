@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.18.1
+
+### Patch Changes
+
+- [`1a987d7`](https://github.com/DavideCarvalho/adonis-agora-media/commit/1a987d70e19904cf561e4610e2b044910ed95aa0) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix the `TransformerContext` docblock, which sketched a conversion prefix missing the collection segment `outputPrefix` documents correctly
+
 ## 0.18.0
 
 ### Minor Changes
