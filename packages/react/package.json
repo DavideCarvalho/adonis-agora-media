@@ -8,6 +8,25 @@
     "url": "git+https://github.com/DavideCarvalho/adonis-agora-media.git",
     "directory": "packages/react"
   },
+  "homepage": "https://davidecarvalho.github.io/agora/docs/media",
+  "bugs": {
+    "url": "https://github.com/DavideCarvalho/adonis-agora-media/issues"
+  },
+  "keywords": [
+    "adonisjs",
+    "adonis",
+    "media",
+    "react",
+    "hook",
+    "upload",
+    "uploader",
+    "resumable",
+    "tus",
+    "s3",
+    "multipart",
+    "agora",
+    "tanstack-intent"
+  ],
   "author": "Davi Carvalho <davi@goflip.ai>",
   "type": "module",
   "main": "./dist/index.js",
@@ -58,20 +77,5 @@
   },
   "engines": {
     "node": ">=20.6.0"
-  },
-  "keywords": [
-    "adonisjs",
-    "adonis",
-    "media",
-    "react",
-    "hook",
-    "upload",
-    "uploader",
-    "resumable",
-    "tus",
-    "s3",
-    "multipart",
-    "agora",
-    "tanstack-intent"
-  ]
+  }
 }
