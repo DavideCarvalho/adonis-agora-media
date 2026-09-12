@@ -17,9 +17,9 @@ export interface TransformerWriteOptions {
  * its original bytes, and a sandboxed writer for the derived artifacts.
  *
  * The context — not the transformer — decides WHERE artifacts live: every {@link write} lands under
- * {@link outputPrefix} (`<owner>/<id>/conversions/<name>/`), and the library tracks each written
- * path so it can persist the artifact list on the record and delete every artifact when the media
- * is deleted. A transformer never touches disk keys outside its prefix.
+ * {@link outputPrefix}, and the library tracks each written path so it can persist the artifact
+ * list on the record and delete every artifact when the media is deleted. A transformer never
+ * touches disk keys outside its prefix.
  */
 export interface TransformerContext {
   /** The media record whose content is being transformed. */
