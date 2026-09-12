@@ -240,8 +240,8 @@ importers:
         specifier: 3.7.2
         version: 3.7.2
       mediabunny:
-        specifier: 1.55.7
-        version: 1.55.7
+        specifier: 1.56.0
+        version: 1.56.0
       sharp:
         specifier: 0.35.4
         version: 0.35.4(@types/node@26.5.1)
@@ -2842,6 +2842,9 @@ packages:
 
   mediabunny@1.55.7:
     resolution: {integrity: sha512-Sb/vI8frRiDPbPUwl3hz0n69NSe9yt4Nydcv5yxi8Rdgk0BgnujEGjZqE+uCTehFbafcqIu6gDAok8ln98dcqg==}
+
+  mediabunny@1.56.0:
+    resolution: {integrity: sha512-VLVYEVXI4fA2PabQoZs3XOmxDsio4gpG1Npz0iVICRNCQ+XYI3fBOngnwHljafaEjHUbYzrIDoctZbxcVfQpgQ==}
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -5696,6 +5699,12 @@ snapshots:
   media-typer@1.1.1: {}
 
   mediabunny@1.55.7:
+    dependencies:
+      '@types/dom-mediacapture-transform': 0.1.12
+      '@types/dom-webcodecs': 0.1.13
+    optional: true
+
+  mediabunny@1.56.0:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

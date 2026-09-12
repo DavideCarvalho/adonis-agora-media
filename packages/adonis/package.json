@@ -145,7 +145,7 @@
     "aws-sdk-client-mock": "4.1.0",
     "better-sqlite3": "13.0.3",
     "luxon": "3.7.2",
-    "mediabunny": "1.55.7",
+    "mediabunny": "1.56.0",
     "sharp": "0.35.4",
     "tempura": "0.4.1",
     "typescript": "7.0.2",
