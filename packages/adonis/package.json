@@ -164,7 +164,7 @@
     "@smithy/util-stream": "4.8.2",
     "@tanstack/intent": "0.4.0",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "26.5.1",
+    "@types/node": "26.6.1",
     "aws-sdk-client-mock": "4.1.0",
     "better-sqlite3": "13.0.3",
     "luxon": "3.7.2",
