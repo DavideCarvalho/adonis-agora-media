@@ -1,5 +1,13 @@
 # @adonis-agora/media-react
 
+## 0.5.2
+
+### Patch Changes
+
+- [#114](https://github.com/DavideCarvalho/adonis-agora-media/pull/114) [`932a8ff`](https://github.com/DavideCarvalho/adonis-agora-media/commit/932a8ff67109e353ad9d89655aff89f7105c22b1) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - **`Upload-Metadata` values are now Base64 of their UTF-8 bytes**, which is what the server side (`parseTusMetadata`) decodes.
+  
+  The client used `btoa(value)` directly. `btoa` takes a one-byte-per-char string, so an accented title reached the server garbled (`Hemograma março` became `Hemograma mar�o`), and anything past U+00FF — an em dash, curly quotes, an emoji — threw `InvalidCharacterError` and failed the upload outright. Filenames and titles are exactly where those characters show up. Found in an end-to-end test of an app uploading lab reports in Portuguese.
+
 ## 0.5.1
 
 ### Patch Changes
