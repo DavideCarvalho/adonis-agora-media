@@ -274,9 +274,24 @@ function assertOk(res: { ok?: boolean; status?: number }, message: string): void
   }
 }
 
+/**
+ * TUS `Upload-Metadata`: each value is Base64 of its UTF-8 bytes — the server side
+ * (`parseTusMetadata`) decodes it as UTF-8.
+ *
+ * `btoa(value)` alone is not that. `btoa` takes a "binary string" (one char per byte), so it
+ * encoded Latin-1 characters as single bytes — `março` reached the server as `mar\uFFFDo` — and
+ * threw `InvalidCharacterError` on anything past U+00FF (an em dash, curly quotes, emoji),
+ * failing the whole upload. Filenames and titles are exactly where those show up.
+ */
+function base64Utf8(value: string): string {
+  let binary = '';
+  for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 function encodeMetadata(meta: Record<string, string>): string {
   return Object.entries(meta)
-    .map(([k, v]) => `${k} ${btoa(v)}`)
+    .map(([k, v]) => `${k} ${base64Utf8(v)}`)
     .join(',');
 }
 
