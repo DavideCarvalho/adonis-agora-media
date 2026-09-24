@@ -100,6 +100,32 @@ describe('uploadTus (target TUS endpoints)', () => {
     expect(createHeaders['Upload-Metadata']).toContain('filename');
   });
 
+  it('encodes Upload-Metadata values as Base64 of UTF-8 (accents, em dash, emoji)', async () => {
+    const fetchImpl = tusFetch('/api/exames/tus/u2/s1');
+    const client = createMediaUploadClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await client.uploadTus(blobOf(3), {
+      filename: 'Glicemia — junho.pdf',
+      contentType: 'application/pdf',
+      tusPath: '/api/exames/tus/u2',
+      metadata: { title: 'Tomografia de crânio — março 📎' },
+    });
+
+    const [, createInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const header = (createInit.headers as Record<string, string>)['Upload-Metadata'];
+    const decoded = Object.fromEntries(
+      header.split(',').map((pair) => {
+        const [key, value] = pair.split(' ');
+        return [
+          key,
+          new TextDecoder().decode(Uint8Array.from(atob(value), (c) => c.charCodeAt(0))),
+        ];
+      }),
+    );
+    expect(decoded.title).toBe('Tomografia de crânio — março 📎');
+    expect(decoded.filename).toBe('Glicemia — junho.pdf');
+  });
+
   it('resumes from the server Upload-Offset when given resumeFrom (HEAD then continues)', async () => {
     const total = 10;
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
