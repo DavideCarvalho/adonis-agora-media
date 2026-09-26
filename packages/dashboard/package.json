@@ -67,7 +67,7 @@
   "devDependencies": {
     "@adonis-agora/media": "npm:@adonis-agora/media@0.18.0",
     "@adonis-agora/media-react": "workspace:*",
-    "@adonisjs/core": "7.5.0",
+    "@adonisjs/core": "7.5.2",
     "@base-ui/react": "1.8.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tanstack/intent": "0.4.0",
