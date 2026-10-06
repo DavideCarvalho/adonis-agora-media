@@ -65,7 +65,7 @@
     }
   },
   "devDependencies": {
-    "@tanstack/intent": "0.5.0",
+    "@tanstack/intent": "0.5.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
