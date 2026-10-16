@@ -1,5 +1,13 @@
 # @adonis-agora/media
 
+## 0.18.2
+
+### Patch Changes
+
+- [#165](https://github.com/DavideCarvalho/adonis-agora-media/pull/165) [`54b80c2`](https://github.com/DavideCarvalho/adonis-agora-media/commit/54b80c221b74428fafd3f4e3c50b1d12fd1dc8c5) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Normalize truncated MIME declarations at the TUS and direct-upload gates too
+  
+  `attach` / `attachExisting` already resolve a bare top-level type (`"text"` for `report.csv`) from the file extension, but the earlier, byte-free gates did not: TUS `POST` answered `415` and `DirectUploadManager.initiate` threw `MimeNotAllowedError` for the very same upload that `attach` would accept. Both gates now share the same resolver (against the TUS `filename` / the direct-upload key), and record the normalized type — TUS sniffs the first chunk against it, direct uploads stamp it as the object's `Content-Type`. The whitelist stays authoritative: an unresolvable or non-whitelisted result is still rejected with the allowed list.
+
 ## 0.18.1
 
 ### Patch Changes
