@@ -8,6 +8,7 @@ import {
 } from './errors.js';
 import { sanitizeFileName } from './file_name.js';
 import type { MediaCollectionRegistry } from './media_collection.js';
+import { resolveDeclaredMimeType } from './mime_type.js';
 import type { CreateUploadInput, ResumableUploadManager } from './resumable_upload.js';
 
 /** The TUS protocol version this server implements. */
@@ -140,16 +141,23 @@ export class TusUploadHandler {
           return { status: 413, headers: base, body: 'Upload exceeds maximum size' };
         }
         const metadata = parseTusMetadata(req.headers['upload-metadata']);
+        const filename = metadata.filename ?? 'upload';
         // Cheapest possible rejection: the client already told us what it is about to send, so a
         // wrong `filetype` costs zero bytes. Absent metadata just defers the call to the first PATCH.
-        if (this.accepts && metadata.filetype && !this.accepts.includes(metadata.filetype)) {
-          return {
-            status: 415,
-            headers: base,
-            body: `Content type "${metadata.filetype}" is not accepted by collection "${this.collection}" (accepts: ${this.accepts.join(', ')})`,
-          };
+        // A generic/truncated `filetype` (`"text"` for a `.csv`) is normalized from the file name
+        // exactly like `attach` does, so this gate never rejects what attach would accept.
+        let contentType = metadata.filetype || undefined;
+        if (this.accepts && contentType !== undefined) {
+          const resolved = resolveDeclaredMimeType(contentType, filename, this.accepts);
+          if (resolved === undefined) {
+            return {
+              status: 415,
+              headers: base,
+              body: `Content type "${contentType}" is not accepted by collection "${this.collection}" (accepts: ${this.accepts.join(', ')})`,
+            };
+          }
+          contentType = resolved;
         }
-        const filename = metadata.filename ?? 'upload';
         const token = this.newId();
         let key: string;
         try {
@@ -166,7 +174,7 @@ export class TusUploadHandler {
           metadata,
         };
         if (Number.isFinite(length)) input.size = length;
-        if (metadata.filetype) input.contentType = metadata.filetype;
+        if (contentType !== undefined) input.contentType = contentType;
         const session = await this.manager.createUpload(input);
         const headers: Record<string, string> = {
           ...base,
