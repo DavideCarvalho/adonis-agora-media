@@ -48,14 +48,17 @@ function makeHandler(collection?: string) {
   });
 }
 
-const create = (handler: TusUploadHandler, length: number, filetype?: string) =>
+const create = (
+  handler: TusUploadHandler,
+  length: number,
+  filetype?: string,
+  filename = 'report.pdf',
+) =>
   handler.handle({
     method: 'POST',
     headers: {
       'upload-length': String(length),
-      'upload-metadata': `filename ${b64('report.pdf')}${
-        filetype ? `,filetype ${b64(filetype)}` : ''
-      }`,
+      'upload-metadata': `filename ${b64(filename)}${filetype ? `,filetype ${b64(filetype)}` : ''}`,
     },
   });
 
@@ -80,7 +83,7 @@ describe('TusUploadHandler — collection-aware validation at POST (declared fil
   });
 
   it('rejects an unaccepted declared filetype with 415, before a single byte is uploaded', async () => {
-    const res = await create(handler, 20_000_000, 'image/png');
+    const res = await create(handler, 20_000_000, 'image/png', 'scan.png');
 
     expect(res.status).toBe(415);
     expect(res.body).toContain('image/png');
@@ -95,6 +98,33 @@ describe('TusUploadHandler — collection-aware validation at POST (declared fil
 
     expect(res.status).toBe(201);
     expect(res.headers.Location).toBe('/media/uploads/tus/s-1');
+  });
+
+  it('normalizes a truncated top-level filetype from the file name, like attach does (#27)', async () => {
+    // `report.pdf` declared as bare `"application"` — a truncated multipart header.
+    const res = await create(handler, samples.pdf.byteLength, 'application');
+
+    expect(res.status).toBe(201);
+    // The first chunk is sniffed against the NORMALIZED type, so the real PDF goes through...
+    expect((await patch(handler, 0, samples.pdf)).status).toBe(204);
+  });
+
+  it('normalizes a non-whitelisted filetype from the file name, and still sniffs the bytes', async () => {
+    // Same rule as attach: the extension pins application/pdf, which `exams` accepts...
+    expect((await create(handler, samples.png.byteLength, 'image/png')).status).toBe(201);
+    // ...but the first chunk is proven against it, so PNG bytes behind a .pdf name still bounce.
+    const res = await patch(handler, 0, samples.png);
+    expect(res.status).toBe(415);
+    expect(disk.files.size).toBe(0);
+  });
+
+  it('still rejects a truncated filetype the file name cannot resolve to an accepted type', async () => {
+    // `report.pdf` declared as `"image"`: the extension pins application/pdf, not an image type.
+    const res = await create(makeHandler('images'), 100, 'image');
+
+    expect(res.status).toBe(415);
+    expect(res.body).toContain('accepts: image/png, image/jpeg');
+    expect(disk.files.size).toBe(0);
   });
 
   it('still creates the session when the client declares no filetype (deferred to the first chunk)', async () => {
