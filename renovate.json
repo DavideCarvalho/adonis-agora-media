@@ -50,6 +50,13 @@
       "allowedVersions": "<6.1.0"
     },
     {
+      "description": "The dashboard's `@adonis-agora/media` devDependency is an exact `npm:` alias pinned to the FLOOR of its peer range, and `peer_resolution.spec.ts` asserts exactly that. Bumping the pin alone breaks that test, and raising the floor is a peer-range decision for a person (see the rule below). So the pin moves only together with the peer range, by hand.",
+      "matchFileNames": ["packages/dashboard/package.json"],
+      "matchPackageNames": ["@adonis-agora/media"],
+      "matchDepTypes": ["devDependencies"],
+      "enabled": false
+    },
+    {
       "description": "A peer range is the compatibility window this package advertises. Widen it rather than pinning it, and never without a human deciding the window is really that wide.",
       "matchDepTypes": ["peerDependencies"],
       "rangeStrategy": "widen",
