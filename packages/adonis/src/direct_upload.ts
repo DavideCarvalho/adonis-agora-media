@@ -10,6 +10,7 @@ import {
   UploadSessionNotFoundError,
 } from './errors.js';
 import type { MediaCollectionRegistry } from './media_collection.js';
+import { resolveDeclaredMimeType } from './mime_type.js';
 import { isMultipartCapable } from './multipart.js';
 import type {
   UploadSession,
@@ -204,17 +205,24 @@ export class DirectUploadManager {
     // The cheapest possible rejection, before the multipart upload even opens. Only the DECLARED
     // type can be checked here (there are no bytes yet); the collection config stays the single
     // source of truth, and attach-time validation of the real content remains the final barrier.
+    // A generic/truncated declaration (`"text"` for `report.csv`) is normalized from the key's file
+    // name exactly like `attach` does — and the normalized type is what gets stamped on the object.
+    let contentType = input.contentType;
     if (input.collection !== undefined && this.collections !== undefined) {
       const accepts = this.collections.get(input.collection).acceptsMimeTypes;
-      if (accepts && input.contentType !== undefined && !accepts.includes(input.contentType)) {
-        throw new MimeNotAllowedError(input.collection, input.contentType, accepts);
+      if (accepts && contentType !== undefined) {
+        const resolved = resolveDeclaredMimeType(contentType, input.key, accepts);
+        if (resolved === undefined) {
+          throw new MimeNotAllowedError(input.collection, contentType, accepts);
+        }
+        contentType = resolved;
       }
     }
 
     const putOptions =
-      input.contentType !== undefined || input.visibility !== undefined
+      contentType !== undefined || input.visibility !== undefined
         ? {
-            ...(input.contentType !== undefined ? { contentType: input.contentType } : {}),
+            ...(contentType !== undefined ? { contentType } : {}),
             ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
           }
         : undefined;
@@ -225,7 +233,7 @@ export class DirectUploadManager {
       id: this.newId(),
       disk: diskName,
       key: input.key,
-      contentType: input.contentType,
+      contentType,
       size: input.size,
       offset: 0,
       parts: 0,
@@ -249,7 +257,7 @@ export class DirectUploadManager {
       key: input.key,
       mode: 'direct',
       size: input.size,
-      contentType: input.contentType,
+      contentType,
     });
 
     return {

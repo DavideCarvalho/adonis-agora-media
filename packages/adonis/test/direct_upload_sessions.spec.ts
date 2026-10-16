@@ -156,6 +156,34 @@ describe('DirectUploadManager — initiate', () => {
     }).initiate({ key: 'b', size: 1, collection: 'video' });
     expect(disk.created).toHaveLength(2);
   });
+
+  it('normalizes a truncated top-level contentType from the key, like attach does (#27)', async () => {
+    const collections = new MediaCollectionRegistry([
+      { name: 'dataset', acceptsMimeTypes: ['text/csv', 'text/plain'] },
+    ]);
+    const manager = makeManager({ collections });
+
+    await manager.initiate({
+      key: 'uploads/u-1/report.CSV',
+      size: 1,
+      collection: 'dataset',
+      contentType: 'text', // a truncated multipart header
+    });
+    expect(disk.created).toEqual([
+      { key: 'uploads/u-1/report.CSV', options: { contentType: 'text/csv' } },
+    ]);
+    expect((await sessions.get('d-1'))?.contentType).toBe('text/csv');
+
+    // Unresolvable (no usable extension) still rejects — with the allowed list in the message.
+    const rejection = makeManager({ collections, idGenerator: () => 'd-2' }).initiate({
+      key: 'uploads/u-1/report',
+      size: 1,
+      collection: 'dataset',
+      contentType: 'text',
+    });
+    await expect(rejection).rejects.toBeInstanceOf(MimeNotAllowedError);
+    await expect(rejection).rejects.toThrow('Allowed: text/csv, text/plain.');
+  });
 });
 
 describe('DirectUploadManager — resume after client state loss', () => {
