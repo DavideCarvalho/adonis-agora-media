@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 9.0.0
+
+### Major Changes
+
+- [#171](https://github.com/DavideCarvalho/adonis-agora-media/pull/171) [`637411b`](https://github.com/DavideCarvalho/adonis-agora-media/commit/637411b387062f27ba1261c72e928f8dd64ab0cc) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Drop Node.js 20 and 22: `engines.node` is now `>=24`. Node 20 reached end-of-life on 2026-04-30, and AdonisJS 7, which these packages require as a peer, needs Node 24 or later (`@adonisjs/core` declares `engines.node >=24.0.0`). The supported lines are the ones Node still maintains that AdonisJS 7 accepts: 24 and 26, both tested in CI.
+
 ## 8.2.0
 
 ### Minor Changes
