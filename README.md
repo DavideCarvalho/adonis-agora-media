@@ -1,5 +1,7 @@
 # adonis-media
 
+[![npm version](https://img.shields.io/npm/v/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) [![npm downloads](https://img.shields.io/npm/dm/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) [![CI](https://github.com/DavideCarvalho/adonis-agora-media/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DavideCarvalho/adonis-agora-media/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media)
+
 Media-library for **AdonisJS**, part of the [Agora](https://github.com/DavideCarvalho) ecosystem — the
 spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.com/adonisjs/drive).
 
@@ -14,9 +16,9 @@ seam driven beyond images: the bundled `transformers.hls()` packages a video int
 
 | Package | Role |
 |---|---|
-| [`@adonis-agora/media`](./packages/adonis) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the `Transformer` SPI (HLS video + metadata probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, the embedded management console, provider + `defineConfig`, testing kit |
-| [`@adonis-agora/media-react`](./packages/react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
-| [`@adonis-agora/media-dashboard`](./packages/dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
+| [`@adonis-agora/media`](./packages/adonis) [![npm](https://img.shields.io/npm/v/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the `Transformer` SPI (HLS video + metadata probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, the embedded management console, provider + `defineConfig`, testing kit |
+| [`@adonis-agora/media-react`](./packages/react) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-react)](https://www.npmjs.com/package/@adonis-agora/media-react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
+| [`@adonis-agora/media-dashboard`](./packages/dashboard) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-dashboard)](https://www.npmjs.com/package/@adonis-agora/media-dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
 
 The core package uses **subpath exports** (the Agora idiom), so heavy backends stay optional:
 

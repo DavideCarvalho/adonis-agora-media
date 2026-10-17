@@ -1,5 +1,7 @@
 # @adonis-agora/media
 
+[![npm version](https://img.shields.io/npm/v/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) [![npm downloads](https://img.shields.io/npm/dm/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) [![CI](https://github.com/DavideCarvalho/adonis-agora-media/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/DavideCarvalho/adonis-agora-media/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media)
+
 Media-library for **AdonisJS**, part of the [Agora](https://github.com/DavideCarvalho) ecosystem — the
 spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.com/adonisjs/drive).
 
