@@ -199,6 +199,11 @@ pnpm install
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
+## Sponsors
+
+Every Agora library is MIT and stays free. The work is funded by partners and
+sponsors — [become one](https://davidecarvalho.github.io/agora/partners).
+
 ## License
 
 MIT
