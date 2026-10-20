@@ -240,8 +240,8 @@ importers:
         specifier: 3.7.2
         version: 3.7.2
       mediabunny:
-        specifier: 1.61.5
-        version: 1.61.5
+        specifier: 1.61.6
+        version: 1.61.6
       sharp:
         specifier: 0.35.5
         version: 0.35.5(@types/node@26.6.5)
@@ -259,7 +259,7 @@ importers:
     devDependencies:
       '@adonis-agora/media':
         specifier: npm:@adonis-agora/media@0.18.0
-        version: 0.18.0(@adonis-agora/telescope@0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1152.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1152.0)(mediabunny@1.61.5)(sharp@0.35.5(@types/node@26.6.5))
+        version: 0.18.0(@adonis-agora/telescope@0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1152.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1152.0)(mediabunny@1.61.6)(sharp@0.35.5(@types/node@26.6.5))
       '@adonis-agora/media-react':
         specifier: workspace:*
         version: link:../react
@@ -2680,8 +2680,8 @@ packages:
     resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
     engines: {node: '>= 0.8'}
 
-  mediabunny@1.61.5:
-    resolution: {integrity: sha512-IYrDTozxGVRTWQ1YdIcF+P7S7qHvvkiQYsX3WUbAHkxgAcCfEn7a/RbM9i/WiJHJ1MSYZqSxZkna1UUn4FGGBQ==}
+  mediabunny@1.61.6:
+    resolution: {integrity: sha512-VHEZ53/7jGl4dQ+uOdndsZufFYwEUFWv9UXgvrGun3OapyzoqI9iaPOD7z3xxY/nAttLZBNwswgJzMtGJAquOQ==}
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -3356,7 +3356,7 @@ packages:
 
 snapshots:
 
-  '@adonis-agora/media@0.18.0(@adonis-agora/telescope@0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1152.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1152.0)(mediabunny@1.61.5)(sharp@0.35.5(@types/node@26.6.5))':
+  '@adonis-agora/media@0.18.0(@adonis-agora/telescope@0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/drive@4.0.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1152.0))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))(@aws-sdk/client-s3@3.1152.0)(mediabunny@1.61.6)(sharp@0.35.5(@types/node@26.6.5))':
     dependencies:
       '@adonisjs/core': 7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1)
       '@adonisjs/drive': 4.0.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@aws-sdk/client-s3@3.1152.0)
@@ -3364,7 +3364,7 @@ snapshots:
       '@adonis-agora/telescope': 0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))
       '@adonisjs/lucid': 22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2)
       '@aws-sdk/client-s3': 3.1152.0
-      mediabunny: 1.61.5
+      mediabunny: 1.61.6
       sharp: 0.35.5(@types/node@26.6.5)
 
   '@adonis-agora/telescope@0.22.0(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(@adonisjs/lucid@22.4.2(@adonisjs/assembler@8.5.2(typescript@7.0.2))(@adonisjs/core@7.6.0(@adonisjs/assembler@8.5.2(typescript@7.0.2))(supports-color@10.2.2)(youch@4.1.1))(better-sqlite3@13.0.3)(luxon@3.7.2)(supports-color@10.2.2))':
@@ -5360,7 +5360,7 @@ snapshots:
 
   media-typer@1.1.1: {}
 
-  mediabunny@1.61.5:
+  mediabunny@1.61.6:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
