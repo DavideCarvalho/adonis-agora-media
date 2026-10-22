@@ -8,7 +8,8 @@ spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.
 Attach files to entities, organize them into collections (MIME whitelist, single-file replace,
 ordering), and generate image conversions (eager or lazy) — plus **content transformers**, the same
 seam driven beyond images: the bundled `transformers.hls()` packages a video into an HLS ladder and
-`transformers.probe()` records duration/codecs as metadata, both persisted into the same
+`transformers.probe()` records duration/codecs as metadata, and `transformers.placeholder()` stores an
+inline blur-up preview + dimensions + dominant colour for images — all persisted into the same
 `record.conversions` map. Storage is delegated entirely to Drive, so you reuse your existing
 `local` / `s3` / `gcs` disks — this package never reimplements disk drivers.
 
@@ -139,9 +140,14 @@ await media.attachments.url(att, 'thumb')
 
 ### Image conversions
 
-A `ConversionPreset` is `{ name, width?, height?, fit?, format?, quality?, eager? }`. Eager presets are
-generated synchronously on `attach`; the rest are generated lazily on the first `url(id, name)` and
-cached on the record. `fit` and `format` map straight onto sharp.
+A `ConversionPreset` is `{ name, width?, height?, fit?, format?, quality?, blur?, eager? }`. Eager presets
+are generated synchronously on `attach`; the rest are generated lazily on the first `url(id, name)` and
+cached on the record. `fit`, `format` and `blur` map straight onto sharp; images are auto-oriented from
+EXIF first.
+
+For blur-up placeholders, add `transformers.placeholder()` to the collection — it stores
+`{ dataUrl, width, height, color }` on `record.conversions.placeholder.meta` (a ~300-byte inline WebP),
+so the page can paint a blurred preview with the right aspect ratio before the image loads.
 
 ## Diagnostics
 

@@ -221,6 +221,13 @@ export type {
 } from './transformers/hls.js';
 export { HLS_ENTRY_PLAYLIST, HlsTransformer, resolveWebCodecsSupport } from './transformers/hls.js';
 export type {
+  ImagePlaceholder,
+  PlaceholderEngine,
+  PlaceholderOptions,
+  PlaceholderTransformerOptions,
+} from './transformers/placeholder.js';
+export { PlaceholderTransformer, placeholderOf } from './transformers/placeholder.js';
+export type {
   MediaProbeEngine,
   MediaProbeSummary,
   MetadataProbeTransformerOptions,

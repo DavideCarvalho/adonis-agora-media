@@ -6,9 +6,9 @@ icon: Film
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A **transformer** turns the content of a stored media into something derived: many files (an HLS package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurhash). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
+A **transformer** turns the content of a stored media into something derived: many files (an HLS package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurred image placeholder). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
 
-Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships two — [`transformers.hls()`](#the-hls-transformer) and [`transformers.probe()`](#the-metadata-probe) — and the contract is deliberately small so you can write your own.
+Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships three — [`transformers.hls()`](#the-hls-transformer), [`transformers.probe()`](#the-metadata-probe) and [`transformers.placeholder()`](#image-placeholders-blur-up) — and the contract is deliberately small so you can write your own.
 
 ---
 
@@ -147,6 +147,46 @@ record.conversions.probe?.meta
 // { format: 'MP4', mimeType: 'video/mp4; codecs="avc1.42c00d, mp4a.40.2"',
 //   durationSeconds: 41.6, width: 1920, height: 1080, hasVideo: true, hasAudio: true, ... }
 ```
+
+## Image placeholders (blur-up)
+
+`transformers.placeholder()` gives every image what a page needs to render *before* the image itself arrives: a tiny WebP preview inlined as a `data:` URL (a few hundred bytes), the original's dimensions (after EXIF orientation) and its dominant colour. Like the probe it writes **no artifact** — it all lives in `record.conversions.placeholder.meta`, so it ships inside the response that already carries the image URL, with no extra request and no client-side decoder.
+
+```ts title="config/media.ts"
+{
+  name: 'avatar',
+  acceptsMimeTypes: ['image/png', 'image/jpeg'],
+  conversions: [{ name: 'thumb', width: 200, height: 200 }],
+  transformers: [transformers.placeholder()],
+}
+```
+
+```ts
+const record = await media.library.find(id)
+record.conversions.placeholder?.meta
+// { dataUrl: 'data:image/webp;base64,UklGR…', width: 1080, height: 1350, color: '#c81838' }
+```
+
+Render it as a blurred background that the real image covers once loaded:
+
+```tsx
+<img
+  src={url}
+  width={meta.width}
+  height={meta.height}
+  style={{
+    backgroundImage: `url(${meta.dataUrl})`,
+    backgroundSize: 'cover',
+    backgroundColor: meta.color,
+  }}
+/>
+```
+
+The tiny preview is a pixelated 16 px image — the browser's upscale already softens it, and a CSS `filter: blur()` on a wrapper hides the rest. `width`/`height` reserve the box, so nothing shifts when the image lands.
+
+Options: `size` (long edge of the preview, default `16`), `quality` (WebP quality, default `50`), `name` (default `'placeholder'`), `eager` (**default `true`** — a placeholder is only useful if it exists when the image is first rendered, and it costs one small decode — but it reads the whole original, which on a remote disk is a download per attach; set `false` and `transform()` from a job if that matters). It needs the `sharp` peer, loaded on the first transform. A record whose MIME type isn't `image/*`, or is an SVG (nothing to blur up to, and sharp can't rasterize a dimension-less one), is skipped with `meta: {}` instead of failing the attach, so declaring it on a mixed collection is safe.
+
+For a blurred image served as a **file** instead (a background, an `og:image` teaser), use a conversion preset with [`blur`](/docs/media/collections-and-conversions#what-the-fields-do).
 
 ---
 

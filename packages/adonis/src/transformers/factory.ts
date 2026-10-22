@@ -1,4 +1,5 @@
 import { HlsTransformer, type HlsTransformerOptions } from './hls.js';
+import { PlaceholderTransformer, type PlaceholderTransformerOptions } from './placeholder.js';
 import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from './probe.js';
 
 /**
@@ -19,8 +20,8 @@ import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from '
  * })
  * ```
  *
- * Constructing a transformer here never loads its engine — the optional `mediabunny` peer is
- * imported inside the first `transform()` call, so config stays side-effect-free.
+ * Constructing a transformer here never loads its engine — the optional `mediabunny` / `sharp`
+ * peers are imported inside the first `transform()` call, so config stays side-effect-free.
  */
 export const transformers = {
   /** Video → HLS package (MPEG-TS segments + playlists) via mediabunny. Default name `'hls'`. */
@@ -30,5 +31,14 @@ export const transformers = {
   /** Metadata-only probe (duration/resolution/codecs) via mediabunny. Default name `'probe'`. */
   probe<Name extends string = 'probe'>(options: MetadataProbeTransformerOptions<Name> = {}) {
     return new MetadataProbeTransformer(options);
+  },
+  /**
+   * Image → inline blurred-preview metadata (tiny WebP `dataUrl`, dimensions, dominant colour) via
+   * sharp. Eager by default. Default name `'placeholder'`.
+   */
+  placeholder<Name extends string = 'placeholder'>(
+    options: PlaceholderTransformerOptions<Name> = {},
+  ) {
+    return new PlaceholderTransformer(options);
   },
 };

@@ -1,5 +1,6 @@
 import { MediaManager } from './media_manager.js';
 import { getBootedApp } from './services/booted_app.js';
+import { type ImagePlaceholder, placeholderOf } from './transformers/placeholder.js';
 
 /**
  * Store a single file for an owner and return stable public URLs. This is a thin, generic seam over
@@ -24,6 +25,14 @@ export interface StoredSingleFile {
   url: string;
   /** Public URL of the `thumb` conversion, or `null` when that conversion isn't configured. */
   thumbUrl: string | null;
+  /** Id of the stored media record — keep it to look the record up later without the owner. */
+  id: string;
+  /**
+   * The blur-up placeholder from a `transformers.placeholder()` on the collection
+   * (`{ dataUrl, width, height, color }`), or `null` when none is configured or it was skipped.
+   * Persist it next to the URL to paint a preview without a media lookup at render time.
+   */
+  placeholder: ImagePlaceholder | null;
 }
 
 export interface RemoveSingleFileInput {
@@ -60,7 +69,7 @@ export async function storeSingleFileWith(
     thumbUrl = null;
   }
 
-  return { url, thumbUrl };
+  return { url, thumbUrl, id: record.id, placeholder: placeholderOf(record) };
 }
 
 /**
@@ -105,3 +114,6 @@ export async function removeSingleFile(input: RemoveSingleFileInput): Promise<vo
 export async function isSingleFileStoreAvailable(): Promise<boolean> {
   return getBootedApp().container.hasBinding(MediaManager);
 }
+
+export type { ImagePlaceholder } from './transformers/placeholder.js';
+export { placeholderOf } from './transformers/placeholder.js';

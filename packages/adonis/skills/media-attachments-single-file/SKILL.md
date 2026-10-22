@@ -125,7 +125,7 @@ give me a URL", importable unconditionally with feature detection:
 import { isSingleFileStoreAvailable, removeSingleFile, storeSingleFile } from '@adonis-agora/media/single-file'
 
 if (await isSingleFileStoreAvailable()) {
-  const { url, thumbUrl } = await storeSingleFile({
+  const { url, thumbUrl, id, placeholder } = await storeSingleFile({
     ownerType: 'User',
     ownerId: String(user.id),
     collection: 'avatar',
@@ -134,6 +134,7 @@ if (await isSingleFileStoreAvailable()) {
     contents: upload.bytes, // a Buffer
   })
   // thumbUrl is null — not an error — when the 'thumb' conversion isn't configured
+  // placeholder is `{ dataUrl, width, height, color }` or null when no placeholder transformer ran
 }
 
 // tests or multi-manager apps pass the manager explicitly:

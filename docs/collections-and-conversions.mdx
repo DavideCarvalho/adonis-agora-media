@@ -172,6 +172,7 @@ interface ConversionPreset {
   fit?: 'cover' | 'contain' | 'fill' | 'inside' | 'outside'
   format?: 'jpeg' | 'png' | 'webp' | 'avif'
   quality?: number
+  blur?: number // gaussian blur sigma, applied after the resize
   eager?: boolean // generate on attach instead of lazily on first access
 }
 ```
@@ -194,12 +195,13 @@ defineConfig({
 
 ### What the fields do
 
-These map straight onto sharp:
+These map straight onto sharp. The image is always auto-oriented from its EXIF tag first, so a portrait phone photo stays upright in every conversion.
 
 - **`width` / `height`** — target dimensions. With both set, the result is resized to fit `fit`. With one set, the other is derived to preserve aspect ratio (per sharp's resize rules). With neither, no resize happens — only a format/quality change.
 - **`fit`** — how the image fills the box: `cover` (default), `contain`, `fill`, `inside`, `outside`. Only applies when at least one dimension is set.
 - **`format`** — the output encoding: `jpeg`, `png`, `webp`, `avif`. **Defaults to `webp`** when omitted. The actual extension and content-type follow the chosen format.
 - **`quality`** — the encoder quality (passed to sharp's `toFormat`). Omit for sharp's default.
+- **`blur`** — gaussian blur sigma (sharp's `blur(sigma)`, `0.3`–`1000`), applied after the resize. `{ name: 'blurred', width: 40, blur: 4 }` is a blurred low-res variant served as a file; for an *inline* blur-up placeholder, use [`transformers.placeholder()`](/docs/media/transformers#image-placeholders-blur-up) instead.
 - **`eager`** — see below.
 
 ### Eager vs lazy
