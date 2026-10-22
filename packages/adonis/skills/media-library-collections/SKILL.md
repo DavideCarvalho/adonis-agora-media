@@ -5,7 +5,7 @@ description: >-
   attachExisting / for(ownerType, ownerId), the MediaCollectionConfig policy layer
   (acceptsMimeTypes exact-match whitelist plus magic-byte signature verification,
   single:true atomic replace, append-only ordering, per-collection disk), eager vs lazy
-  ConversionPresets (width/height/fit/format/quality, webp default), ensureConversion,
+  ConversionPresets (width/height/fit/format/quality/blur, webp default), ensureConversion,
   url/signedUrl resolution, delete semantics, deterministic id retries, customProperties,
   and the MediaRecord.conversions map shared with transformers. Use when uploading files
   to entities, defining collections, generating thumbnails, or fixing
@@ -102,7 +102,8 @@ Source: `docs/collections-and-conversions.mdx`.
 
 ### Pattern 2 — eager vs lazy conversions
 
-`ConversionPreset` maps straight onto sharp. `eager: true` generates synchronously on
+`ConversionPreset` maps straight onto sharp (`blur` is gaussian blur sigma applied after the
+resize; images are auto-oriented from EXIF before resizing). `eager: true` generates synchronously on
 `attach`; the default is lazy — generated on the **first** `url(id, name)` and then cached on
 the record, so every later call is a pure lookup.
 
@@ -292,8 +293,10 @@ defineConfig({
 ```
 
 Mechanism: presets decode the original as an image through sharp; requesting one on a video
-or PDF fails inside sharp. Transformers are the seam for everything beyond images and
-persist into the same `record.conversions` namespace (name collisions throw
+or PDF fails inside sharp. Transformers are the seam for everything beyond resized image files
+(video packages, metadata probes, image placeholders — `transformers.placeholder()` is
+metadata-only and skips non-`image/*` records) and persist into the same
+`record.conversions` namespace (name collisions throw
 `TransformerConflictError` at boot).
 Source: `docs/collections-and-conversions.mdx` (warn callout), `docs/transformers.mdx`.
 
