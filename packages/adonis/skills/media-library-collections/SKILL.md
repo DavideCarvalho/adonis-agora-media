@@ -295,7 +295,7 @@ defineConfig({
 Mechanism: presets decode the original as an image through sharp; requesting one on a video
 or PDF fails inside sharp. Transformers are the seam for everything beyond resized image files
 (video packages, metadata probes, image placeholders — `transformers.placeholder()` is
-metadata-only and skips non-`image/*` records) and persist into the same
+metadata-only and skips non-`image/*` and SVG records) and persist into the same
 `record.conversions` namespace (name collisions throw
 `TransformerConflictError` at boot).
 Source: `docs/collections-and-conversions.mdx` (warn callout), `docs/transformers.mdx`.
