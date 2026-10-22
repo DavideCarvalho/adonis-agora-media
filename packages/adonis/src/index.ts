@@ -226,7 +226,7 @@ export type {
   PlaceholderOptions,
   PlaceholderTransformerOptions,
 } from './transformers/placeholder.js';
-export { PlaceholderTransformer } from './transformers/placeholder.js';
+export { PlaceholderTransformer, placeholderOf } from './transformers/placeholder.js';
 export type {
   MediaProbeEngine,
   MediaProbeSummary,

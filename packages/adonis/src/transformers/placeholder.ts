@@ -1,4 +1,5 @@
 import { TransformerRuntimeMissingError } from '../errors.js';
+import type { MediaRecord } from '../media_record.js';
 import type { Transformer, TransformerContext, TransformResult } from '../transformer.js';
 
 /** What a placeholder run yields — persisted verbatim as the conversion's `meta`. */
@@ -85,6 +86,31 @@ export class PlaceholderTransformer<Name extends string = 'placeholder'> impleme
     const placeholder = await engine.generate(await context.getBytes(), this.options);
     return { meta: { ...placeholder } };
   }
+}
+
+/**
+ * Read the blur-up placeholder off a record: the first conversion whose `meta` has the
+ * {@link ImagePlaceholder} shape, so a renamed transformer (`name: 'lqip'`) is found too. `null`
+ * when the collection has no placeholder transformer, it hasn't run, or it skipped a non-image.
+ *
+ * ```ts
+ * const record = await media.library.find(user.avatarMediaId)
+ * return { avatarUrl, avatarPlaceholder: record && placeholderOf(record) }
+ * ```
+ */
+export function placeholderOf(record: MediaRecord): ImagePlaceholder | null {
+  for (const conversion of Object.values(record.conversions)) {
+    const meta = conversion.meta;
+    if (meta && typeof meta.dataUrl === 'string' && typeof meta.color === 'string') {
+      return {
+        dataUrl: meta.dataUrl,
+        width: Number(meta.width),
+        height: Number(meta.height),
+        color: meta.color,
+      };
+    }
+  }
+  return null;
 }
 
 /** sharp-backed {@link PlaceholderEngine}, importing the optional peer on first use. */

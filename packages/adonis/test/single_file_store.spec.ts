@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { transformers } from '../src/define_config.js';
 import { UnsafeFileNameError } from '../src/errors.js';
 import type { MediaCollectionConfig } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
@@ -46,6 +47,48 @@ describe('storeSingleFileWith', () => {
     expect(path).toContain('AuthAccount/acc-1/avatar/');
     // No `thumb` conversion configured → null, not a throw.
     expect(thumbUrl).toBeNull();
+  });
+
+  it('returns the record id and the placeholder when the collection has one', async () => {
+    const placeholder = {
+      dataUrl: 'data:image/webp;base64,AA',
+      width: 4,
+      height: 3,
+      color: '#102030',
+    };
+    const engine = { generate: async () => placeholder };
+    const { manager, store } = makeManager([
+      {
+        name: 'avatar',
+        single: true,
+        transformers: [transformers.placeholder({ name: 'lqip', engine })],
+      },
+    ]);
+
+    const stored = await storeSingleFileWith(manager, {
+      ownerType: 'AuthAccount',
+      ownerId: 'acc-1',
+      collection: 'avatar',
+      fileName: 'me.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+
+    expect(await store.find(stored.id)).not.toBeNull();
+    expect(stored.placeholder).toEqual(placeholder);
+  });
+
+  it('returns a null placeholder when none is configured', async () => {
+    const { manager } = makeManager([{ name: 'avatar', single: true }]);
+    const stored = await storeSingleFileWith(manager, {
+      ownerType: 'AuthAccount',
+      ownerId: 'acc-1',
+      collection: 'avatar',
+      fileName: 'me.png',
+      mimeType: 'image/png',
+      contents: png,
+    });
+    expect(stored.placeholder).toBeNull();
   });
 
   it('returns a thumbUrl when the collection defines a thumb conversion', async () => {
