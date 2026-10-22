@@ -38,7 +38,9 @@ export interface PlaceholderTransformerOptions<Name extends string = 'placeholde
   name?: Name;
   /**
    * Run inside attach. Default `true`: a placeholder is only useful if it exists by the time the
-   * image is first rendered, and generating one is a single small decode.
+   * image is first rendered, and generating one is a single small decode. It does read the whole
+   * original, though — on a remote disk (S3) that is a download per attach; set `false` and run
+   * `media.library.transform(id, name)` from a job if that matters more than having it at once.
    */
   eager?: boolean;
   /** Long edge of the tiny preview, in px. Default `16` — bigger is sharper but heavier inline. */
@@ -64,7 +66,7 @@ export interface PlaceholderTransformerOptions<Name extends string = 'placeholde
  * record.conversions.placeholder?.meta // { dataUrl: 'data:image/webp;base64,…', width, height, color }
  * ```
  *
- * Eager by default. A record whose MIME type is not `image/*` is skipped (`meta: {}`) rather than
+ * Eager by default. A record whose MIME type is not `image/*`, or is an SVG, is skipped (`meta: {}`) rather than
  * failing the attach, so declaring it on a mixed collection (images + PDFs) is safe.
  */
 export class PlaceholderTransformer<Name extends string = 'placeholder'> implements Transformer {
@@ -81,7 +83,10 @@ export class PlaceholderTransformer<Name extends string = 'placeholder'> impleme
   }
 
   async transform(context: TransformerContext): Promise<TransformResult> {
-    if (!context.record.mimeType.startsWith('image/')) return { meta: {} };
+    // Vectors are skipped too: they render crisp at any size (nothing to blur up to), and an SVG
+    // without intrinsic dimensions makes sharp throw — which, eager, would roll back the attach.
+    const { mimeType } = context.record;
+    if (!mimeType.startsWith('image/') || mimeType.startsWith('image/svg')) return { meta: {} };
     const engine = this.engine ?? (await loadSharpPlaceholderEngine(this.name));
     const placeholder = await engine.generate(await context.getBytes(), this.options);
     return { meta: { ...placeholder } };
@@ -101,11 +106,17 @@ export class PlaceholderTransformer<Name extends string = 'placeholder'> impleme
 export function placeholderOf(record: MediaRecord): ImagePlaceholder | null {
   for (const conversion of Object.values(record.conversions)) {
     const meta = conversion.meta;
-    if (meta && typeof meta.dataUrl === 'string' && typeof meta.color === 'string') {
+    if (
+      meta &&
+      typeof meta.dataUrl === 'string' &&
+      typeof meta.color === 'string' &&
+      Number.isFinite(meta.width) &&
+      Number.isFinite(meta.height)
+    ) {
       return {
         dataUrl: meta.dataUrl,
-        width: Number(meta.width),
-        height: Number(meta.height),
+        width: meta.width as number,
+        height: meta.height as number,
         color: meta.color,
       };
     }
@@ -119,7 +130,12 @@ async function loadSharpPlaceholderEngine(transformerName: string): Promise<Plac
   try {
     sharp = (await import('sharp')).default;
   } catch (error) {
-    if ((error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND') {
+    // Only a missing `sharp` itself — a broken install missing a transitive dep must surface as is.
+    if (
+      (error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND' &&
+      error instanceof Error &&
+      error.message.includes("'sharp'")
+    ) {
       throw new TransformerRuntimeMissingError(
         transformerName,
         "the optional peer dependency 'sharp'",

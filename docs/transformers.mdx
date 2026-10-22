@@ -184,7 +184,7 @@ Render it as a blurred background that the real image covers once loaded:
 
 The tiny preview is a pixelated 16 px image — the browser's upscale already softens it, and a CSS `filter: blur()` on a wrapper hides the rest. `width`/`height` reserve the box, so nothing shifts when the image lands.
 
-Options: `size` (long edge of the preview, default `16`), `quality` (WebP quality, default `50`), `name` (default `'placeholder'`), `eager` (**default `true`** — a placeholder is only useful if it exists when the image is first rendered, and it costs one small decode). It needs the `sharp` peer, loaded on the first transform. A record whose MIME type isn't `image/*` is skipped with `meta: {}` instead of failing the attach, so declaring it on a mixed collection is safe.
+Options: `size` (long edge of the preview, default `16`), `quality` (WebP quality, default `50`), `name` (default `'placeholder'`), `eager` (**default `true`** — a placeholder is only useful if it exists when the image is first rendered, and it costs one small decode — but it reads the whole original, which on a remote disk is a download per attach; set `false` and `transform()` from a job if that matters). It needs the `sharp` peer, loaded on the first transform. A record whose MIME type isn't `image/*`, or is an SVG (nothing to blur up to, and sharp can't rasterize a dimension-less one), is skipped with `meta: {}` instead of failing the attach, so declaring it on a mixed collection is safe.
 
 For a blurred image served as a **file** instead (a background, an `og:image` teaser), use a conversion preset with [`blur`](/docs/media/collections-and-conversions#what-the-fields-do).
 

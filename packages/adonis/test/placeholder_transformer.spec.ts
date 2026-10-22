@@ -105,6 +105,27 @@ describe('transformers.placeholder()', () => {
     expect(record.conversions.placeholder?.meta).toEqual({});
   });
 
+  it('skips SVGs, which sharp cannot always rasterize', async () => {
+    const { library } = makeLibrary([
+      { name: 'avatar', transformers: [transformers.placeholder()] },
+    ]);
+    // no width/height/viewBox: sharp throws `svgload_buffer: bad dimensions` on this one
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>');
+    const record = await attachImage(library, svg, 'image/svg+xml');
+    expect(record.conversions.placeholder?.meta).toEqual({});
+  });
+
+  it('placeholderOf ignores conversions whose meta lacks numeric dimensions', async () => {
+    const { placeholderOf } = await import('../src/transformers/placeholder.js');
+    const base = await attachImage(makeLibrary([{ name: 'avatar' }]).library, await solidPng(2, 2));
+    expect(
+      placeholderOf({
+        ...base,
+        conversions: { x: { meta: { dataUrl: 'data:,', color: '#000000' } } },
+      }),
+    ).toBeNull();
+  });
+
   it('uses an injected engine with the configured options', async () => {
     const seen: unknown[] = [];
     const engine: PlaceholderEngine = {
