@@ -36,7 +36,7 @@ export interface MetadataProbeTransformerOptions<Name extends string = 'probe'> 
    * remote disk that read is a download. Opt in for collections of small files.
    */
   eager?: boolean;
-  /** Replace the mediabunny engine (mainly for tests). */
+  /** Replace the mediabunny engine — e.g. `engines.ffprobe()`, or your own {@link MediaProbeEngine}. */
   engine?: MediaProbeEngine;
 }
 

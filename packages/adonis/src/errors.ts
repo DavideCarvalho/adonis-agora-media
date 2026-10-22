@@ -206,11 +206,34 @@ export class ConversionArtifactMissingError extends Error {
  */
 export class HlsSourceUnsupportedError extends Error {
   readonly code = 'E_MEDIA_HLS_SOURCE_UNSUPPORTED';
-  constructor(details: string) {
-    super(
-      `HLS remux is impossible for this source: ${details}. Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure \`transformers.hls({ webcodecs })\` with a WebCodecs implementation to enable the re-encode fallback.`,
-    );
+  /**
+   * @param hint what the caller can do about it; defaults to the mediabunny/WebCodecs advice.
+   */
+  constructor(
+    details: string,
+    hint = 'Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure `transformers.hls({ webcodecs })` with a WebCodecs implementation to enable the re-encode fallback.',
+  ) {
+    super(`HLS remux is impossible for this source: ${details}. ${hint}`);
     this.name = 'HlsSourceUnsupportedError';
+  }
+}
+
+/**
+ * An `ffmpeg` / `ffprobe` run (the `engines.ffmpegHls()` / `engines.ffprobe()` engines) exited
+ * non-zero or produced something unusable. Carries the exit code and the tail of stderr, which is
+ * where ffmpeg explains itself (an unsupported codec for a stream copy, a corrupt input).
+ */
+export class FfmpegFailedError extends Error {
+  readonly code = 'E_MEDIA_FFMPEG_FAILED';
+  constructor(
+    readonly binary: string,
+    readonly exitCode: number | null,
+    readonly stderr: string,
+  ) {
+    super(
+      `${binary} failed${exitCode === null ? '' : ` (exit code ${exitCode})`}: ${stderr.trim().split('\n').slice(-5).join('\n')}`,
+    );
+    this.name = 'FfmpegFailedError';
   }
 }
 

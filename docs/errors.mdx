@@ -56,6 +56,7 @@ try {
 | `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` | A transformer needs a peer or runtime capability the host lacks. |
 | `TransformerOutputError` | `E_MEDIA_TRANSFORMER_OUTPUT_INVALID` | A transformer wrote outside its prefix, or named a bad entry. |
 | `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` | An HLS source can't be stream-copied and no encoder is available. |
+| `FfmpegFailedError` | `E_MEDIA_FFMPEG_FAILED` | An `engines.ffmpegHls()` / `engines.ffprobe()` run exited non-zero; `exitCode` and the tail of `stderr` are attached. |
 
 See [Transformers](/docs/media/transformers) for the reasoning behind the split between "not defined" and "not ready".
 

@@ -1,3 +1,4 @@
+import { ffmpegHlsEngine, ffprobeEngine, ladders } from './ffmpeg.js';
 import { HlsTransformer, type HlsTransformerOptions } from './hls.js';
 import { PlaceholderTransformer, type PlaceholderTransformerOptions } from './placeholder.js';
 import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from './probe.js';
@@ -41,4 +42,24 @@ export const transformers = {
   ) {
     return new PlaceholderTransformer(options);
   },
+};
+
+/**
+ * Alternative engines for the built-in transformers, plugged in through their `engine` option.
+ * The ffmpeg ones spawn the system `ffmpeg` / `ffprobe` binaries (nothing bundled, nothing to
+ * install from npm) and, unlike the default mediabunny engine, can **transcode** — an
+ * adaptive-bitrate ladder instead of a single stream copy:
+ *
+ * ```ts
+ * transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) })
+ * transformers.probe({ engine: engines.ffprobe() })
+ * ```
+ */
+export const engines = {
+  /** HLS via system ffmpeg: remux by default, or encode `ladder` into a multi-rendition package. */
+  ffmpegHls: ffmpegHlsEngine,
+  /** Metadata probe via system ffprobe. */
+  ffprobe: ffprobeEngine,
+  /** Ready-made ladders for {@link ffmpegHlsEngine}: `standard` (360/720/1080p), `compact` (360/720p). */
+  ladders,
 };

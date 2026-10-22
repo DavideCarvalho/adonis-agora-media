@@ -134,6 +134,37 @@ transformers.hls({ webcodecs: () => import('@napi-rs/webcodecs') })
 
 The provided classes are installed onto `globalThis` (only the missing ones — a native implementation is never overwritten), because that is where the WebCodecs spec says the API lives. `resolveWebCodecsSupport(provider?)` reports `'native' | 'injected' | 'absent'` if you want to branch. Multi-quality renditions on top of an injected encoder are the documented evolution (mediabunny supports fan-out video options), not something the transformer fakes today — see the [Roadmap](/docs/media/roadmap).
 
+### The ffmpeg engine (transcoding, ABR ladders)
+
+The default engine is mediabunny because it is pure TypeScript — nothing to install on the host — but in Node it can only **stream-copy**. If the host has `ffmpeg`, swap the engine and get real encoding: any source ffmpeg decodes becomes h264/aac, optionally as an **adaptive-bitrate ladder** listed in one master playlist.
+
+```ts title="config/media.ts"
+import { defineConfig, engines, transformers } from '@adonis-agora/media'
+
+export default defineConfig({
+  collections: [
+    {
+      name: 'videos',
+      transformers: [
+        // 360p / 720p / 1080p; rungs taller than the source are dropped (never upscales)
+        transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) }),
+        transformers.probe({ engine: engines.ffprobe() }),
+      ],
+    },
+  ],
+})
+```
+
+- **No ladder** → remux (`-c copy`), same contract as mediabunny: fast, but the source must already be MPEG-TS compatible.
+- **`ladder`** → one rendition per rung: `{ height, videoBitrate, audioBitrate? }` (`'800k'`, `'5M'`). Keyframes are forced on segment boundaries so players switch renditions cleanly. Ready-made: `engines.ladders.standard` (360/720/1080p) and `engines.ladders.compact` (360/720p).
+- `preset` (x264, default `'veryfast'`), `extraArgs` (inserted before the HLS muxer options), `ffmpegPath` / `ffprobePath` (default: resolved on `PATH`).
+
+The package has the same shape the mediabunny engine writes — `index.m3u8` master, `playlist-N.m3u8` per rendition, `segment-N-M.ts` — so [Serving HLS](#serving-hls) works unchanged. The binaries are spawned, never bundled: install ffmpeg in your image (`apk add ffmpeg` on Alpine). A missing binary throws `TransformerRuntimeMissingError`; a failed run throws `FfmpegFailedError` with the exit code and the tail of ffmpeg's stderr.
+
+<Callout type="warn" title="Transcoding is heavy">
+  A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'hls')` from a job, on a worker sized for it.
+</Callout>
+
 ---
 
 ## The metadata probe
@@ -317,10 +348,11 @@ Rules of thumb, set by the built-ins:
 | `transform()` with a name the collection doesn't define | `TransformerNotDefinedError` | `E_MEDIA_TRANSFORMER_NOT_DEFINED` |
 | Reading a transformer conversion before generating it | `TransformNotReadyError` | `E_MEDIA_TRANSFORM_NOT_READY` |
 | Duplicate derivative name in one collection | `TransformerConflictError` | `E_MEDIA_TRANSFORMER_CONFLICT` |
-| Missing optional peer / runtime capability | `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` |
+| Missing optional peer / binary / runtime capability | `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` |
 | Transformer wrote outside its prefix / bad entry | `TransformerOutputError` | `E_MEDIA_TRANSFORMER_OUTPUT_INVALID` |
 | Delivering a metadata-only conversion | `ConversionArtifactMissingError` | `E_MEDIA_CONVERSION_ARTIFACT_MISSING` |
 | HLS source can't be stream-copied (no encoder) | `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` |
+| An ffmpeg / ffprobe engine run exited non-zero (stderr tail attached) | `FfmpegFailedError` | `E_MEDIA_FFMPEG_FAILED` |
 
 ## Next steps
 

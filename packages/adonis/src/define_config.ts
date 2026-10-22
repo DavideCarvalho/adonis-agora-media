@@ -7,7 +7,7 @@ import type { ImageProcessorFactory } from './processors/factory.js';
 import { processors } from './processors/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
 import { stores } from './stores/factory.js';
-import { transformers } from './transformers/factory.js';
+import { engines, transformers } from './transformers/factory.js';
 import type { DirectUploadPolicy } from './types.js';
 import type { UploadMode } from './upload_mode.js';
 import type {
@@ -311,4 +311,4 @@ export type {
   UploadSessionStoreContext,
   UploadSessionStoreFactory,
 };
-export { disks, processors, stores, transformers, uploadSessions };
+export { disks, engines, processors, stores, transformers, uploadSessions };
