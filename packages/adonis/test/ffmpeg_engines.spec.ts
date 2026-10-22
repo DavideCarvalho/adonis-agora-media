@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -107,6 +107,29 @@ describe('buildHlsArgs', () => {
     expect(args[args.indexOf('-force_key_frames') + 1]).toBe('expr:gte(t,n_forced*4)');
   });
 
+  it('passes preset and inserts extraArgs right before the HLS muxer options', () => {
+    const args = buildHlsArgs({
+      ...base,
+      hasAudio: true,
+      preset: 'slow',
+      extraArgs: ['-threads', '2'],
+      renditions: [{ height: 360, videoBitrate: '800k' }],
+    });
+    expect(args[args.indexOf('-preset') + 1]).toBe('slow');
+    expect(args.slice(args.indexOf('-threads'), args.indexOf('-threads') + 4)).toEqual([
+      '-threads',
+      '2',
+      '-f',
+      'hls',
+    ]);
+  });
+
+  it('applies extraArgs in remux mode too', () => {
+    const args = buildHlsArgs({ ...base, hasAudio: false, renditions: [], extraArgs: ['-copyts'] });
+    expect(args.indexOf('-copyts')).toBe(args.indexOf('-f') - 1);
+    expect(args).not.toContain('-preset');
+  });
+
   it('maps no audio for a silent source', () => {
     const args = buildHlsArgs({
       ...base,
@@ -144,6 +167,68 @@ describe('ffmpeg engine configuration errors', () => {
     await expect(library.transform(record.id, 'hls')).rejects.toBeInstanceOf(
       TransformerRuntimeMissingError,
     );
+  });
+});
+
+// Fake binaries: shell scripts standing in for ffprobe, to drive failure modes a real ffprobe
+// won't produce on demand.
+describe.skipIf(process.platform === 'win32')('ffmpeg engines with a misbehaving binary', () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'media-fakebin-'));
+  });
+
+  afterAll(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  async function fakeBinary(name: string, body: string): Promise<string> {
+    const path = join(dir, name);
+    await writeFile(path, `#!/bin/sh\n${body}\n`);
+    await chmod(path, 0o755);
+    return path;
+  }
+
+  it('reports a binary killed by a signal with a null exitCode (retryable, not a rejection of the file)', async () => {
+    const ffprobePath = await fakeBinary('killed-ffprobe', 'kill -9 $$');
+    const { library } = makeLibrary(
+      transformers.probe({ engine: engines.ffprobe({ ffprobePath }) }),
+    );
+    const record = await attach(library, Buffer.from('x'));
+    const error = await library.transform(record.id, 'probe').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(FfmpegFailedError);
+    expect((error as FfmpegFailedError).exitCode).toBeNull();
+  });
+
+  it('reports a non-zero exit with its code and stderr', async () => {
+    const ffprobePath = await fakeBinary(
+      'failing-ffprobe',
+      'echo "moov atom not found" >&2; exit 1',
+    );
+    const { library } = makeLibrary(
+      transformers.probe({ engine: engines.ffprobe({ ffprobePath }) }),
+    );
+    const record = await attach(library, Buffer.from('x'));
+    const error = (await library
+      .transform(record.id, 'probe')
+      .catch((e: unknown) => e)) as FfmpegFailedError;
+    expect(error).toBeInstanceOf(FfmpegFailedError);
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('moov atom not found');
+  });
+
+  it('turns unparseable ffprobe output into FfmpegFailedError instead of a raw SyntaxError', async () => {
+    const ffprobePath = await fakeBinary('chatty-ffprobe', 'echo "this is not json"');
+    const { library } = makeLibrary(
+      transformers.hls({ engine: engines.ffmpegHls({ ffprobePath, ffmpegPath: 'unused' }) }),
+    );
+    const record = await attach(library, Buffer.from('x'));
+    const error = (await library
+      .transform(record.id, 'hls')
+      .catch((e: unknown) => e)) as FfmpegFailedError;
+    expect(error).toBeInstanceOf(FfmpegFailedError);
+    expect(error.stderr).toContain('unparseable ffprobe output');
   });
 });
 
@@ -266,6 +351,27 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
     await expect(library.transform(record.id, 'hls')).rejects.toBeInstanceOf(
       HlsSourceUnsupportedError,
     );
+  }, 30_000);
+
+  it('reports display dimensions for a rotated (phone) video', async () => {
+    // stored 320x240 with a 90° display matrix — how phones record portrait video
+    const rotatedPath = join(tmp, 'rotated.mp4');
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-display_rotation:v:0',
+      '90',
+      '-i',
+      join(tmp, 'wide.mp4'),
+      '-c',
+      'copy',
+      rotatedPath,
+    ]);
+    const { library } = makeLibrary(transformers.probe({ engine: engines.ffprobe() }));
+    const record = await attach(library, await readFile(rotatedPath));
+    const updated = await library.transform(record.id, 'probe');
+    expect(updated.conversions.probe?.meta).toMatchObject({ width: 240, height: 320 });
   }, 30_000);
 
   it('probes with ffprobe', async () => {

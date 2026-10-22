@@ -124,11 +124,18 @@ export function placeholderOf(record: MediaRecord): ImagePlaceholder | null {
   return null;
 }
 
-/** sharp-backed {@link PlaceholderEngine}, importing the optional peer on first use. */
-async function loadSharpPlaceholderEngine(transformerName: string): Promise<PlaceholderEngine> {
+/**
+ * sharp-backed {@link PlaceholderEngine}, importing the optional peer on first use.
+ *
+ * @internal `importSharp` is the seam tests use to simulate a host without the peer.
+ */
+export async function loadSharpPlaceholderEngine(
+  transformerName: string,
+  importSharp: () => Promise<{ default: typeof import('sharp').default }> = () => import('sharp'),
+): Promise<PlaceholderEngine> {
   let sharp: typeof import('sharp').default;
   try {
-    sharp = (await import('sharp')).default;
+    sharp = (await importSharp()).default;
   } catch (error) {
     // Only a missing `sharp` itself — a broken install missing a transitive dep must surface as is.
     if (
