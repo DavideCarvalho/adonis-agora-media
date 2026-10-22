@@ -61,11 +61,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The ffmpeg engines' real-binary tests skip when ffmpeg is absent; install it so CI runs them.
-      # No recommends: the full set drags in ~100 desktop/codec packages and an apt mirror stall
-      # once hung this step for 30+ min. The timeout turns a stall into a fast, re-runnable failure.
-      - name: Install ffmpeg
+      # The ffmpeg engines' real-binary tests skip when ffmpeg is absent, so CI installs it — as a
+      # static build from GitHub releases (includes libx264) rather than apt: the runner's apt
+      # repeatedly stalled this step past its timeout. The timeout turns any stall into a fast,
+      # re-runnable failure.
+      - name: Install ffmpeg (static build)
         timeout-minutes: 5
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        run: |
+          curl -fsSL --retry 3 https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+            | tar -xJ -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ffmpeg-master-latest-linux64-gpl/bin" >> "$GITHUB_PATH"
 
       - run: pnpm test
