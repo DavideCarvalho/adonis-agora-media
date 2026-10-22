@@ -40,6 +40,8 @@ user.avatarThumbUrl = thumbUrl // string | null
 
 `storeSingleFile` attaches the file and resolves two URLs: the original, and the `thumb` conversion. `thumbUrl` is `null` — not an error — when that conversion isn't configured on the collection or couldn't be generated, because a missing thumbnail should never fail the store.
 
+It also returns the record `id` and, when the collection declares [`transformers.placeholder()`](/docs/media/transformers#image-placeholders-blur-up), the blur-up `placeholder` (`{ dataUrl, width, height, color }`, else `null`) — persist it next to the URL to paint a preview at render time without a media lookup.
+
 ```ts
 await removeSingleFile({ ownerType: 'User', ownerId: String(user.id), collection: 'avatar' })
 ```
