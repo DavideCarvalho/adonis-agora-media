@@ -62,7 +62,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The ffmpeg engines' real-binary tests skip when ffmpeg is absent; install it so CI runs them.
+      # No recommends: the full set drags in ~100 desktop/codec packages and an apt mirror stall
+      # once hung this step for 30+ min. The timeout turns a stall into a fast, re-runnable failure.
       - name: Install ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        timeout-minutes: 5
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
 
       - run: pnpm test
