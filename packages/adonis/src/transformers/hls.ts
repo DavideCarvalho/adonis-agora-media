@@ -85,7 +85,10 @@ export interface HlsTransformerOptions<Name extends string = 'hls'> {
   targetDuration?: number;
   /** WebCodecs implementation for the re-encode fallback (see {@link WebCodecsProvider}). */
   webcodecs?: WebCodecsProvider;
-  /** Replace the mediabunny engine (mainly for tests). */
+  /**
+   * Replace the mediabunny engine — e.g. `engines.ffmpegHls({ ladder })` to transcode an
+   * adaptive-bitrate ladder with the system ffmpeg, or your own {@link HlsRemuxEngine}.
+   */
   engine?: HlsRemuxEngine;
 }
 

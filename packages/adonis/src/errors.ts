@@ -214,6 +214,25 @@ export class HlsSourceUnsupportedError extends Error {
   }
 }
 
+/**
+ * An `ffmpeg` / `ffprobe` run (the `engines.ffmpegHls()` / `engines.ffprobe()` engines) exited
+ * non-zero or produced something unusable. Carries the exit code and the tail of stderr, which is
+ * where ffmpeg explains itself (an unsupported codec for a stream copy, a corrupt input).
+ */
+export class FfmpegFailedError extends Error {
+  readonly code = 'E_MEDIA_FFMPEG_FAILED';
+  constructor(
+    readonly binary: string,
+    readonly exitCode: number | null,
+    readonly stderr: string,
+  ) {
+    super(
+      `${binary} failed${exitCode === null ? '' : ` (exit code ${exitCode})`}: ${stderr.trim().split('\n').slice(-5).join('\n')}`,
+    );
+    this.name = 'FfmpegFailedError';
+  }
+}
+
 export class ImageProcessorMissingError extends Error {
   readonly code = 'E_MEDIA_IMAGE_PROCESSOR_MISSING';
   constructor() {

@@ -47,6 +47,7 @@ export type {
 export {
   defineConfig,
   disks,
+  engines,
   processors,
   stores,
   transformers,
@@ -118,6 +119,7 @@ export {
   ConversionNotDefinedError,
   DirectUploadsNotConfiguredError,
   DriveNotReadyError,
+  FfmpegFailedError,
   HlsSourceUnsupportedError,
   ImageProcessorMissingError,
   MediaNotFoundError,
@@ -211,6 +213,17 @@ export type {
   TransformerWriteOptions,
   TransformResult,
 } from './transformer.js';
+export type {
+  FfmpegBinaryOptions,
+  FfmpegHlsEngineOptions,
+  FfmpegRendition,
+} from './transformers/ffmpeg.js';
+export {
+  buildHlsArgs,
+  effectiveLadder,
+  ffmpegHlsEngine,
+  ffprobeEngine,
+} from './transformers/ffmpeg.js';
 export type {
   HlsRemuxEngine,
   HlsRemuxRequest,
