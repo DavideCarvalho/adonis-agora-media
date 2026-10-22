@@ -5,6 +5,11 @@ export interface ConversionPreset {
   fit?: 'cover' | 'contain' | 'fill' | 'inside' | 'outside';
   format?: 'jpeg' | 'png' | 'webp' | 'avif';
   quality?: number;
+  /**
+   * Gaussian blur sigma (sharp's `blur(sigma)`, 0.3–1000), applied after the resize. Pair it with a
+   * small `width` for a blurred low-res variant served as a file.
+   */
+  blur?: number;
   /** Generate eagerly on attach instead of lazily on first access. */
   eager?: boolean;
 }
