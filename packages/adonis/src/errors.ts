@@ -206,10 +206,14 @@ export class ConversionArtifactMissingError extends Error {
  */
 export class HlsSourceUnsupportedError extends Error {
   readonly code = 'E_MEDIA_HLS_SOURCE_UNSUPPORTED';
-  constructor(details: string) {
-    super(
-      `HLS remux is impossible for this source: ${details}. Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure \`transformers.hls({ webcodecs })\` with a WebCodecs implementation to enable the re-encode fallback.`,
-    );
+  /**
+   * @param hint what the caller can do about it; defaults to the mediabunny/WebCodecs advice.
+   */
+  constructor(
+    details: string,
+    hint = 'Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure `transformers.hls({ webcodecs })` with a WebCodecs implementation to enable the re-encode fallback.',
+  ) {
+    super(`HLS remux is impossible for this source: ${details}. ${hint}`);
     this.name = 'HlsSourceUnsupportedError';
   }
 }

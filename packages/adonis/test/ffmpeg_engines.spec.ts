@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { engines, transformers } from '../src/define_config.js';
-import { FfmpegFailedError, TransformerRuntimeMissingError } from '../src/errors.js';
+import {
+  FfmpegFailedError,
+  HlsSourceUnsupportedError,
+  TransformerRuntimeMissingError,
+} from '../src/errors.js';
 import { HlsDeliveryHandler } from '../src/hls/delivery.js';
 import { MediaLibrary } from '../src/media_library.js';
 import { StorageManager } from '../src/storage_manager.js';
@@ -121,6 +125,17 @@ describe('ffmpeg engine configuration errors', () => {
     );
   });
 
+  it('rejects odd, non-positive or fractional rung heights and bad audio bitrates', () => {
+    for (const height of [0, -360, 361, 360.5]) {
+      expect(() => engines.ffmpegHls({ ladder: [{ height, videoBitrate: '800k' }] })).toThrow(
+        /Invalid rendition height/,
+      );
+    }
+    expect(() =>
+      engines.ffmpegHls({ ladder: [{ height: 360, videoBitrate: '800k', audioBitrate: 'loud' }] }),
+    ).toThrow(/Invalid bitrate/);
+  });
+
   it('reports a missing binary as TransformerRuntimeMissingError', async () => {
     const { library } = makeLibrary(
       transformers.hls({ engine: engines.ffmpegHls({ ffprobePath: 'definitely-not-ffprobe' }) }),
@@ -230,6 +245,27 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
     const error = await library.transform(record.id, 'hls').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(FfmpegFailedError);
     expect((error as FfmpegFailedError).stderr.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('rejects an audio-only source as HlsSourceUnsupportedError (definitive, like mediabunny)', async () => {
+    const audioPath = join(tmp, 'audio.m4a');
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=duration=1',
+      '-c:a',
+      'aac',
+      audioPath,
+    ]);
+    const { library } = makeLibrary(transformers.hls({ engine: engines.ffmpegHls() }));
+    const record = await attach(library, await readFile(audioPath));
+    await expect(library.transform(record.id, 'hls')).rejects.toBeInstanceOf(
+      HlsSourceUnsupportedError,
+    );
   }, 30_000);
 
   it('probes with ffprobe', async () => {

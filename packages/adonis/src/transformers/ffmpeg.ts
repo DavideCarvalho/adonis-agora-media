@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { FfmpegFailedError, TransformerRuntimeMissingError } from '../errors.js';
+import {
+  FfmpegFailedError,
+  HlsSourceUnsupportedError,
+  TransformerRuntimeMissingError,
+} from '../errors.js';
 import type { HlsRemuxEngine, HlsRemuxRequest, HlsRemuxSummary } from './hls.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
 
@@ -137,7 +141,16 @@ async function probeSource(
     ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', sourcePath],
     transformerName,
   );
-  const parsed = JSON.parse(stdout) as FfprobeOutput;
+  let parsed: FfprobeOutput;
+  try {
+    parsed = JSON.parse(stdout) as FfprobeOutput;
+  } catch {
+    throw new FfmpegFailedError(
+      ffprobePath,
+      0,
+      `unparseable ffprobe output: ${stdout.slice(0, 200)}`,
+    );
+  }
   const streams = parsed.streams ?? [];
   const video = streams.find((s) => s.codec_type === 'video');
   const audio = streams.find((s) => s.codec_type === 'audio');
@@ -281,13 +294,29 @@ function parseBitrate(value: string): number {
 export function ffmpegHlsEngine(options: FfmpegHlsEngineOptions = {}): HlsRemuxEngine {
   const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
   const ffprobePath = options.ffprobePath ?? 'ffprobe';
-  if (options.ladder) for (const r of options.ladder) parseBitrate(r.videoBitrate);
+  // Validate the ladder while the config is in hand — a bad rung would otherwise fail deep inside
+  // libx264 with a cryptic error on the first transcode.
+  for (const r of options.ladder ?? []) {
+    if (!Number.isInteger(r.height) || r.height <= 0 || r.height % 2 !== 0) {
+      throw new Error(
+        `Invalid rendition height ${r.height} (expected a positive even integer — h264 needs even dimensions)`,
+      );
+    }
+    parseBitrate(r.videoBitrate);
+    if (r.audioBitrate !== undefined) parseBitrate(r.audioBitrate);
+  }
 
   return {
     async remux(request: HlsRemuxRequest): Promise<HlsRemuxSummary> {
       const summary = await probeSource(ffprobePath, request.sourcePath, 'hls');
-      if (!summary.hasVideo)
-        throw new FfmpegFailedError(ffprobePath, null, 'the source has no video stream');
+      // Same definitive signal the mediabunny engine gives for an unusable source, so callers
+      // branch on one error regardless of engine (and don't retry an audio-only file forever).
+      if (!summary.hasVideo) {
+        throw new HlsSourceUnsupportedError(
+          'the source has no video stream',
+          'HLS packaging needs a video track; this file is audio-only or not a video.',
+        );
+      }
 
       const renditions = options.ladder ? effectiveLadder(options.ladder, summary.height) : [];
       await run(
@@ -317,7 +346,11 @@ export function ffmpegHlsEngine(options: FfmpegHlsEngineOptions = {}): HlsRemuxE
   };
 }
 
-/** {@link MediaProbeEngine} backed by the system ffprobe. `format` is ffprobe's `format_name`. */
+/**
+ * {@link MediaProbeEngine} backed by the system ffprobe. Differences from the mediabunny probe:
+ * `format` is ffprobe's `format_name` (e.g. `'mov,mp4,m4a,3gp,3g2,mj2'`), and `mimeType` is not
+ * reported — ffprobe has no MIME/codecs-string notion; the record's own `mimeType` still applies.
+ */
 export function ffprobeEngine(
   options: Pick<FfmpegBinaryOptions, 'ffprobePath'> = {},
 ): MediaProbeEngine {
