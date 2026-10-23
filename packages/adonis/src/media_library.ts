@@ -144,6 +144,8 @@ export interface DeliverOptions {
   width?: number | string | undefined;
   /** Quality of the resized image; defaults to the first of `delivery.images.qualities`. */
   quality?: number | string | undefined;
+  /** The request's `Accept` header, to negotiate the resized image's format. */
+  accept?: string | undefined;
 }
 
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
@@ -231,7 +233,7 @@ export class MediaLibrary {
     this.deliveryImages = {
       widths: options.deliveryImages?.widths ?? DEFAULT_IMAGE_WIDTHS,
       qualities: options.deliveryImages?.qualities ?? DEFAULT_IMAGE_QUALITIES,
-      format: options.deliveryImages?.format ?? 'webp',
+      formats: options.deliveryImages?.formats ?? ['webp'],
     };
   }
 
@@ -606,9 +608,13 @@ export class MediaLibrary {
    */
   async resized(
     id: string,
-    request: { width: number | string; quality?: number | string | undefined },
+    request: {
+      width: number | string;
+      quality?: number | string | undefined;
+      accept?: string | undefined;
+    },
   ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
-    const { widths, qualities, format } = this.deliveryImages;
+    const { widths, qualities, formats } = this.deliveryImages;
     const width = allowedNumber('width', request.width, widths);
     const quality =
       request.quality === undefined || request.quality === ''
@@ -620,7 +626,8 @@ export class MediaLibrary {
     if (record.mimeType.startsWith('image/svg')) return { record, conversion: undefined };
     if (!record.mimeType.startsWith('image/')) throw new NotAnImageError(id, record.mimeType);
 
-    const name = `@w${width}q${quality}`;
+    const format = negotiateFormat(request.accept, formats, record.mimeType);
+    const name = `@w${width}q${quality}-${format}`;
     if (record.conversions[name]) return { record, conversion: name };
     const updated = await this.#generateConversion(record, {
       name,
@@ -977,18 +984,31 @@ export class MediaLibrary {
    * ```
    */
   async deliver(id: string, options: DeliverOptions = {}): Promise<DeliveryResult> {
-    const conversion =
-      options.width !== undefined && options.width !== ''
-        ? (await this.resized(id, { width: options.width, quality: options.quality })).conversion
-        : options.conversion;
+    const resizing = options.width !== undefined && options.width !== '';
+    const conversion = resizing
+      ? (
+          await this.resized(id, {
+            width: options.width!,
+            quality: options.quality,
+            accept: options.accept,
+          })
+        ).conversion
+      : options.conversion;
+    const vary = resizing && options.accept !== undefined ? { vary: 'Accept' as const } : {};
     const target = await this.#resolveTarget(id, conversion);
     const disk = this.storage.disk(target.disk);
     const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, target.path);
 
-    if (mode === 'public') return { kind: 'redirect', url: await disk.getUrl(target.path) };
+    if (mode === 'public') {
+      return { kind: 'redirect', url: await disk.getUrl(target.path), ...vary };
+    }
     if (mode === 'signed') {
       const expiresIn = options.signedTtlSeconds ?? this.deliverySignedTtlSeconds;
-      return { kind: 'redirect', url: await disk.getSignedUrl(target.path, { expiresIn }) };
+      return {
+        kind: 'redirect',
+        url: await disk.getSignedUrl(target.path, { expiresIn }),
+        ...vary,
+      };
     }
 
     // Prefer the disk's own metadata over the record's: for a conversion the record describes the
@@ -1000,6 +1020,7 @@ export class MediaLibrary {
       mimeType: metadata.contentType ?? target.record.mimeType,
       size: metadata.contentLength,
       fileName: target.fileName,
+      ...vary,
     };
   }
 
@@ -1062,4 +1083,21 @@ function allowedNumber(
     typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Number.NaN;
   if (!allowed.includes(parsed)) throw new ImageSizeNotAllowedError(field, value, allowed);
   return parsed;
+}
+
+/**
+ * The resized image's format: the first configured modern format the browser accepts. A browser
+ * that accepts none gets a format every browser decodes: PNG for an original that may be
+ * transparent, JPEG otherwise. No `Accept` at all (a server-side caller) ⇒ the first configured.
+ */
+function negotiateFormat(
+  accept: string | undefined,
+  formats: readonly ('avif' | 'webp')[],
+  originalMimeType: string,
+): 'avif' | 'webp' | 'jpeg' | 'png' {
+  if (accept === undefined) return formats[0] ?? 'webp';
+  const accepted = accept.toLowerCase();
+  const modern = formats.find((format) => accepted.includes(`image/${format}`));
+  if (modern) return modern;
+  return originalMimeType === 'image/png' || originalMimeType === 'image/gif' ? 'png' : 'jpeg';
 }

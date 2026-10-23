@@ -24,7 +24,7 @@ export const DEFAULT_DELIVERY_SIGNED_TTL_SECONDS = 300;
  * because the library is framework-agnostic: the app turns a `redirect` into `response.redirect(url)`
  * and a `stream` into `response.stream(stream)` with whatever headers it wants.
  */
-export type DeliveryResult =
+export type DeliveryResult = (
   | { kind: 'redirect'; url: string }
   | {
       kind: 'stream';
@@ -32,7 +32,15 @@ export type DeliveryResult =
       mimeType: string;
       size?: number | undefined;
       fileName?: string | undefined;
-    };
+    }
+) & {
+  /**
+   * `'Accept'` when the format was negotiated from the request's `Accept` header (on-demand
+   * resize): send it as the `Vary` header, or a cache in between hands an AVIF to a browser that
+   * asked for WebP.
+   */
+  vary?: 'Accept' | undefined;
+};
 
 /**
  * Collapse a requested {@link DeliveryMode} to a concrete one for a specific object.
@@ -70,6 +78,11 @@ export interface DeliveryRequest {
   width?: number | string | undefined;
   /** Quality of the resized image (`?q=`); one of `delivery.images.qualities`. */
   quality?: number | string | undefined;
+  /**
+   * The request's `Accept` header: picks the first of `delivery.images.formats` the browser
+   * supports (AVIF before WebP, say). Absent ⇒ the first configured format.
+   */
+  accept?: string | undefined;
 }
 
 /**
@@ -89,8 +102,13 @@ export interface OnDemandImageConfig {
   widths?: readonly number[];
   /** Qualities a request may ask for; the first is the default. Default {@link DEFAULT_IMAGE_QUALITIES}. */
   qualities?: readonly number[];
-  /** Output format of the resized images. Default `webp`. */
-  format?: 'webp' | 'avif' | 'jpeg' | 'png';
+  /**
+   * Modern formats to serve, in order of preference, negotiated against the request's `Accept`
+   * (like `next/image`'s `images.formats`). A browser that accepts none of them gets JPEG — or PNG
+   * when the original is a PNG/GIF, to keep transparency. Default `['webp']`: AVIF is markedly
+   * smaller but many times slower to encode, so it is opt-in (`['avif', 'webp']`).
+   */
+  formats?: readonly ('avif' | 'webp')[];
 }
 
 export interface MediaDeliveryHandlerOptions {
@@ -140,7 +158,7 @@ export class MediaDeliveryHandler {
     return this.library.deliver(request.mediaId, {
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
       ...(request.width !== undefined && request.width !== ''
-        ? { width: request.width, quality: request.quality }
+        ? { width: request.width, quality: request.quality, accept: request.accept }
         : {}),
       ...(this.mode !== undefined ? { mode: this.mode } : {}),
       ...(this.signedTtlSeconds !== undefined ? { signedTtlSeconds: this.signedTtlSeconds } : {}),
