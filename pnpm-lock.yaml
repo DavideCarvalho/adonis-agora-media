@@ -246,8 +246,8 @@ importers:
         specifier: 0.35.5
         version: 0.35.5(@types/node@26.6.5)
       tempura:
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: 1.0.0
+        version: 1.0.0(rolldown@1.2.14)(vite@8.3.4(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.1))
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -3071,6 +3071,21 @@ packages:
     resolution: {integrity: sha512-NQ4Cs23jM6UUp3CcS5vjmyjTC6dtA5EsflBG2cyG0wZvP65AV26tJ920MGvTRYIImCY13RBpOhc7q4/pu+FG5A==}
     engines: {node: '>=10'}
 
+  tempura@1.0.0:
+    resolution: {integrity: sha512-cC2oop3G6mN9HrjudKurpQllBLKJls4noaa5DyZ9yPSLvfFi7p8dHWhQ2BSaLmhdya3H4KUKkawgyCeX20RsEA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      esbuild: '*'
+      rolldown: '*'
+      vite: '*'
+    peerDependenciesMeta:
+      esbuild:
+        optional: true
+      rolldown:
+        optional: true
+      vite:
+        optional: true
+
   terminal-size@4.0.1:
     resolution: {integrity: sha512-avMLDQpUI9I5XFrklECw1ZEUPJhqzcwSWsyyI8blhRLT+8N1jLJWLWWYQpB2q2xthq8xDvjZPISVh53T/+CLYQ==}
     engines: {node: '>=18'}
@@ -5754,6 +5769,11 @@ snapshots:
   tarn@3.1.2: {}
 
   tempura@0.4.1: {}
+
+  tempura@1.0.0(rolldown@1.2.14)(vite@8.3.4(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.1)):
+    optionalDependencies:
+      rolldown: 1.2.14
+      vite: 8.3.4(@types/node@26.6.5)(jiti@2.7.0)(yaml@2.9.1)
 
   terminal-size@4.0.1: {}
 
