@@ -1183,17 +1183,23 @@ export class MediaLibrary {
    * Throws {@link DeliverySignatureError} for an invalid or expired signature, or a missing one when
    * `delivery.signing.required` (the default). `MediaDeliveryHandler` calls this for you.
    */
-  checkDeliverySignature(request: {
-    mediaId: string;
-    conversion?: string | undefined;
-    width?: number | string | undefined;
-    quality?: number | string | undefined;
-    expires?: number | string | undefined;
-    signature?: string | undefined;
-  }): boolean {
+  checkDeliverySignature(
+    request: {
+      mediaId: string;
+      conversion?: string | undefined;
+      width?: number | string | undefined;
+      quality?: number | string | undefined;
+      expires?: number | string | undefined;
+      signature?: string | undefined;
+    },
+    options: {
+      /** Override `delivery.signing.required` for this check (a route that authorizes by itself). */
+      required?: boolean;
+    } = {},
+  ): boolean {
     if (!this.deliverySigning) return false;
     const signed = verifyDelivery(this.deliverySigning.secret, request, this.now().getTime());
-    if (!signed && (this.deliverySigning.required ?? true)) {
+    if (!signed && (options.required ?? this.deliverySigning.required ?? true)) {
       throw new DeliverySignatureError('missing');
     }
     return signed;

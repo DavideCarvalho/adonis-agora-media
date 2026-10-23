@@ -154,6 +154,7 @@ router.get('/media/:id', async ({ params, request, response }) => {
 - **What the signature covers:** the record, the conversion, the size and the expiry. Change any of them and the request is refused (`DeliverySignatureError`, `invalid`; map it to 403).
 - **Any width:** a signed request may ask for any width, since the app chose it, so the `delivery.images.widths` whitelist only applies to unsigned requests.
 - **Unsigned requests:** with `required` (the default) they are refused (`missing`). Set `required: false` to let them through with the whitelist.
+- **Routes that authorize by themselves:** a route guarded by a session or an ownership check (a download, a doctor's document) sets `new MediaDeliveryHandler({ library: media, requireSignature: false })`. It keeps serving its own requests, still honours a signed one, and the rest of the app keeps requiring signatures. `requireSignature: true` does the reverse on a lenient config.
 - **Stable URLs:** expiries round up to a multiple of `expiresIn`, so a page rendered twice in the same window gets the same URLs and the browser cache keeps working. A URL is valid for between one and two windows.
 - **Authorization:** an `<img>` cannot send an auth header, but a signed URL carries its authorization. Authorize when you render the page, sign the URLs, and the route needs no session.
 

@@ -162,6 +162,31 @@ describe('signed delivery URLs (delivery.signing)', () => {
     });
   });
 
+  it('a route that authorizes by itself can opt out with requireSignature: false', async () => {
+    const { library } = setup({ secret: SECRET });
+    await attachPhoto(library);
+    const sessionRoute = new MediaDeliveryHandler({ library, requireSignature: false });
+    await expect(sessionRoute.handle({ mediaId: 'id-1' })).resolves.toMatchObject({
+      kind: 'redirect',
+    });
+    // unsigned there still means the whitelist…
+    await expect(sessionRoute.handle({ mediaId: 'id-1', width: '500' })).rejects.toMatchObject({
+      code: 'E_MEDIA_IMAGE_SIZE_NOT_ALLOWED',
+    });
+    // …and a signed URL is still verified and honoured
+    const signed = requestFor(library.deliveryUrl('id-1', { width: 500 }));
+    await expect(sessionRoute.handle(signed)).resolves.toMatchObject({ kind: 'redirect' });
+    await expect(sessionRoute.handle({ ...signed, width: '3000' })).rejects.toMatchObject({
+      reason: 'invalid',
+    });
+
+    // and the reverse: a lenient config, a strict route
+    const lenient = setup({ secret: SECRET, required: false });
+    await attachPhoto(lenient.library);
+    const imgRoute = new MediaDeliveryHandler({ library: lenient.library, requireSignature: true });
+    await expect(imgRoute.handle({ mediaId: 'id-1' })).rejects.toMatchObject({ reason: 'missing' });
+  });
+
   it('sign the conversion too', async () => {
     const { library, handler } = setup({ secret: SECRET });
     await attachPhoto(library);
