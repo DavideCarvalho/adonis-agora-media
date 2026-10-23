@@ -42,6 +42,13 @@ export interface ConversionPreset {
   /** Never enlarge: an original narrower than `width` keeps its own size. */
   withoutEnlargement?: boolean;
   /**
+   * Skip this conversion when it would not be narrower than the original — no same-size copy is
+   * stored; the conversion is recorded with `meta.skipped` and no artifact. What `responsive`
+   * collections use, so a 600px upload does not get 960/1280/1920 "versions" of itself. Needs a
+   * processor that implements {@link ImageProcessor.dimensions} (sharp does); otherwise ignored.
+   */
+  onlyDownscale?: boolean;
+  /**
    * What a crop (`fit: 'cover'` with `width` and `height`) keeps. Default `'centre'`. A record's
    * focal point overrides it.
    */
@@ -76,6 +83,8 @@ export interface ImageProcessor {
     preset: ConversionPreset,
     options?: ConvertOptions,
   ): Promise<ConversionResult>;
+  /** Displayed size of an image (EXIF orientation applied), if it can be read. Optional. */
+  dimensions?(input: Buffer): Promise<{ width: number; height: number } | undefined>;
 }
 
 /** Does this preset crop (and so care about a focal point / position)? */

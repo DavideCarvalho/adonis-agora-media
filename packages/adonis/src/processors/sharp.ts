@@ -20,6 +20,15 @@ const CONTENT_TYPE: Record<string, string> = {
  * (`@adonis-agora/media/processors/sharp`) or select it lazily with `processors.sharp()` in config.
  */
 export class SharpImageProcessor implements ImageProcessor {
+  async dimensions(input: Buffer): Promise<{ width: number; height: number } | undefined> {
+    const metadata = await sharp(input).metadata();
+    if (!metadata.width || !metadata.height) return undefined;
+    const swap = (metadata.orientation ?? 1) >= 5;
+    // An animated image reports the frame strip; one frame is `pageHeight` tall.
+    const height = metadata.pageHeight ?? metadata.height;
+    return swap ? { width: height, height: metadata.width } : { width: metadata.width, height };
+  }
+
   async convert(
     input: Buffer,
     preset: ConversionPreset,

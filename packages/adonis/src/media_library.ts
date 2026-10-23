@@ -598,6 +598,14 @@ export class MediaLibrary {
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
 
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
+    if (preset.onlyDownscale && preset.width && this.imageProcessor.dimensions) {
+      const size = await this.imageProcessor.dimensions(original);
+      if (size && size.width <= preset.width) {
+        return this.#recordConversion(record, preset.name, {
+          meta: { skipped: 'not-smaller-than-original', width: size.width, height: size.height },
+        });
+      }
+    }
     const focalPoint = focalPointOf(record.customProperties);
     const result = await this.imageProcessor.convert(
       original,
@@ -610,24 +618,29 @@ export class MediaLibrary {
       contentType: result.contentType,
     });
 
-    // Re-read before saving: a concurrent conversion of the same record must not be dropped.
-    const current = (await this.store.find(record.id)) ?? record;
-    const updated = await this.store.save({
-      ...current,
-      conversions: {
-        ...current.conversions,
-        [preset.name]: {
-          path: conversionPath,
-          disk: record.disk,
-          ...(result.width && result.height
-            ? { meta: { width: result.width, height: result.height } }
-            : {}),
-        },
-      },
-      updatedAt: this.now(),
+    const updated = await this.#recordConversion(record, preset.name, {
+      path: conversionPath,
+      disk: record.disk,
+      ...(result.width && result.height
+        ? { meta: { width: result.width, height: result.height } }
+        : {}),
     });
     this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
     return updated;
+  }
+
+  /** Persist one conversion entry, re-reading first so a concurrent one is not dropped. */
+  async #recordConversion(
+    record: MediaRecord,
+    name: string,
+    conversion: MediaConversion,
+  ): Promise<MediaRecord> {
+    const current = (await this.store.find(record.id)) ?? record;
+    return this.store.save({
+      ...current,
+      conversions: { ...current.conversions, [name]: conversion },
+      updatedAt: this.now(),
+    });
   }
 
   /**

@@ -1,6 +1,20 @@
 import { TransformerConflictError } from './errors.js';
 import type { ConversionPreset } from './image_processor.js';
 import type { Transformer } from './transformer.js';
+import { PlaceholderTransformer } from './transformers/placeholder.js';
+
+/** Widths a `responsive: true` collection generates (those below the original's width). */
+export const DEFAULT_RESPONSIVE_WIDTHS: readonly number[] = [320, 640, 960, 1280, 1920, 2560];
+
+/** `responsive` options. */
+export interface ResponsiveImagesConfig {
+  /** Widths to generate. Default {@link DEFAULT_RESPONSIVE_WIDTHS}. */
+  widths?: readonly number[];
+  /** Output format. Default `webp`. */
+  format?: ConversionPreset['format'];
+  /** Output quality. */
+  quality?: number;
+}
 
 export interface MediaCollectionConfig {
   name: string;
@@ -18,13 +32,21 @@ export interface MediaCollectionConfig {
    * namespace — a collision throws {@link TransformerConflictError} at construction.
    */
   transformers?: Transformer[];
+  /**
+   * Responsive images without hand-written presets (spatie's `withResponsiveImages()`): eager
+   * presets `responsive-<width>` at each width below the original's (wider ones are skipped, not
+   * stored as same-size copies), plus `transformers.placeholder()` if the collection has none —
+   * everything `media.library.image(id)` needs for a `srcset`, the intrinsic size and the blur-up.
+   */
+  responsive?: boolean | ResponsiveImagesConfig;
 }
 
 export class MediaCollectionRegistry {
   private readonly map = new Map<string, MediaCollectionConfig>();
 
   constructor(collections: readonly MediaCollectionConfig[] = []) {
-    for (const c of collections) {
+    for (const config of collections) {
+      const c = withResponsive(config);
       assertDistinctDerivativeNames(c);
       this.map.set(c.name, c);
     }
@@ -53,4 +75,27 @@ function assertDistinctDerivativeNames(collection: MediaCollectionConfig): void 
     }
     seen.add(transformer.name);
   }
+}
+
+/** Expand `responsive` into its presets (and the placeholder, when missing). */
+function withResponsive(collection: MediaCollectionConfig): MediaCollectionConfig {
+  if (!collection.responsive) return collection;
+  const options = collection.responsive === true ? {} : collection.responsive;
+  const presets: ConversionPreset[] = [...(options.widths ?? DEFAULT_RESPONSIVE_WIDTHS)].map(
+    (width) => ({
+      name: `responsive-${width}`,
+      width,
+      eager: true,
+      onlyDownscale: true,
+      ...(options.format ? { format: options.format } : {}),
+      ...(options.quality !== undefined ? { quality: options.quality } : {}),
+    }),
+  );
+  const transformers = collection.transformers ?? [];
+  const hasPlaceholder = transformers.some((t) => t instanceof PlaceholderTransformer);
+  return {
+    ...collection,
+    conversions: [...(collection.conversions ?? []), ...presets],
+    transformers: hasPlaceholder ? transformers : [...transformers, new PlaceholderTransformer()],
+  };
 }
