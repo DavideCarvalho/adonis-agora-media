@@ -294,6 +294,20 @@ The first time you ask for `url(id, 'thumb')`, the library reads the original of
   Asking for a conversion that isn't declared on the collection throws `ConversionNotDefinedError`. Asking for any conversion when no `imageProcessor` is configured throws `ImageProcessorMissingError`. See [Collections & Conversions](/docs/media/collections-and-conversions).
 </Callout>
 
+### Rendering images (`next/image`-style)
+
+For pages, ask for everything an `<img>` needs in one call and render it with
+[`<MediaImage>`](/docs/media/react/image) from `@adonis-agora/media-react`:
+
+```ts
+// config: { name: 'banner', responsive: true }  — srcset presets + blur-up placeholder
+return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+```
+
+```tsx
+<MediaImage image={banner} alt={course.title} layout="constrained" priority />
+```
+
 ---
 
 ## Step 5 — List, find and delete

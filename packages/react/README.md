@@ -1,8 +1,36 @@
 # @adonis-agora/media-react
 
-React hook + headless uploader component and a framework-free browser upload client for
-[`@adonis-agora/media`](../adonis). It speaks the AdonisJS provider's **actual** upload contract
-across all three server strategies:
+The browser side of [`@adonis-agora/media`](../adonis): **rendering** stored images the
+`next/image` way, and **uploading** them.
+
+## `MediaImage` / `MediaPicture`
+
+```tsx
+import { MediaImage, MediaPicture, mediaImageLoader } from '@adonis-agora/media-react'
+
+// 1. the server built it: media.library.image(id) → { src, srcSet, width, height, placeholder }
+<MediaImage image={banner} alt="" layout="constrained" priority />
+
+// 2. a plain URL, with your own preview
+<MediaImage src="/hero.jpg" width={1600} height={900} blurDataURL={dataUrl} alt="" />
+
+// 3. a loader: srcset built here, each width resized on demand by your delivery route
+<MediaImage src={mediaId} loader={mediaImageLoader()} width={800} height={400} alt="" />
+
+// art direction
+<MediaPicture image={banner} sources={[{ media: '(max-width: 640px)', image: bannerSquare }]} alt="" />
+```
+
+- **One `<img>`:** lazy by default; `priority` loads it eagerly (and React 19 preloads it); `fill` sizes it to the parent.
+- **`layout`:** `constrained` / `fullWidth` / `fixed` set the box and the `sizes`. Lazy images get `sizes="auto, …"`.
+- **Blurred preview:** painted behind the image until it loads. It ships in the SSR markup, survives hydration and stays in place if the image fails. `focalPoint` becomes `object-position`.
+- **`placeholderStyle(placeholder)`:** paints the same preview on components that own their `<img>`, such as a Radix `Avatar`.
+
+See the [Responsive images docs](https://github.com/DavideCarvalho/adonis-media/blob/master/docs/react/image.mdx).
+
+## Uploads
+
+It speaks the AdonisJS provider's **actual** upload contract across all three server strategies:
 
 - **TUS resumable** — `POST`/`HEAD`/`PATCH`/`DELETE` against `uploads.resumable.routes.prefix`
   (default `/media/uploads/tus`), `Content-Type: application/offset+octet-stream`, resumes from the

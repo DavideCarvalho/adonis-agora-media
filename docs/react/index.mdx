@@ -1,12 +1,15 @@
 ---
 title: React Client
-description: "@adonis-agora/media-react — a React hook (useMediaUpload), a headless-friendly MediaUploader component, and a framework-free browser upload client (createMediaUploadClient) that speak the provider's actual upload contract across TUS, direct-S3 multipart, and proxy strategies."
+description: "@adonis-agora/media-react — uploads (useMediaUpload, MediaUploader, a framework-free client over TUS, direct-S3 and proxy) and rendering (MediaImage / MediaPicture: next/image for stored images)."
 icon: Atom
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-**`@adonis-agora/media-react`** is the first-party browser companion to the server upload routes. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
+**`@adonis-agora/media-react`** is the first-party browser companion to the server. It covers two jobs:
+
+- **Rendering:** [`<MediaImage>` and `<MediaPicture>`](/docs/media/react/image), `next/image` for stored images. They give you a `srcset`, the intrinsic size, a blur-up preview, lazy loading, `priority`, layouts that compute `sizes`, focal points and art direction. They are fed by `media.library.image(id)`, by a plain `src`, or by a `loader` your delivery route resizes on demand. `placeholderStyle()` paints the preview on other components, such as a Radix `Avatar`.
+- **Uploads:** everything below. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
 
 - **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `tusPath` (default `/media/uploads/tus`, matching `uploads.resumable.routes.prefix`), resuming from the server's `Upload-Offset`.
 - **Direct-S3 multipart** — the [direct-session](/docs/media/uploads/direct-sessions) contract against `directPath` (default `/media/uploads/direct/sessions`, matching `uploads.direct.routes.prefix`): `POST {directPath}` initiates and returns presigned part URLs, each part `PUT`s straight to S3, `POST {directPath}/:id/parts/:partNumber` confirms its `ETag`, and `POST {directPath}/:id/complete` assembles the object. `GET {directPath}/:id` reports a session's state and `DELETE {directPath}/:id` tears it down.
@@ -221,6 +224,7 @@ A `mediaUrl(id, conversion?)` helper is also exported for composing URLs against
 
 ## Next steps
 
+- [Responsive images](/docs/media/react/image) — `MediaImage`, `MediaPicture`, `placeholderStyle`, `mediaImageLoader`
 - [Upload client](/docs/media/react/client) — the full `MediaUploadClient` surface, the part transport, and `MediaHttpError`
 - [Console launcher](/docs/media/react/console-launcher) — open the media console from your app, in three tiers
 - [Direct sessions](/docs/media/uploads/direct-sessions) — the server contract the direct strategy speaks

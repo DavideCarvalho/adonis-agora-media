@@ -18,7 +18,7 @@ inline blur-up preview + dimensions + dominant colour for images — all persist
 | Package | Role |
 |---|---|
 | [`@adonis-agora/media`](./packages/adonis) [![npm](https://img.shields.io/npm/v/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the `Transformer` SPI (HLS video + metadata probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, the embedded management console, provider + `defineConfig`, testing kit |
-| [`@adonis-agora/media-react`](./packages/react) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-react)](https://www.npmjs.com/package/@adonis-agora/media-react) | Browser upload client: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
+| [`@adonis-agora/media-react`](./packages/react) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-react)](https://www.npmjs.com/package/@adonis-agora/media-react) | Rendering: `MediaImage` / `MediaPicture` (`next/image` for stored images: srcset, blur-up, lazy loading, layouts, art direction), `placeholderStyle`, `mediaImageLoader`. Uploads: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
 | [`@adonis-agora/media-dashboard`](./packages/dashboard) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-dashboard)](https://www.npmjs.com/package/@adonis-agora/media-dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
 
 The core package uses **subpath exports** (the Agora idiom), so heavy backends stay optional:
@@ -140,14 +140,43 @@ await media.attachments.url(att, 'thumb')
 
 ### Image conversions
 
-A `ConversionPreset` is `{ name, width?, height?, fit?, format?, quality?, blur?, eager? }`. Eager presets
-are generated synchronously on `attach`; the rest are generated lazily on the first `url(id, name)` and
-cached on the record. `fit`, `format` and `blur` map straight onto sharp; images are auto-oriented from
-EXIF first.
+A `ConversionPreset` is `{ name, width?, height?, fit?, position?, format?, quality?, blur?,
+withoutEnlargement?, onlyDownscale?, eager? }`. Eager presets are generated synchronously on `attach`;
+the rest are generated lazily on the first `url(id, name)` and cached on the record, with their output
+size in `meta`. `fit`, `position`, `format` and `blur` map straight onto sharp; images are
+auto-oriented from EXIF first, and animated GIF/WebP keep their frames in WebP.
 
 For blur-up placeholders, add `transformers.placeholder()` to the collection — it stores
 `{ dataUrl, width, height, color }` on `record.conversions.placeholder.meta` (a ~300-byte inline WebP),
 so the page can paint a blurred preview with the right aspect ratio before the image loads.
+
+### Responsive images (`next/image`-style)
+
+`media.library.image(id)` returns everything an `<img>` needs as plain JSON: `src`, a `srcSet` built
+from the collection's same-picture presets, the intrinsic `width`/`height`, the blur-up
+`placeholder` and the `focalPoint`. Render it with `<MediaImage>` from
+`@adonis-agora/media-react`. It is one `<img>` with lazy loading, `priority`, `fill`, a
+`layout` that computes `sizes`, and the blurred preview behind it until it loads.
+
+```ts
+// config/media.ts — presets at standard widths + the placeholder, from one flag
+{ name: 'banner', responsive: true, stripMetadata: true }
+
+// controller
+return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+```
+
+```tsx
+<MediaImage image={banner} alt={course.title} layout="constrained" priority />
+```
+
+More on the image side:
+
+- **Focal points:** `media.library.setFocalPoint(id, { x, y })` makes every crop keep that part, and so does `object-fit: cover` in the browser. Presets also take `position: 'attention'`.
+- **Art direction:** `image(id, { conversions: [...] })` returns a group, which `<MediaPicture>` swaps in on some screens.
+- **On-demand resizing:** the delivery route serves `?w=640`, resized once and cached, as AVIF or WebP depending on `Accept`. Only whitelisted widths are served, unless the URL is signed.
+- **Signed URLs:** with `delivery.signing`, `media.library.deliveryUrl()` and `image()` hand out signed, expiring URLs, and the route serves nothing else.
+- **`stripMetadata: true`:** removes GPS, camera and timestamps from uploaded originals.
 
 ## Diagnostics
 
@@ -195,7 +224,7 @@ native multipart over the optional AWS SDK peer. Drive it from the browser with
 These seams exist in the SPIs but are intentionally **not built** yet:
 
 - Additional `MediaStore` drivers (document / Redis).
-- Video/PDF thumbnail conversions, responsive `srcset`, and an antivirus/scanning hook in `attach`.
+- Video/PDF thumbnail conversions and an antivirus/scanning hook in `attach`.
 - A first-party collection reordering API (ordering is append-only today).
 
 ## Develop

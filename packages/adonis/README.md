@@ -196,6 +196,34 @@ the context hands you the record, the original's bytes/stream, and a sandboxed `
 every artifact under the conversion's own prefix.
 
 
+## Responsive images (`next/image`-style)
+
+`media.library.image(id)` returns everything an `<img>` needs as plain JSON: `src`, a `srcSet` built
+from the collection's same-picture presets, the intrinsic `width`/`height`, the blur-up
+`placeholder` and the `focalPoint`. Render it with `<MediaImage>` from
+`@adonis-agora/media-react`. It is one `<img>` with lazy loading, `priority`, `fill`, a
+`layout` that computes `sizes`, and the blurred preview behind it until it loads.
+
+```ts
+// config/media.ts — presets at standard widths + the placeholder, from one flag
+{ name: 'banner', responsive: true, stripMetadata: true }
+
+// controller
+return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+```
+
+```tsx
+<MediaImage image={banner} alt={course.title} layout="constrained" priority />
+```
+
+More on the image side:
+
+- **Focal points:** `media.library.setFocalPoint(id, { x, y })` makes every crop keep that part, and so does `object-fit: cover` in the browser. Presets also take `position: 'attention'`.
+- **Art direction:** `image(id, { conversions: [...] })` returns a group, which `<MediaPicture>` swaps in on some screens.
+- **On-demand resizing:** the delivery route serves `?w=640`, resized once and cached, as AVIF or WebP depending on `Accept`. Only whitelisted widths are served, unless the URL is signed.
+- **Signed URLs:** with `delivery.signing`, `media.library.deliveryUrl()` and `image()` hand out signed, expiring URLs, and the route serves nothing else.
+- **`stripMetadata: true`:** removes GPS, camera and timestamps from uploaded originals.
+
 ## Uploads, S3 and delivery
 
 Large-file uploads ship in three flavours — **proxy** (bytes stream through your app), **direct-S3
@@ -221,6 +249,11 @@ resolves to a discriminated union — `{ kind: 'redirect', url }` for `public`/`
 a hand-rolled streaming route. `MediaDeliveryHandler` and `TusUploadHandler` are the framework-agnostic
 route halves your app mounts with its own middleware; **neither performs authorization** — guard the
 route before calling `handle`.
+
+The same delivery route resizes on demand (`delivery.handle({ mediaId, width: qs.w, quality: qs.q,
+accept })`). It serves only widths in `delivery.images.widths` unless the request is signed, and it
+negotiates AVIF/WebP from `Accept`. With `delivery.signing` (`{ secret, expiresIn }`), it serves only
+URLs built by `media.library.deliveryUrl()` or `image()`, until they expire.
 
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
