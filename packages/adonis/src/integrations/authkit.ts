@@ -95,7 +95,17 @@ export function authkitIdentity(options: AuthkitIdentityOptions = {}): MediaIden
       return await fromServer(ctx);
     } catch (error) {
       if (!isModuleNotFound(error)) throw error;
-      return fromClient(ctx);
+    }
+    try {
+      return await fromClient(ctx);
+    } catch (error) {
+      if (!isModuleNotFound(error)) throw error;
+      throw new Error(
+        "authkitIdentity() needs '@adonis-agora/authkit-server' (an identity-provider app) or " +
+          "'@adonis-agora/authkit-client' (an app signing in against one), and neither is " +
+          'installed. Install the one this app uses, or set `access.identity` to another resolver.',
+        { cause: error },
+      );
     }
   };
 }

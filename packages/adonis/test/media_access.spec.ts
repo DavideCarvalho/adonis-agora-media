@@ -183,6 +183,15 @@ describe('media.access', () => {
     });
   });
 
+  it('authorize() resolves the identity once', async () => {
+    const { library } = setup();
+    const avatar = await attach(library, 'avatar');
+    const resolver = vi.fn(() => stranger);
+    const counted = new MediaAccess({ library, identity: resolver });
+    await expect(counted.authorize({}, 'read', avatar)).rejects.toMatchObject({ status: 403 });
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
   it('image() checks read access before handing out URLs', async () => {
     const { library, access } = setup();
     const avatar = await attach(library, 'avatar');
@@ -294,6 +303,28 @@ describe('media.access.deliveryRoute()', () => {
     expect(session.sent.stream).toBeDefined();
   });
 
+  it('ignores an empty ?w[]= and encodes a quote in the file name (RFC 5987)', async () => {
+    const { library, access } = setup();
+    const png = await sharp({ create: { width: 10, height: 10, channels: 3, background: '#000' } })
+      .png()
+      .toBuffer();
+    const record = await library.attach({
+      ownerType: 'User',
+      ownerId: '7',
+      collection: 'banner',
+      fileName: "o'brien (1).png",
+      mimeType: 'image/png',
+      contents: png,
+    });
+    const { ctx, sent } = fakeHttp({ params: { id: record.id }, query: { w: [] } });
+    await access.deliveryRoute()(ctx);
+    expect(sent.status).toBeUndefined();
+    expect(sent.stream).toBeDefined();
+    expect(sent.headers['content-disposition']).toBe(
+      `inline; filename="o'brien (1).png"; filename*=UTF-8''o%27brien%20%281%29.png`,
+    );
+  });
+
   it('rethrows what it does not know how to answer', async () => {
     const { library, access } = setup();
     const avatar = await attach(library, 'avatar');
@@ -353,6 +384,12 @@ describe('@adonis-agora/media/authkit', () => {
       load: { server: () => Promise.reject(missing), client: async () => client },
     });
     expect(await clientOnly({ identity })).toMatchObject({ id: 'sub-1' });
+
+    // neither installed: an error that says which resolver and which packages
+    const none = authkitIdentity({
+      load: { server: () => Promise.reject(missing), client: () => Promise.reject(missing) },
+    });
+    await expect(none({})).rejects.toThrow(/authkitIdentity\(\) needs/);
   });
 });
 
@@ -396,6 +433,12 @@ describe('@adonis-agora/media/authz', () => {
     });
     await rule(request({ id: '9', user: appUser }));
     expect(calls[0]).toEqual(['can', appUser, 'reports.read', { scope: { tenantId: 'acme' } }]);
+  });
+
+  it('a null user falls back to the { type, id } reference', async () => {
+    const { calls, service } = fakeAuthz();
+    await authz.can('x', { load: async () => service })(request({ id: '5', user: null }));
+    expect(calls[0]?.[1]).toEqual({ type: 'user', id: '5' });
   });
 
   it('roles(): hasAnyRole', async () => {

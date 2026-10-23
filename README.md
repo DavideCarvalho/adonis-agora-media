@@ -197,7 +197,8 @@ defineConfig({
   ],
 })
 
-router.get('/media/:id', (ctx) => media.access.deliveryRoute()(ctx)) // 401/403/404/400 handled
+const serveMedia = media.access.deliveryRoute()          // build once, at route definition
+router.get('/media/:id', serveMedia)                      // 401/403/404/400 handled
 const banner = await media.access.image(ctx, id)                       // authorized descriptor
 ```
 

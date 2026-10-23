@@ -32,7 +32,9 @@ export default defineConfig({
 ```ts title="start/routes.ts"
 import media from '@adonis-agora/media/services/main'
 
-router.get('/media/:id', (ctx) => media.access.deliveryRoute()(ctx))
+// Build the handler once: routes load after boot, so `media` is ready here.
+const serveMedia = media.access.deliveryRoute()
+router.get('/media/:id', serveMedia)
 ```
 
 ## Who is asking: `access.identity`
@@ -126,10 +128,11 @@ delivery route until you give it one, or until the route is given an `authorize`
 ## The delivery route
 
 ```ts title="start/routes.ts"
-router.get('/media/:id', (ctx) => media.access.deliveryRoute()(ctx))
-router.get('/admin/media/:id', (ctx) =>
-  media.access.deliveryRoute({ authorize: authz.can('media.read.any') })(ctx),
-)
+const serveMedia = media.access.deliveryRoute()
+const serveAnyMedia = media.access.deliveryRoute({ authorize: authz.can('media.read.any') })
+
+router.get('/media/:id', serveMedia)
+router.get('/admin/media/:id', serveAnyMedia).use(middleware.auth())
 ```
 
 `deliveryRoute(options?)` returns an AdonisJS route handler that:

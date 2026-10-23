@@ -24,7 +24,7 @@ const importAuthz = async (): Promise<AuthzService> =>
  * gain that someone's permissions, nor lose their own.
  */
 function authzSubject(subject: MediaSubject): unknown {
-  if (subject.user !== undefined) return subject.user;
+  if (subject.user != null) return subject.user;
   return { type: subject.type ?? 'user', id: subject.realId ?? subject.id };
 }
 

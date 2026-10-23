@@ -90,12 +90,22 @@ export class MediaAccess {
     target: MediaRecord | { collection: string },
     authorize?: MediaAuthorizer,
   ): Promise<boolean> {
+    return (await this.#decide(ctx, action, target, authorize)).allowed;
+  }
+
+  /** Resolve the subject ONCE and run the rule — so a denial's 401/403 matches what the rule saw. */
+  async #decide(
+    ctx: unknown,
+    action: MediaAction,
+    target: MediaRecord | { collection: string },
+    authorize: MediaAuthorizer | undefined,
+  ): Promise<{ allowed: boolean; subject: MediaSubject | null }> {
     const collection = target.collection;
     const record = 'id' in target ? (target as MediaRecord) : undefined;
     const rule =
       authorize ?? toAuthorizer(this.#library.collections.get(collection).access?.[action]);
     const subject = await this.subject(ctx);
-    return rule({ ctx, action, collection, record, subject });
+    return { allowed: await rule({ ctx, action, collection, record, subject }), subject };
   }
 
   /**
@@ -113,13 +123,13 @@ export class MediaAccess {
     target: MediaRecord | { collection: string },
     authorize?: MediaAuthorizer,
   ): Promise<void> {
-    if (await this.can(ctx, action, target, authorize)) return;
-    const anonymous = (await this.subject(ctx)) === null;
+    const { allowed, subject } = await this.#decide(ctx, action, target, authorize);
+    if (allowed) return;
     throw new MediaAccessDeniedError(
       action,
       target.collection,
       'id' in target ? (target as MediaRecord).id : undefined,
-      anonymous,
+      subject === null,
     );
   }
 
@@ -145,7 +155,8 @@ export class MediaAccess {
    * hand-writing:
    *
    * ```ts
-   * router.get('/media/:id', media.access.deliveryRoute({ authorize: authorizers.owner() }))
+   * const serveMedia = media.access.deliveryRoute({ authorize: authorizers.owner() })
+   * router.get('/media/:id', serveMedia)
    * ```
    *
    * - authorizes the read (`authorize`, or the collection's `access.read`; neither ⇒ refused),
@@ -235,12 +246,19 @@ function httpStatusOf(error: unknown): number | undefined {
 }
 
 function stringParam(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  return Array.isArray(value) ? String(value[0]) : String(value);
+  const first = Array.isArray(value) ? value[0] : value;
+  if (first === undefined || first === null) return undefined;
+  return String(first);
 }
 
 /** `inline; filename="…"; filename*=UTF-8''…` — ASCII fallback plus the exact name (RFC 6266). */
 function inlineDisposition(fileName: string): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-  return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  // RFC 5987 `attr-char` excludes ' ( ) * — which encodeURIComponent leaves alone; `'` would
+  // even end the value early.
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
