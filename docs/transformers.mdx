@@ -219,6 +219,8 @@ Options: `size` (long edge of the preview, default `16`), `quality` (WebP qualit
 
 For a blurred image served as a **file** instead (a background, an `og:image` teaser), use a conversion preset with [`blur`](/docs/media/collections-and-conversions#what-the-fields-do).
 
+To render it, [`<MediaImage>`](/docs/media/react/image) from `@adonis-agora/media-react` paints the preview behind a `srcset`-ed `<img>` and drops it on load — `next/image`-style, from `media.library.image(id)`.
+
 ---
 
 ## Serving HLS

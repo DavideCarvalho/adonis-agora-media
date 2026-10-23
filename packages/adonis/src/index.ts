@@ -192,6 +192,7 @@ export {
   MAX_MEDIA_LIST_LIMIT,
 } from './media_store.js';
 export { isMultipartCapable } from './multipart.js';
+export type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
 export type {
   CreateUploadInput,
   ResumableUploadManagerOptions,

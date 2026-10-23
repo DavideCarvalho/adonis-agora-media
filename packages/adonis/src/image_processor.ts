@@ -19,6 +19,12 @@ export interface ConversionResult {
   /** Actual output format/extension (e.g. `webp`). */
   format: string;
   contentType: string;
+  /**
+   * Output dimensions in px, when the processor knows them. Persisted as the conversion's
+   * `meta.width`/`meta.height`, which is what lets {@link MediaLibrary.image} build a `srcset`.
+   */
+  width?: number;
+  height?: number;
 }
 
 /** Pluggable image transform engine (default impl: `@adonis-agora/media/processors/sharp`). */

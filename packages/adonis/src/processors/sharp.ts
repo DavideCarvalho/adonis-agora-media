@@ -32,7 +32,13 @@ export class SharpImageProcessor implements ImageProcessor {
     const format = preset.format ?? 'webp';
     pipeline = pipeline.toFormat(format, preset.quality ? { quality: preset.quality } : {});
 
-    const data = await pipeline.toBuffer();
-    return { data, format, contentType: CONTENT_TYPE[format] ?? 'application/octet-stream' };
+    const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
+    return {
+      data,
+      format,
+      contentType: CONTENT_TYPE[format] ?? 'application/octet-stream',
+      width: info.width,
+      height: info.height,
+    };
   }
 }

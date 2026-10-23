@@ -30,6 +30,11 @@ import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_col
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import { resolveDeclaredMimeType } from './mime_type.js';
+import {
+  imageCandidates,
+  type ResponsiveImage,
+  type ResponsiveImageOptions,
+} from './responsive_image.js';
 import type { StorageManager } from './storage_manager.js';
 import type {
   Transformer,
@@ -37,6 +42,7 @@ import type {
   TransformerWriteOptions,
   TransformResult,
 } from './transformer.js';
+import { placeholderOf } from './transformers/placeholder.js';
 import type { Disk, SignedUrlOptions } from './types.js';
 
 export interface MediaLibraryOptions {
@@ -547,7 +553,13 @@ export class MediaLibrary {
       ...record,
       conversions: {
         ...record.conversions,
-        [conversionName]: { path: conversionPath, disk: record.disk },
+        [conversionName]: {
+          path: conversionPath,
+          disk: record.disk,
+          ...(result.width && result.height
+            ? { meta: { width: result.width, height: result.height } }
+            : {}),
+        },
       },
       updatedAt: this.now(),
     });
@@ -821,6 +833,65 @@ export class MediaLibrary {
   async url(id: string, conversion?: string): Promise<string> {
     const target = await this.#resolveTarget(id, conversion);
     return this.storage.disk(target.disk).getUrl(target.path);
+  }
+
+  /**
+   * Everything an `<img>` needs to render a stored image like `next/image`: `srcSet` from the
+   * collection's presets, the intrinsic `width`/`height` and the blur-up `placeholder` — as plain
+   * JSON, for a page prop. Render it with `<MediaImage>` from `@adonis-agora/media-react`.
+   *
+   * ```ts
+   * // config: presets at a few widths (eager, so they exist from the attach on) + the placeholder
+   * { name: 'banner', conversions: [{ name: 'sm', width: 640, eager: true }, { name: 'lg', width: 1280, eager: true }],
+   *   transformers: [transformers.placeholder()] }
+   *
+   * return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+   * ```
+   *
+   * The intrinsic size and the original-as-candidate come from the placeholder, so without
+   * `transformers.placeholder()` the result has no `width`/`height` and only the presets in
+   * `srcSet`. Like {@link url}, this answers "how", not "who": authorize the caller first.
+   */
+  async image(id: string, options: ResponsiveImageOptions = {}): Promise<ResponsiveImage> {
+    let record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    const presets = this.collections.get(record.collection).conversions ?? [];
+
+    if (options.generate) {
+      for (const preset of presets) {
+        if (options.conversions && !options.conversions.includes(preset.name)) continue;
+        if (!preset.blur && !record.conversions[preset.name]) {
+          record = await this.ensureConversion(id, preset.name);
+        }
+      }
+    }
+
+    const urlOf = (conversion: string | undefined): string | Promise<string> => {
+      if (options.url) return options.url(conversion);
+      if (options.expiresIn !== undefined) {
+        return this.signedUrl(id, options.expiresIn, conversion ? { conversion } : {});
+      }
+      return this.url(id, conversion);
+    };
+
+    const candidates = imageCandidates(record, presets, options.conversions);
+    const urls = await Promise.all(candidates.map((c) => urlOf(c.conversion)));
+    const widest = urls.at(-1);
+    const placeholder = placeholderOf(record);
+
+    return {
+      src: widest ?? (await urlOf(undefined)),
+      ...(candidates.length > 0
+        ? { srcSet: candidates.map((c, i) => `${urls[i]} ${c.width}w`).join(', ') }
+        : {}),
+      ...(placeholder
+        ? {
+            width: placeholder.width,
+            height: placeholder.height,
+            placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
+          }
+        : {}),
+    };
   }
 
   /**
