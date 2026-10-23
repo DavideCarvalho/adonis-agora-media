@@ -107,6 +107,8 @@ import { MediaImage } from '@adonis-agora/media-react'
 | `priority` | Above the fold (the LCP image): `loading="eager"` and `fetchPriority="high"`. On React 19 the server also emits a `<link rel="preload">` for it. |
 | `fill` | Cover the positioned parent (`position: absolute; inset: 0`) instead of sizing from `width`/`height`. Set `objectFit` in `style`. |
 | `placeholder` | `'blur'` (default when there is a preview), `'color'` (dominant colour only) or `'empty'`. |
+| `layout` | `'constrained'` (up to its width), `'fullWidth'` or `'fixed'`. Sets the box style **and** the `sizes`, so you do not write one by hand. See [Layouts](#layouts). |
+| `focalPoint` | `{ x, y }` (mode 2/3; mode 1 gets it from the server) → `object-position`, so a CSS crop keeps that part. |
 | `width` / `height` | Override the intrinsic size attributes. |
 
 Every other `<img>` prop passes through, and so does a `ref`.
@@ -177,6 +179,53 @@ Which widths get requested follows `next/image`:
   A width the server does not allow answers 400. If you change `deviceSizes`/`imageSizes`, set
   `delivery.images.widths` to the same list.
 </Callout>
+
+## Layouts
+
+Writing `sizes` by hand is where everyone goes wrong. `layout` (from Unpic/Gatsby) derives it, along
+with the box style, from the image's width:
+
+| `layout` | Box | `sizes` |
+|---|---|---|
+| `constrained` | `width: 100%; max-width: <width>px` | `(min-width: <width>px) <width>px, 100vw` |
+| `fullWidth` | `width: 100%` | `100vw` |
+| `fixed` | `<width>px × <height>px` | `<width>px`, or 1x/2x with a loader |
+
+An explicit `sizes` always wins. A **lazy** image gets `auto, ` in front: browsers that support
+`sizes="auto"` pick the candidate from the size the image is actually laid out at, and older ones read
+the rest of the list. A lazy image with neither a layout nor `sizes` gets `auto, 100vw`.
+
+## Art direction: `<MediaPicture>`
+
+Another crop on some screens, say a square banner on phones and the wide one on desktop:
+
+```ts
+// server: the square presets as their own group
+const banner = await media.library.image(id)
+const bannerSquare = await media.library.image(id, { conversions: ['square-sm', 'square-lg'] })
+```
+
+```tsx
+<MediaPicture
+  image={banner}
+  sources={[{ media: '(max-width: 640px)', image: bannerSquare }]}
+  alt={course.title}
+  sizes="100vw"
+/>
+```
+
+- **The group is its own reference.** When `conversions` is listed explicitly, `image()` compares the candidates against that group's aspect ratio, not the original's: the squares form their own `srcset`, with their own `width`/`height`, without the landscape original.
+- **Each source has its own size.** Every `<source>` carries its `width`/`height`, so the browser reserves the right box for whichever crop it picks.
+- **The fallback is a `<MediaImage>`**, with everything above: blur-up, lazy loading, `priority`, `layout` and focal point.
+- **`type` sources** (`{ type: 'image/avif', image }`) offer another format.
+
+## Private images
+
+With [`delivery.signing`](/docs/media/delivery#signed-urls), every URL `image()` returns goes
+through your delivery route, signed and expiring. Nothing points at the storage, and the `<img>`
+carries its own authorization. `image(id, { onDemand: true })` builds the `srcSet` from signed
+on-demand sizes instead of presets. The browser `loader` can't sign (the secret stays on the
+server), so private images use mode 1.
 
 ## How the preview works
 

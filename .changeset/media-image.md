@@ -3,10 +3,25 @@
 '@adonis-agora/media-react': minor
 ---
 
-`next/image` for stored images. `<MediaImage>` in `@adonis-agora/media-react` renders one `<img>`. It loads lazily by default, `priority` marks the LCP image, and `fill` sizes it to the parent box. A blurred preview is painted behind it until it loads; this works with SSR, survives hydration, and stays in place if the image fails. Three ways to feed it:
+`next/image` for stored images, and the features of other image libraries (Nuxt Image/IPX, Astro, Unpic, spatie, imgproxy) that were worth having.
 
-- `image={await media.library.image(id)}`: the server builds `src`, a `srcSet` from the collection's presets, the intrinsic size and the placeholder, as plain JSON. Only presets that are the same picture at another size are offered: `blur` presets and width×height presets that crop or pad to another aspect ratio are left out.
-- `src="/a.jpg"`: a plain URL, with your own `srcSet`, `blurDataURL` and `placeholderColor`.
-- `src={mediaId} loader={mediaImageLoader()}`: the component builds the `srcSet` with `next/image`'s algorithm and widths. The server resizes each width on demand: `MediaDeliveryHandler.handle({ width, quality })` (the route's `?w=`/`?q=`) resizes once and caches the result as a conversion, never enlarges, and only serves the widths and qualities whitelisted in `delivery.images` (by default the same values as `next/image`). It throws `ImageSizeNotAllowedError` / `NotAnImageError` otherwise.
+**Rendering (`@adonis-agora/media-react`)**
+- `<MediaImage>` renders one `<img>`. It loads lazily by default, `priority` marks the LCP image (React 19 also preloads it), and `fill` sizes it to the parent box. A blurred preview is painted behind it until it loads; this works with SSR, survives hydration, and stays in place if the image fails. Three ways to feed it:
+  - `image={await media.library.image(id)}`: a descriptor built on the server.
+  - `src="/a.jpg"`: a plain URL, with your own `srcSet`, `blurDataURL` and `placeholderColor`.
+  - `src={mediaId} loader={mediaImageLoader()}`: a loader, with `next/image`'s algorithm and widths.
+- `layout` (`constrained` / `fullWidth` / `fixed`) derives the box style and `sizes`. A lazy image gets `sizes="auto, …"`.
+- `focalPoint` becomes `object-position`.
+- `<MediaPicture>` does art direction with `<source>`s, each with its own size.
+- `placeholderStyle()` paints the preview on other components.
 
-`placeholderStyle()` paints the preview on components that own their `<img>`. Generated image conversions now record their output size in `conversions[name].meta`. Conversion presets accept `withoutEnlargement`.
+**Server (`@adonis-agora/media`)**
+- `media.library.image(id)` returns `src`, a `srcSet` of same-picture presets, the intrinsic size, the placeholder and the focal point. An explicit `conversions` list forms its own art-directed group, and `onDemand` switches to resize URLs.
+- On-demand resize through `MediaDeliveryHandler` (`?w=`/`?q=`): each size is resized once and cached as a conversion, never enlarged, and limited to the `delivery.images` whitelist. The format (AVIF/WebP) is negotiated from `Accept`, and the result carries `vary: 'Accept'`.
+- Signed delivery URLs (`delivery.signing`, `media.library.deliveryUrl()`): an HMAC over the record, the conversion, the size and the expiry. Expiries are rounded so URLs stay cacheable. Unsigned requests are refused by default. With signing configured, `image()` only hands out signed route URLs.
+- Focal points (`media.library.setFocalPoint()`) and preset `position` (`'attention'`/`'entropy'`) for content-aware crops.
+- `responsive: true` collections: presets at standard widths (skipping those wider than the original) and the placeholder, from one flag.
+- `stripMetadata: true` collections: the original is rewritten without EXIF/GPS/XMP/IPTC, with the orientation baked in and the colour profile kept.
+- Generated image conversions record their output size in `meta`. Presets gain `withoutEnlargement`, `onlyDownscale` and `position`. `ImageProcessor` gains optional `dimensions()`/`stripMetadata()` and a `focalPoint` convert option.
+- Fixes: animated GIF/WebP keep their frames when converted to WebP. Concurrent conversions of one record no longer drop each other.
+- New errors: `ImageSizeNotAllowedError`, `NotAnImageError`, `DeliverySignatureError`.
