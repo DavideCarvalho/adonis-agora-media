@@ -15,9 +15,13 @@ const CONTENT_TYPE: Record<string, string> = {
  */
 export class SharpImageProcessor implements ImageProcessor {
   async convert(input: Buffer, preset: ConversionPreset): Promise<ConversionResult> {
+    const format = preset.format ?? 'webp';
+    // An animated GIF/WebP keeps every frame — but only into a format that can hold them (WebP):
+    // read animated into JPEG/PNG/AVIF and sharp stacks the frames into one tall image instead.
+    const animated = format === 'webp';
     // `rotate()` with no angle applies the EXIF orientation — without it a portrait phone photo
     // comes out sideways, since the output drops the EXIF tag that made it display upright.
-    let pipeline = sharp(input).rotate();
+    let pipeline = sharp(input, { animated }).rotate();
 
     if (preset.width || preset.height) {
       pipeline = pipeline.resize({
@@ -30,7 +34,6 @@ export class SharpImageProcessor implements ImageProcessor {
 
     if (preset.blur) pipeline = pipeline.blur(preset.blur);
 
-    const format = preset.format ?? 'webp';
     pipeline = pipeline.toFormat(format, preset.quality ? { quality: preset.quality } : {});
 
     const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
@@ -39,7 +42,8 @@ export class SharpImageProcessor implements ImageProcessor {
       format,
       contentType: CONTENT_TYPE[format] ?? 'application/octet-stream',
       width: info.width,
-      height: info.height,
+      // An animated output reports the whole frame strip as `height`; one frame is `pageHeight`.
+      height: (info as { pageHeight?: number }).pageHeight ?? info.height,
     };
   }
 }
