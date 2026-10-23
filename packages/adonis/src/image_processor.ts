@@ -1,3 +1,32 @@
+/**
+ * The part of an image that must survive a crop, as fractions of the displayed image (EXIF
+ * orientation applied): `{ x: 0, y: 0 }` is the top-left corner, `{ x: 0.5, y: 0.5 }` the centre.
+ * Stored per record in `customProperties.focalPoint` (`media.library.setFocalPoint()`).
+ */
+export interface FocalPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Where a cropping preset keeps the image: a gravity (`'top'`, `'left bottom'`, …), or a content
+ * strategy — `'attention'` keeps the most salient region (skin tones, saturation, luminance),
+ * `'entropy'` the most detailed one. A record's focal point, when set, wins over all of these.
+ */
+export type CropPosition =
+  | 'centre'
+  | 'center'
+  | 'top'
+  | 'right top'
+  | 'right'
+  | 'right bottom'
+  | 'bottom'
+  | 'left bottom'
+  | 'left'
+  | 'left top'
+  | 'attention'
+  | 'entropy';
+
 export interface ConversionPreset {
   name: string;
   width?: number;
@@ -12,6 +41,11 @@ export interface ConversionPreset {
   blur?: number;
   /** Never enlarge: an original narrower than `width` keeps its own size. */
   withoutEnlargement?: boolean;
+  /**
+   * What a crop (`fit: 'cover'` with `width` and `height`) keeps. Default `'centre'`. A record's
+   * focal point overrides it.
+   */
+  position?: CropPosition;
   /** Generate eagerly on attach instead of lazily on first access. */
   eager?: boolean;
 }
@@ -29,7 +63,32 @@ export interface ConversionResult {
   height?: number;
 }
 
+/** Per-record context for a conversion. */
+export interface ConvertOptions {
+  /** The record's focal point: a crop keeps it as close to the centre as the image allows. */
+  focalPoint?: FocalPoint | undefined;
+}
+
 /** Pluggable image transform engine (default impl: `@adonis-agora/media/processors/sharp`). */
 export interface ImageProcessor {
-  convert(input: Buffer, preset: ConversionPreset): Promise<ConversionResult>;
+  convert(
+    input: Buffer,
+    preset: ConversionPreset,
+    options?: ConvertOptions,
+  ): Promise<ConversionResult>;
+}
+
+/** Does this preset crop (and so care about a focal point / position)? */
+export function presetCrops(preset: ConversionPreset): boolean {
+  return Boolean(preset.width && preset.height && (preset.fit ?? 'cover') === 'cover');
+}
+
+/** The record's focal point, if `customProperties.focalPoint` holds a valid one. */
+export function focalPointOf(customProperties: Record<string, unknown>): FocalPoint | undefined {
+  const point = customProperties.focalPoint as { x?: unknown; y?: unknown } | undefined;
+  if (!point || typeof point !== 'object') return undefined;
+  const { x, y } = point;
+  if (typeof x !== 'number' || typeof y !== 'number') return undefined;
+  if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return undefined;
+  return { x, y };
 }

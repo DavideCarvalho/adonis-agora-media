@@ -174,7 +174,14 @@ export {
   resolvePackagePath,
   rewriteHlsPlaylist,
 } from './hls/playlist.js';
-export type { ConversionPreset, ConversionResult, ImageProcessor } from './image_processor.js';
+export type {
+  ConversionPreset,
+  ConversionResult,
+  ConvertOptions,
+  CropPosition,
+  FocalPoint,
+  ImageProcessor,
+} from './image_processor.js';
 export type { MediaCollectionConfig } from './media_collection.js';
 export { MediaCollectionRegistry } from './media_collection.js';
 export type {

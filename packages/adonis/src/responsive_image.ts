@@ -19,6 +19,11 @@ export interface ResponsiveImage {
   height?: number;
   /** Blur-up preview, when the collection declares `transformers.placeholder()`. */
   placeholder?: { dataUrl: string; color: string };
+  /**
+   * The record's focal point (`setFocalPoint()`), for CSS crops: `<MediaImage>` turns it into
+   * `object-position`, so `object-fit: cover` keeps the same part the server's crops keep.
+   */
+  focalPoint?: { x: number; y: number };
 }
 
 export interface ResponsiveImageOptions {

@@ -23,6 +23,8 @@ export interface MediaImageData {
   height?: number;
   /** Blur-up preview: a tiny WebP `data:` URL and the dominant colour. */
   placeholder?: { dataUrl: string; color: string };
+  /** The record's focal point (fractions, top-left origin): becomes `object-position`. */
+  focalPoint?: { x: number; y: number };
 }
 
 /** The blur-up preview alone — the `placeholder` of {@link MediaImageData}. */
@@ -113,6 +115,8 @@ export interface MediaImageFromSrcProps extends MediaImageCommonProps {
   blurDataURL?: string;
   /** Flat colour under the preview, or alone with `placeholder="color"`. */
   placeholderColor?: string;
+  /** The part to keep when CSS crops the image (`object-fit: cover`): becomes `object-position`. */
+  focalPoint?: { x: number; y: number };
   /** Widths for full-width images; must be allowed by the server (`delivery.images.widths`). */
   deviceSizes?: readonly number[];
   /** Widths for smaller images; same caveat. */
@@ -169,6 +173,7 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       quality,
       blurDataURL,
       placeholderColor,
+      focalPoint,
       deviceSizes,
       imageSizes,
       alt,
@@ -233,6 +238,10 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       ((mode === 'blur' && preview?.dataUrl !== undefined) ||
         (mode === 'color' && preview?.color !== undefined));
     const objectFit = style?.objectFit;
+    const focus = focalPoint ?? image?.focalPoint;
+    const objectPosition =
+      style?.objectPosition ??
+      (focus ? `${round(focus.x * 100)}% ${round(focus.y * 100)}%` : undefined);
 
     return (
       <img
@@ -258,10 +267,11 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
             ? mode === 'blur'
               ? placeholderStyle(
                   { dataUrl: preview!.dataUrl!, color: preview!.color },
-                  { objectFit, width: resolved.width, height: resolved.height },
+                  { objectFit, objectPosition, width: resolved.width, height: resolved.height },
                 )
               : { backgroundColor: preview!.color }
             : {}),
+          ...(objectPosition !== undefined ? { objectPosition } : {}),
           // While the preview shows, the alt text would print over it in some browsers.
           ...(showPlaceholder ? { color: 'transparent' } : {}),
           ...style,
@@ -387,6 +397,10 @@ export function mediaImageLoader(
   };
 }
 
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 /** The `sizes` a layout implies at a given display width (`undefined` when it cannot tell). */
 function layoutSizes(
   layout: MediaImageCommonProps['layout'],
@@ -442,6 +456,8 @@ export function placeholderStyle(
   placeholder: { dataUrl: string; color?: string | undefined },
   options: {
     objectFit?: CSSProperties['objectFit'] | undefined;
+    /** Mirrors the image's `object-position` (a focal point), so the preview crops the same way. */
+    objectPosition?: CSSProperties['objectPosition'] | undefined;
     width?: number | undefined;
     height?: number | undefined;
   } = {},
@@ -451,7 +467,7 @@ export function placeholderStyle(
     backgroundColor: placeholder.color,
     backgroundImage: `url("data:image/svg+xml;charset=utf-8,${blurSvg(placeholder.dataUrl, options.width, options.height, fit)}")`,
     backgroundSize: fit === 'contain' ? 'contain' : fit === 'fill' ? '100% 100%' : 'cover',
-    backgroundPosition: '50% 50%',
+    backgroundPosition: options.objectPosition ?? '50% 50%',
     backgroundRepeat: 'no-repeat',
   };
 }

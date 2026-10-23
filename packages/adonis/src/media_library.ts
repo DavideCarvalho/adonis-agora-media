@@ -39,7 +39,13 @@ import {
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
 import { sanitizeFileName } from './file_name.js';
-import type { ConversionPreset, ImageProcessor } from './image_processor.js';
+import {
+  type ConversionPreset,
+  type FocalPoint,
+  focalPointOf,
+  type ImageProcessor,
+  presetCrops,
+} from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
@@ -592,7 +598,12 @@ export class MediaLibrary {
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
 
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
-    const result = await this.imageProcessor.convert(original, preset);
+    const focalPoint = focalPointOf(record.customProperties);
+    const result = await this.imageProcessor.convert(
+      original,
+      preset,
+      focalPoint ? { focalPoint } : {},
+    );
     const dir = record.path.slice(0, record.path.lastIndexOf('/'));
     const conversionPath = `${dir}/conversions/${preset.name}.${result.format}`;
     await this.storage.disk(record.disk).put(conversionPath, result.data, {
@@ -616,6 +627,50 @@ export class MediaLibrary {
       updatedAt: this.now(),
     });
     this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
+    return updated;
+  }
+
+  /**
+   * Set (or clear, with `null`) the part of the image every crop must keep — a face in an avatar,
+   * the subject of a banner. Stored as `customProperties.focalPoint` (`{ x, y }`, fractions of the
+   * displayed image), handed to the processor for every cropping preset (`fit: 'cover'` with both
+   * sides), and returned by {@link image} so CSS crops (`object-fit: cover`) keep it too.
+   *
+   * The cropping conversions already generated are dropped — the eager ones regenerated at once,
+   * the lazy ones on next access — since they were cut around the old point.
+   *
+   * ```ts
+   * await media.library.setFocalPoint(user.avatarMediaId, { x: 0.42, y: 0.31 })
+   * ```
+   */
+  async setFocalPoint(id: string, point: FocalPoint | null): Promise<MediaRecord> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (point !== null && !focalPointOf({ focalPoint: point })) {
+      throw new RangeError(
+        `Focal point must be { x, y } with both between 0 and 1, got ${JSON.stringify(point)}.`,
+      );
+    }
+
+    const { focalPoint: _previous, ...rest } = record.customProperties;
+    const presets = this.collections.get(record.collection).conversions ?? [];
+    const cropping = presets.filter((preset) => presetCrops(preset));
+    const conversions = { ...record.conversions };
+    for (const preset of cropping) {
+      const stale = conversions[preset.name];
+      if (stale?.path && stale.disk) await this.storage.disk(stale.disk).delete(stale.path);
+      delete conversions[preset.name];
+    }
+
+    let updated = await this.store.save({
+      ...record,
+      customProperties: point ? { ...rest, focalPoint: { x: point.x, y: point.y } } : rest,
+      conversions,
+      updatedAt: this.now(),
+    });
+    for (const preset of cropping) {
+      if (preset.eager) updated = await this.#generateConversion(updated, preset);
+    }
     return updated;
   }
 
@@ -996,6 +1051,7 @@ export class MediaLibrary {
             placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
           }
         : {}),
+      ...focalPointProp(record),
     };
   }
 
@@ -1006,13 +1062,16 @@ export class MediaLibrary {
   ): ResponsiveImage {
     const settings = onDemand === true ? {} : onDemand;
     const placeholder = placeholderOf(record);
-    const extra = placeholder
-      ? {
-          width: placeholder.width,
-          height: placeholder.height,
-          placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
-        }
-      : {};
+    const extra = {
+      ...(placeholder
+        ? {
+            width: placeholder.width,
+            height: placeholder.height,
+            placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
+          }
+        : {}),
+      ...focalPointProp(record),
+    };
     const original = this.deliveryUrl(record.id);
     // Not resizable (an SVG scales itself; a non-image has no widths): the route serves it as is.
     if (!record.mimeType.startsWith('image/') || record.mimeType.startsWith('image/svg')) {
@@ -1253,4 +1312,9 @@ function negotiateFormat(
   const modern = formats.find((format) => accepted.includes(`image/${format}`));
   if (modern) return modern;
   return originalMimeType === 'image/png' || originalMimeType === 'image/gif' ? 'png' : 'jpeg';
+}
+
+function focalPointProp(record: MediaRecord): { focalPoint?: FocalPoint } {
+  const focalPoint = focalPointOf(record.customProperties);
+  return focalPoint ? { focalPoint } : {};
 }

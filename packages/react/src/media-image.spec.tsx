@@ -301,6 +301,33 @@ describe('<MediaImage layout> and sizes', () => {
   });
 });
 
+describe('<MediaImage> focal point', () => {
+  it('turns the focal point into object-position, for the image and its preview', () => {
+    render(
+      <MediaImage
+        image={{ ...image, focalPoint: { x: 0.25, y: 0.333 } }}
+        alt=""
+        fill
+        style={{ objectFit: 'cover' }}
+      />,
+    );
+    expect(img().style.objectPosition).toBe('25% 33.3%');
+    expect(img().style.backgroundPosition).toBe('25% 33.3%');
+  });
+
+  it('works on a plain src too, and an explicit objectPosition wins', () => {
+    render(
+      <MediaImage
+        src="/a.jpg"
+        focalPoint={{ x: 1, y: 0 }}
+        alt=""
+        style={{ objectPosition: 'center' }}
+      />,
+    );
+    expect(img().style.objectPosition).toBe('center');
+  });
+});
+
 describe('mediaImageLoader / loaderWidths', () => {
   it('maps src through `path`, keeping an existing query string, and encodes the default path', () => {
     expect(mediaImageLoader()({ src: 'a b', width: 640 })).toBe('/media/a%20b?w=640');
