@@ -122,6 +122,14 @@ export interface MediaDeliveryHandlerOptions {
   mode?: DeliveryMode | undefined;
   /** Signed-URL lifetime when the resolved mode is `signed`. */
   signedTtlSeconds?: number | undefined;
+  /**
+   * Whether this route refuses unsigned requests, when `delivery.signing` is configured. Default:
+   * `delivery.signing.required`. Set `false` on a route that authorizes by itself (a session,
+   * an ownership check) so it keeps serving its own requests, while still honouring a signed one
+   * (any size it names). One app can then sign `<img>` URLs on one route and guard downloads
+   * by session on another.
+   */
+  requireSignature?: boolean | undefined;
 }
 
 /**
@@ -150,18 +158,23 @@ export class MediaDeliveryHandler {
   private readonly library: MediaLibrary;
   private readonly mode: DeliveryMode | undefined;
   private readonly signedTtlSeconds: number | undefined;
+  private readonly requireSignature: boolean | undefined;
 
   constructor(options: MediaDeliveryHandlerOptions) {
     const source = options.library;
     this.library = 'library' in source ? source.library : source;
     this.mode = options.mode;
     this.signedTtlSeconds = options.signedTtlSeconds;
+    this.requireSignature = options.requireSignature;
   }
 
   async handle(request: DeliveryRequest): Promise<DeliveryResult> {
     // With `delivery.signing`, a signed request is authorized by its signature (any size the app
     // signed); an unsigned one is refused when signing is required. Throws DeliverySignatureError.
-    const trusted = this.library.checkDeliverySignature(request);
+    const trusted = this.library.checkDeliverySignature(
+      request,
+      this.requireSignature !== undefined ? { required: this.requireSignature } : {},
+    );
     return this.library.deliver(request.mediaId, {
       ...(trusted ? { trusted: true } : {}),
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
