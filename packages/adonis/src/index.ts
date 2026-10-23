@@ -3,6 +3,17 @@
 // `node ace configure` reaches the hook through this entry point, not through the package's
 // `./configure` export path.
 export { configure } from '../configure.js';
+// Authorization: identity + rules applied by `media.access` (authkit/authz bridges live in the
+// `./authkit` and `./authz` subpaths, so neither is a dependency of the core).
+export type {
+  MediaAccessRequest,
+  MediaAction,
+  MediaAuthorizer,
+  MediaCollectionAccess,
+  MediaIdentityResolver,
+  MediaSubject,
+} from './access.js';
+export { adonisAuthIdentity, authorizers } from './access.js';
 export type {
   AttachmentData,
   AttachmentManagerOptions,
@@ -31,6 +42,7 @@ export type {
   InferTransformers,
   LucidStoreConfig,
   LucidUploadSessionStoreConfig,
+  MediaAccessConfig,
   MediaConfig,
   MediaDeliveryConfig,
   MediaDirectUploadConfig,
@@ -129,6 +141,7 @@ export {
   HlsSourceUnsupportedError,
   ImageProcessorMissingError,
   ImageSizeNotAllowedError,
+  MediaAccessDeniedError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
@@ -182,6 +195,8 @@ export type {
   FocalPoint,
   ImageProcessor,
 } from './image_processor.js';
+export type { DeliveryRouteContext, MediaDeliveryRouteOptions } from './media_access.js';
+export { MediaAccess } from './media_access.js';
 export type { MediaCollectionConfig } from './media_collection.js';
 export { MediaCollectionRegistry } from './media_collection.js';
 export type {
