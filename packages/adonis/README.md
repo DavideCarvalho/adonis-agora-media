@@ -224,6 +224,33 @@ More on the image side:
 - **Signed URLs:** with `delivery.signing`, `media.library.deliveryUrl()` and `image()` hand out signed, expiring URLs, and the route serves nothing else.
 - **`stripMetadata: true`:** removes GPS, camera and timestamps from uploaded originals.
 
+## Authorization (`media.access`)
+
+The library still never decides who may see a file, but it applies your rules for you. You
+declare who may read and upload per collection, tell it who the current user is (authkit,
+`@adonisjs/auth` or your own), and mount the ready delivery route:
+
+```ts
+import { authorizers } from '@adonis-agora/media'
+import { authkitIdentity } from '@adonis-agora/media/authkit'
+import { authz } from '@adonis-agora/media/authz'
+
+defineConfig({
+  access: { identity: authkitIdentity() },
+  collections: [
+    { name: 'avatar', access: { read: authorizers.owner(), write: authorizers.authenticated() } },
+    { name: 'reports', access: { read: authz.can('reports.read') } },
+  ],
+})
+
+const serveMedia = media.access.deliveryRoute()          // build once, at route definition
+router.get('/media/:id', serveMedia)                      // 401/403/404/400 handled
+const banner = await media.access.image(ctx, id)                       // authorized descriptor
+```
+
+`@adonis-agora/media/authkit` and `@adonis-agora/media/authz` load their packages only when used.
+Both are optional peers.
+
 ## Uploads, S3 and delivery
 
 Large-file uploads ship in three flavours — **proxy** (bytes stream through your app), **direct-S3

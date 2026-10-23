@@ -1,7 +1,7 @@
 {
   "name": "@adonis-agora/media",
   "version": "0.22.1",
-  "description": "Media-library for AdonisJS — owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe, image blur-up placeholder), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
+  "description": "Media-library for AdonisJS \u2014 owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe, image blur-up placeholder), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -110,6 +110,16 @@
       "types": "./dist/src/telescope/index.d.ts",
       "import": "./dist/src/telescope/index.js",
       "default": "./dist/src/telescope/index.js"
+    },
+    "./authkit": {
+      "types": "./dist/src/integrations/authkit.d.ts",
+      "import": "./dist/src/integrations/authkit.js",
+      "default": "./dist/src/integrations/authkit.js"
+    },
+    "./authz": {
+      "types": "./dist/src/integrations/authz.d.ts",
+      "import": "./dist/src/integrations/authz.js",
+      "default": "./dist/src/integrations/authz.js"
     }
   },
   "files": [
@@ -128,6 +138,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
+    "@adonis-agora/authkit-client": ">=0.18.0 <1.0.0",
+    "@adonis-agora/authkit-server": ">=0.60.0 <1.0.0",
+    "@adonis-agora/authz": ">=0.16.0 <1.0.0",
     "@adonis-agora/telescope": ">=0.4.0 <1.0.0",
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0 || ^4.0.0",
@@ -137,16 +150,25 @@
     "sharp": ">=0.33.0 <1.0.0"
   },
   "peerDependenciesMeta": {
-    "@adonis-agora/telescope": {
+    "@adonis-agora/authkit-client": {
       "optional": true
     },
-    "mediabunny": {
+    "@adonis-agora/authkit-server": {
+      "optional": true
+    },
+    "@adonis-agora/authz": {
+      "optional": true
+    },
+    "@adonis-agora/telescope": {
       "optional": true
     },
     "@adonisjs/lucid": {
       "optional": true
     },
     "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "mediabunny": {
       "optional": true
     },
     "sharp": {

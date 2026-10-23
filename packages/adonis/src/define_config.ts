@@ -1,3 +1,4 @@
+import type { MediaIdentityResolver } from './access.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
 import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
@@ -238,6 +239,15 @@ export interface MediaDeliveryConfig {
  * })
  * ```
  */
+/** Media authorization (`media.access`). */
+export interface MediaAccessConfig {
+  /**
+   * Who the current user is. Default: AdonisJS auth's `ctx.auth.user`. Apps on authkit use
+   * `authkitIdentity()` from `@adonis-agora/media/authkit`.
+   */
+  identity?: MediaIdentityResolver;
+}
+
 export interface MediaConfig {
   /**
    * Name of the disk media is written to. Resolved first from the {@link disks} map (e.g. an
@@ -272,6 +282,11 @@ export interface MediaConfig {
   uploads?: MediaUploadsConfig;
   /** How stored media is served back (`auto`/`public`/`signed`/`proxy` + signed-URL TTL). */
   delivery?: MediaDeliveryConfig;
+  /**
+   * Authorization: who the current user is (`identity`). The rules themselves live on each
+   * collection (`collections[].access`) or are passed to `media.access.deliveryRoute()`.
+   */
+  access?: MediaAccessConfig;
 }
 
 /**

@@ -98,6 +98,7 @@ For the full walkthrough — including the optional `for(owner)` binding and col
 - **`next/image` for stored images.** `media.library.image(id)` gives an `<img>` everything it needs: a `srcset`, the intrinsic size and a blur-up preview. `<MediaImage>` / `<MediaPicture>` from `@adonis-agora/media-react` render it with lazy loading, `priority`, layouts that compute `sizes`, and art direction. `responsive: true` sets a collection up in one flag.
 - **On-demand resizing and signed URLs.** Your delivery route serves `?w=640` resized once and cached, as WebP (or AVIF, when you opt in) depending on `Accept`. With `delivery.signing`, it serves only URLs your app signed, until they expire. No public URLs.
 - **Privacy.** `stripMetadata: true` removes the GPS position, the camera and the timestamps from uploaded photos.
+- **Authorization that plugs into your auth.** Per-collection `access` rules (owner, roles, authz permissions), the current user from authkit or `@adonisjs/auth`, and a ready-made delivery route that applies them: `media.access.deliveryRoute()`.
 - **Two attachment shapes over one storage layer.** The owner-collection `MediaLibrary` *and* the column `AttachmentManager`, sharing the same disks and image processor.
 - **Reuse your Drive disks.** `local`, `s3`, `gcs` — whatever you configured in `config/drive.ts`. The default disk, a per-collection disk, and a per-`attach` disk override all compose.
 - **Pluggable persistence.** An in-memory store for tests and a portable Lucid store with a published migration; bring your own `MediaStore` by implementing one interface.
@@ -117,6 +118,7 @@ For the full walkthrough — including the optional `for(owner)` binding and col
   <Card title="Direct upload policy" href="/docs/media/uploads/direct-upload-policy" description="The app-injected seam deciding an upload's key, what a completed upload becomes, and how failures read as HTTP." />
   <Card title="S3 disk" href="/docs/media/storage/s3-disk" description="The bundled disks.s3() driver — extended operations, native multipart, presigned URLs." />
   <Card title="Responsive images" href="/docs/media/react/image" description="MediaImage / MediaPicture — next/image for stored images: srcset, blur-up, lazy loading, layouts, art direction." />
+  <Card title="Authorization" href="/docs/media/access" description="media.access — a ready delivery route, per-collection read/write rules, and bridges to authkit and authz." />
   <Card title="Delivery" href="/docs/media/delivery" description="Serving media back — public, signed or proxied; on-demand resizing with AVIF/WebP negotiation; signed URLs." />
   <Card title="React client" href="/docs/media/react" description="@adonis-agora/media-react — useMediaUpload, MediaUploader, MediaImage, and a framework-free upload client." />
   <Card title="Dashboard" href="/docs/media/dashboard" description="Embedded management console — browse buckets, watch uploads, copy/move/delete objects. No separate install." />

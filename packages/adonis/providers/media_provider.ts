@@ -147,6 +147,9 @@ export default class MediaProvider {
           ? { deliverySigning: config.delivery.signing }
           : {}),
         ...(config.delivery?.path !== undefined ? { deliveryPath: config.delivery.path } : {}),
+        ...(config.access?.identity !== undefined
+          ? { accessIdentity: config.access.identity }
+          : {}),
       });
     });
   }

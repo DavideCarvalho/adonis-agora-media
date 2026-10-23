@@ -1,0 +1,174 @@
+---
+title: Authorization
+description: "media.access — who may read and upload media: a ready delivery route, per-collection rules, authorized image(), and bridges to @adonis-agora/authkit and @adonis-agora/authz."
+icon: ShieldCheck
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The library never decides on its own who may see a file: serving a record is a decision only the
+app can make. What it does provide is the plumbing that applies the app's decision, so every app
+stops hand-writing the same delivery route. That plumbing knows who the current user is, evaluates
+the app's rules, and answers with the right HTTP status.
+
+```ts title="config/media.ts"
+import { authorizers, defineConfig } from '@adonis-agora/media'
+import { authkitIdentity } from '@adonis-agora/media/authkit'
+import { authz } from '@adonis-agora/media/authz'
+
+export default defineConfig({
+  access: { identity: authkitIdentity() },
+  collections: [
+    { name: 'avatar', access: { read: authorizers.owner(), write: authorizers.authenticated() } },
+    { name: 'course_banner', access: { read: 'public' } },
+    {
+      name: 'prescription',
+      access: { read: authorizers.any(authorizers.owner(), authz.can('prescriptions.read')) },
+    },
+  ],
+})
+```
+
+```ts title="start/routes.ts"
+import media from '@adonis-agora/media/services/main'
+
+// Build the handler once: routes load after boot, so `media` is ready here.
+const serveMedia = media.access.deliveryRoute()
+router.get('/media/:id', serveMedia)
+```
+
+## Who is asking: `access.identity`
+
+A `MediaIdentityResolver` turns the request into a `MediaSubject`, or `null` when nobody is signed in:
+
+```ts
+interface MediaSubject {
+  id: string            // the account the request acts as — what ownership compares
+  type?: string         // subject type for authz ({ type, id }); default 'user'
+  realId?: string       // the human behind it — what permission checks use (impersonation)
+  roles?: string[]      // global roles the identity carries
+  tenantId?: string | null
+  user?: unknown        // the app's own user object, when the resolver has it
+}
+```
+
+| Resolver | For |
+|---|---|
+| `adonisAuthIdentity` (default) | `@adonisjs/auth`: `ctx.auth.user.id`. |
+| `authkitIdentity()` from `@adonis-agora/media/authkit` | Apps on [authkit](/docs/authkit). |
+| your own function | Anything else: `(ctx) => ({ id: ... })`. |
+
+### authkit
+
+```ts
+import { authkitIdentity } from '@adonis-agora/media/authkit'
+defineConfig({ access: { identity: authkitIdentity() } })
+```
+
+- **The identity provider app** (`@adonis-agora/authkit-server`):
+  - `id` is the account the request acts as (`getAccountId`). Under an admin's impersonation, that is the impersonated account, so ownership rules show the admin what the user sees.
+  - `realId` is the human behind it (`realAccountId`), which is what permission checks are made for.
+- **An app that signs in against one** (`@adonis-agora/authkit-client`):
+  - `id` is the token's `sub`;
+  - `roles` are its global roles;
+  - `tenantId` is its active organization.
+- **Picking the side:** `side: 'auto'` (the default) uses the client when the request carries `ctx.authkit`, the server when its package is installed, and the client otherwise. Pin it with `side: 'server' | 'client'`.
+
+Both authkit packages are **optional peers**. `@adonis-agora/media/authkit` imports them only when
+a request is resolved.
+
+## The rules: `authorizers`
+
+A rule is a function of `{ ctx, action, collection, record?, subject }` returning a boolean. The
+built-ins:
+
+| Rule | Allows |
+|---|---|
+| `authorizers.public()` | Everyone. (`'public'` is the shorthand in a collection's `access`.) |
+| `authorizers.authenticated()` | Any signed-in user. |
+| `authorizers.owner({ ownerTypes? })` | The record's owner: `record.ownerId === subject.id`, optionally only for these owner types. A write has no record, so it never allows one. |
+| `authorizers.roles([...])` | The identity carries one of these roles (e.g. an authkit token's). |
+| `authorizers.any(...)` / `authorizers.all(...)` | Combinations, evaluated in order and stopping at the first decisive answer. |
+
+### authz
+
+`@adonis-agora/media/authz` asks [authz](/docs/authz) (an optional peer):
+
+```ts
+import { authz } from '@adonis-agora/media/authz'
+
+authz.can('prescriptions.read')                                          // a permission
+authz.can(({ collection, action }) => `media.${collection}.${action}`)   // derived per request
+authz.roles(['admin', 'support'])                                        // hasAnyRole
+authz.can('reports.read', { scope: ({ subject }) => ({ tenantId: subject?.tenantId }) })
+```
+
+- **Everything authz does applies:** wildcards, roles mapped to permissions, super-admins, and tenancy through authz's own resolvers.
+- **What authz is asked about:** the subject's `user` object when the identity has one, so a custom `resolveSubjectRef` keeps working. Otherwise it is `{ type, id: realId }`, the human behind the request and never an impersonated account. An admin acting as someone neither gains that person's permissions nor loses their own.
+- **Anonymous requests** never reach authz.
+
+### Your own
+
+Ownership that goes through your own model needs a rule of your own. In MeuProntoo, for example,
+a family member's avatar belongs to a `Profile` that the signed-in account may access:
+
+```ts
+const familyProfile: MediaAuthorizer = async ({ subject, record }) =>
+  Boolean(subject && record && (await canAccessProfile(subject.id, record.ownerId)))
+
+{ name: 'avatar', access: { read: authorizers.any(authorizers.owner({ ownerTypes: ['AuthAccount'] }), familyProfile) } }
+```
+
+## Per-collection rules: `collections[].access`
+
+`access: { read?, write? }` on a collection is what `media.access` applies when no rule is passed
+explicitly. **An absent rule denies.** A collection with no `access` cannot be served by the
+delivery route until you give it one, or until the route is given an `authorize`.
+
+## The delivery route
+
+```ts title="start/routes.ts"
+const serveMedia = media.access.deliveryRoute()
+const serveAnyMedia = media.access.deliveryRoute({ authorize: authz.can('media.read.any') })
+
+router.get('/media/:id', serveMedia)
+router.get('/admin/media/:id', serveAnyMedia).use(middleware.auth())
+```
+
+`deliveryRoute(options?)` returns an AdonisJS route handler that:
+
+1. **Loads the record.** An unknown id gets `404`.
+2. **Authorizes the read** with `options.authorize` or, failing that, the collection's `access.read`. An anonymous request gets `401`, and a signed-in user who isn't allowed gets `403`. Exception: a URL carrying a valid [`delivery.signing`](/docs/media/delivery#signed-urls) signature is served without it, because that signature is the authorization the app made when it issued the URL. A tampered or expired signature gets `403`.
+3. **Passes the query through:** `?conversion`, `?w`/`?q` ([on-demand resize](/docs/media/delivery#resizing-on-demand-w)), the `Accept` header (AVIF/WebP) and `?exp`/`?sig`. A width or quality outside the whitelist gets `400`.
+4. **Answers per `delivery.mode`:** a redirect, or a stream with `Content-Type`, `Content-Length` and `Content-Disposition: inline`. It also sends `Cache-Control` (default `private, max-age=60`) and `Vary: Accept` when the format was negotiated.
+
+Errors are answered as `{ code, message }` with the library's stable codes. Anything else (your
+rule throwing, the database down) is rethrown to your exception handler.
+
+| Option | Default | |
+|---|---|---|
+| `authorize` | the collection's `access.read` | The read rule for this route. |
+| `param` | `'id'` | The route parameter holding the media id. |
+| `cacheControl` | `'private, max-age=60'` | `'public, max-age=…'` for public collections. |
+| `mode` / `signedTtlSeconds` | `delivery.*` | Override how this route serves. |
+
+## In your own code
+
+```ts
+await media.access.can(ctx, 'read', record)                    // boolean
+await media.access.authorize(ctx, 'write', { collection: 'avatar' }) // throws MediaAccessDeniedError
+const subject = await media.access.subject(ctx)
+
+// image() for the current user: the URLs (signed ones especially) only reach someone allowed
+const banner = await media.access.image(ctx, course.bannerMediaId, { expiresIn: '1h' })
+```
+
+`MediaAccessDeniedError` (`E_MEDIA_ACCESS_DENIED`) carries `status`: `401` for an anonymous request
+and `403` otherwise. It also carries the `action`, the `collection` and the `mediaId`.
+
+<Callout type="info" title="Uploads">
+  The upload routes are driven by your [`DirectUploadPolicy`](/docs/media/uploads/direct-upload-policy),
+  which decides an upload's key and what it becomes. Apply the collection's `write` rule there with
+  `await media.access.authorize(ctx, 'write', { collection })` in `onInitiate`. A ready-made policy
+  that does this for you is on the roadmap.
+</Callout>

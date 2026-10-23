@@ -40,6 +40,13 @@ A disk that can't answer leaves visibility genuinely unknown, and `auto` then re
 
 ## Mounting a route
 
+<Callout type="info" title="Or let the library write it">
+  `media.access.deliveryRoute()` is this whole route, ready-made: it authorizes with your
+  collections' `access` rules (or an `authorize` you pass), supports `?w`, `?q`, `?conversion`,
+  `Accept` and signed URLs, and answers errors as HTTP. See [Authorization](/docs/media/access#the-delivery-route).
+  The hand-written version below is still how it works underneath.
+</Callout>
+
 `MediaDeliveryHandler` is framework-agnostic, exactly like [`TusUploadHandler`](/docs/media/uploads/resumable-tus): **you** mount the route, with your own middleware, and delegate the "how do these bytes reach the client" question to it.
 
 ```ts title="start/routes.ts"

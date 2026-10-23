@@ -61,7 +61,11 @@ The `MediaRecord`/`conversions` shape (including transformer `meta` and multi-ar
 
 ### Named delivery route + Tuyau/Edge helpers
 
-`MediaDeliveryHandler` / `HlsDeliveryHandler` exist, but the app mounts the route by hand. Planned (prior art: jrmc v5's `router.attachments()`): an opt-in, **named** route mount — a stable route name Tuyau can infer and Edge's `route()` can use — with a hook for the app to attach its middleware, keeping the standing rule that the library never decides authorization; plus an Edge helper for `<img src>` in server-rendered apps.
+`media.access.deliveryRoute()` is a ready handler (authorization from the collections' `access` rules, resize, signed URLs, HTTP errors), but the app still registers it on a path of its own. Planned (prior art: jrmc v5's `router.attachments()`): an opt-in, **named** mount, a stable route name Tuyau can infer and Edge's `route()` can use, plus an Edge helper for `<img src>` in server-rendered apps.
+
+### A ready upload policy
+
+Collections declare `access.write`, and `media.access.authorize(ctx, 'write', { collection })` applies it, but the upload routes still need your own `DirectUploadPolicy` to call it and to key uploads by the user. Planned: a ready policy that does both from the identity resolver.
 
 ### Collection reordering
 

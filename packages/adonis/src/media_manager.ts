@@ -1,9 +1,11 @@
+import type { MediaIdentityResolver } from './access.js';
 import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
 import { DirectUploadManager } from './direct_upload.js';
 import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
+import { MediaAccess } from './media_access.js';
 import type { MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { AttachExistingInput } from './media_library.js';
 import { MediaLibrary } from './media_library.js';
@@ -31,6 +33,8 @@ export interface MediaManagerOptions {
   store: MediaStore;
   imageProcessor?: ImageProcessor;
   collections?: readonly MediaCollectionConfig[];
+  /** Who the current user is, for `media.access` (`access.identity`). Default: `ctx.auth.user`. */
+  accessIdentity?: MediaIdentityResolver;
   attachmentKeyPrefix?: string;
   emitDiagnostics?: boolean;
   /** Default upload mode for direct-S3 uploads (`auto`/`proxy`/`direct`). Default `auto`. */
@@ -86,6 +90,8 @@ export interface MediaManagerOptions {
 export class MediaManager {
   readonly storage: StorageManager;
   readonly library: MediaLibrary;
+  /** Authorization for media: the delivery route, authorized `image()`, `authorize()`/`can()`. */
+  readonly access: MediaAccess;
   readonly attachments: AttachmentManager;
   /**
    * The configured persistence SPI. Exposed for management/console reads (e.g. the cross-owner
@@ -119,6 +125,10 @@ export class MediaManager {
         ? { deliverySigning: options.deliverySigning }
         : {}),
       ...(options.deliveryPath !== undefined ? { deliveryPath: options.deliveryPath } : {}),
+    });
+    this.access = new MediaAccess({
+      library: this.library,
+      ...(options.accessIdentity !== undefined ? { identity: options.accessIdentity } : {}),
     });
     this.attachments = new AttachmentManager({
       storage: this.storage,

@@ -1,3 +1,4 @@
+import type { MediaCollectionAccess } from './access.js';
 import { TransformerConflictError } from './errors.js';
 import type { ConversionPreset } from './image_processor.js';
 import type { Transformer } from './transformer.js';
@@ -48,6 +49,16 @@ export interface MediaCollectionConfig {
    * also on `attachExisting`. Only images with something to strip are rewritten.
    */
   stripMetadata?: boolean;
+  /**
+   * Who may read files of this collection and who may put files into it — applied by
+   * `media.access` (its `deliveryRoute()`, `image()`, `authorize()`). `'public'` allows everyone;
+   * an absent rule denies. Build rules with `authorizers` (and the authkit/authz integrations):
+   *
+   * ```ts
+   * { name: 'avatar', access: { read: authorizers.owner(), write: authorizers.authenticated() } }
+   * ```
+   */
+  access?: MediaCollectionAccess;
 }
 
 export class MediaCollectionRegistry {

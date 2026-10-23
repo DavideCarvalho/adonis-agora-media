@@ -447,3 +447,27 @@ export class DeliverySignatureError extends Error {
     this.name = 'DeliverySignatureError';
   }
 }
+
+/**
+ * A media read or write was refused by its authorization rule (`media.access`, the delivery route,
+ * a collection's `access`). `status` is the HTTP answer: `401` when the request is anonymous,
+ * `403` when the signed-in user is not allowed.
+ */
+export class MediaAccessDeniedError extends Error {
+  readonly code = 'E_MEDIA_ACCESS_DENIED';
+  readonly status: 401 | 403;
+  constructor(
+    readonly action: 'read' | 'write',
+    readonly collection: string,
+    readonly mediaId: string | undefined,
+    readonly anonymous: boolean,
+  ) {
+    super(
+      anonymous
+        ? `Sign in to ${action} media in collection "${collection}".`
+        : `Not allowed to ${action} media in collection "${collection}".`,
+    );
+    this.name = 'MediaAccessDeniedError';
+    this.status = anonymous ? 401 : 403;
+  }
+}
