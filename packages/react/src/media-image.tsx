@@ -4,6 +4,7 @@ import {
   type ImgHTMLAttributes,
   version as reactVersion,
   useCallback,
+  useRef,
   useState,
 } from 'react';
 
@@ -191,17 +192,6 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       onLoad,
       ...rest
     } = props as AnyMediaImageProps;
-    const [loaded, setLoaded] = useState(false);
-
-    const imgRef = useCallback(
-      (node: HTMLImageElement | null) => {
-        if (node?.complete && node.naturalWidth > 0) setLoaded(true);
-        if (typeof ref === 'function') ref(node);
-        else if (ref) ref.current = node;
-      },
-      [ref],
-    );
-
     const displayWidth = fill ? undefined : (width ?? image?.width);
     const displayHeight = fill ? undefined : (height ?? image?.height);
     const derivedSizes = layoutSizes(layout, displayWidth);
@@ -221,6 +211,26 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       width: fill ? undefined : width,
       height,
     });
+
+    // "Loaded" belongs to a picture, not to the component: a mounted <MediaImage> handed another
+    // image (an Inertia page reused across navigations, a gallery) must show the new one's preview
+    // — and keep it if the new one fails. Keying the flag by the picture avoids a reset effect and
+    // the flash of no-preview it would render first.
+    const identity = `${resolved.src}\n${resolved.srcSet ?? ''}`;
+    const [loadedIdentity, setLoadedIdentity] = useState<string | undefined>(undefined);
+    const loaded = loadedIdentity === identity;
+    const identityRef = useRef(identity);
+    identityRef.current = identity;
+
+    const imgRef = useCallback(
+      (node: HTMLImageElement | null) => {
+        // An image that finished before hydration never fires `load` again.
+        if (node?.complete && node.naturalWidth > 0) setLoadedIdentity(identityRef.current);
+        if (typeof ref === 'function') ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
 
     const lazy = !priority && (loading ?? 'lazy') === 'lazy';
     const sizesAttr = !resolved.sizesApply
@@ -258,7 +268,7 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
         decoding={decoding ?? 'async'}
         data-media-image=""
         onLoad={(event) => {
-          setLoaded(true);
+          setLoadedIdentity(identity);
           onLoad?.(event);
         }}
         style={{

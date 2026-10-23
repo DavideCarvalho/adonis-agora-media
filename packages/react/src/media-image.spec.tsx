@@ -73,6 +73,27 @@ describe('<MediaImage>', () => {
     expect(onLoad).toHaveBeenCalledTimes(1);
   });
 
+  it('a new picture in the same mounted component starts unloaded again', () => {
+    const next: MediaImageData = { ...image, src: 'https://cdn.test/other.png', srcSet: undefined };
+    const { rerender } = render(<MediaImage image={image} alt="" />);
+    fireEvent.load(img());
+    expect(img().style.backgroundImage).toBe('');
+
+    rerender(<MediaImage image={next} alt="" />);
+    expect(img().getAttribute('src')).toBe(next.src);
+    expect(img().style.backgroundImage).not.toBe('');
+
+    // and if the new one fails, its preview stays
+    fireEvent.error(img());
+    expect(img().style.backgroundImage).not.toBe('');
+    fireEvent.load(img());
+    expect(img().style.backgroundImage).toBe('');
+
+    // same for a plain src
+    rerender(<MediaImage src="/third.jpg" blurDataURL="data:,x" alt="" />);
+    expect(img().style.backgroundImage).not.toBe('');
+  });
+
   it('keeps the preview when the image fails to load', () => {
     render(<MediaImage image={image} alt="" />);
     fireEvent.error(img());
