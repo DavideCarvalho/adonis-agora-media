@@ -174,7 +174,7 @@ More on the image side:
 
 - **Focal points:** `media.library.setFocalPoint(id, { x, y })` makes every crop keep that part, and so does `object-fit: cover` in the browser. Presets also take `position: 'attention'`.
 - **Art direction:** `image(id, { conversions: [...] })` returns a group, which `<MediaPicture>` swaps in on some screens.
-- **On-demand resizing:** the delivery route serves `?w=640`, resized once and cached, as AVIF or WebP depending on `Accept`. Only whitelisted widths are served, unless the URL is signed.
+- **On-demand resizing:** the delivery route serves `?w=640`, resized once and cached, as WebP (or AVIF, when you opt in) depending on `Accept`. Only whitelisted widths are served, unless the URL is signed.
 - **Signed URLs:** with `delivery.signing`, `media.library.deliveryUrl()` and `image()` hand out signed, expiring URLs, and the route serves nothing else.
 - **`stripMetadata: true`:** removes GPS, camera and timestamps from uploaded originals.
 

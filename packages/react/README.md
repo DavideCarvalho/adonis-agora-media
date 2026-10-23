@@ -26,7 +26,7 @@ import { MediaImage, MediaPicture, mediaImageLoader } from '@adonis-agora/media-
 - **Blurred preview:** painted behind the image until it loads. It ships in the SSR markup, survives hydration and stays in place if the image fails. `focalPoint` becomes `object-position`.
 - **`placeholderStyle(placeholder)`:** paints the same preview on components that own their `<img>`, such as a Radix `Avatar`.
 
-See the [Responsive images docs](https://github.com/DavideCarvalho/adonis-media/blob/master/docs/react/image.mdx).
+See the [Responsive images docs](https://github.com/DavideCarvalho/adonis-agora-media/blob/master/docs/react/image.mdx).
 
 ## Uploads
 
