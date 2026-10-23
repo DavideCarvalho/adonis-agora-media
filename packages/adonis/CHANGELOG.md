@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.22.1
+
+### Patch Changes
+
+- [#204](https://github.com/DavideCarvalho/adonis-agora-media/pull/204) [`ae852da`](https://github.com/DavideCarvalho/adonis-agora-media/commit/ae852da0803997df19f1fdd0f31f1df188b01624) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `MediaDeliveryHandler` takes `requireSignature`, which overrides `delivery.signing.required` for its route. Before, turning on signing (required by default) made every delivery route refuse unsigned requests, including those that already authorize by session or ownership. A route like that can now opt out with `requireSignature: false`: it keeps serving its own requests and still honours signed ones. `media.library.checkDeliverySignature(request, { required })` takes the same override.
+
 ## 0.22.0
 
 ### Minor Changes
