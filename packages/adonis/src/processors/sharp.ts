@@ -20,6 +20,41 @@ const CONTENT_TYPE: Record<string, string> = {
  * (`@adonis-agora/media/processors/sharp`) or select it lazily with `processors.sharp()` in config.
  */
 export class SharpImageProcessor implements ImageProcessor {
+  async stripMetadata(input: Buffer): Promise<Buffer | undefined> {
+    const metadata = await sharp(input).metadata();
+    // sharp reports AVIF as `heif` with AV1 compression; a real HEIC (HEVC) cannot be re-encoded.
+    const format =
+      metadata.format === 'heif'
+        ? metadata.compression === 'av1'
+          ? 'avif'
+          : undefined
+        : metadata.format;
+    if (
+      format !== 'jpeg' &&
+      format !== 'png' &&
+      format !== 'webp' &&
+      format !== 'avif' &&
+      format !== 'tiff'
+    ) {
+      return undefined;
+    }
+    const hasMetadata = Boolean(metadata.exif || metadata.xmp || metadata.iptc);
+    // An orientation tag is metadata too, and stripping it alone would turn the image sideways:
+    // `rotate()` bakes it into the pixels first.
+    if (!hasMetadata && (metadata.orientation ?? 1) === 1) return undefined;
+
+    const animated = format === 'webp' && (metadata.pages ?? 1) > 1;
+    // sharp drops all metadata unless told to keep it; the colour profile is kept so the colours
+    // do not shift. Lossy formats are re-encoded at high quality, lossless ones losslessly.
+    let pipeline = sharp(input, { animated }).rotate().keepIccProfile();
+    if (format === 'jpeg') pipeline = pipeline.jpeg({ quality: 92, mozjpeg: true });
+    else if (format === 'png') pipeline = pipeline.png();
+    else if (format === 'webp') pipeline = pipeline.webp({ quality: 92 });
+    else if (format === 'avif') pipeline = pipeline.avif({ quality: 70 });
+    else pipeline = pipeline.tiff();
+    return pipeline.toBuffer();
+  }
+
   async dimensions(input: Buffer): Promise<{ width: number; height: number } | undefined> {
     const metadata = await sharp(input).metadata();
     if (!metadata.width || !metadata.height) return undefined;

@@ -39,6 +39,15 @@ export interface MediaCollectionConfig {
    * everything `media.library.image(id)` needs for a `srcset`, the intrinsic size and the blur-up.
    */
   responsive?: boolean | ResponsiveImagesConfig;
+  /**
+   * Strip the original's metadata on attach — EXIF (a phone photo carries the GPS position where
+   * it was taken, the device, the time), XMP and IPTC — keeping its format, colour profile and
+   * orientation (baked into the pixels). Conversions never carry metadata; this covers the
+   * original, which is otherwise served exactly as uploaded. The original is downloaded and
+   * rewritten (lossy formats re-encoded at high quality), so it costs a round trip per attach —
+   * also on `attachExisting`. Only images with something to strip are rewritten.
+   */
+  stripMetadata?: boolean;
 }
 
 export class MediaCollectionRegistry {

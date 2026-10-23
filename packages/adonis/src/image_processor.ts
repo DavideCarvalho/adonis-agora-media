@@ -85,6 +85,13 @@ export interface ImageProcessor {
   ): Promise<ConversionResult>;
   /** Displayed size of an image (EXIF orientation applied), if it can be read. Optional. */
   dimensions?(input: Buffer): Promise<{ width: number; height: number } | undefined>;
+  /**
+   * The image without its metadata (EXIF — GPS position, camera, timestamps —, XMP, IPTC), same
+   * format, orientation baked into the pixels. `undefined` when there is nothing to strip (or the
+   * format is not handled): the original is then left untouched. Optional; what
+   * `stripMetadata: true` collections call.
+   */
+  stripMetadata?(input: Buffer): Promise<Buffer | undefined>;
 }
 
 /** Does this preset crop (and so care about a focal point / position)? */

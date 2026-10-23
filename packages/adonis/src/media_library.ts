@@ -477,9 +477,13 @@ export class MediaLibrary {
 
     let saved: MediaRecord;
     try {
+      const strippedSize = config.stripMetadata
+        ? await this.#stripMetadata(target, path, input.mimeType)
+        : undefined;
       // `getMetaData` is a HEAD-shaped metadata read, never a body download — the zero-copy
-      // guarantee of `attachExisting` holds even when the caller omits `size`.
-      const size = input.size ?? (await target.getMetaData(path)).contentLength;
+      // guarantee of `attachExisting` holds even when the caller omits `size` (and the collection
+      // does not `stripMetadata`, which has to read the bytes).
+      const size = strippedSize ?? input.size ?? (await target.getMetaData(path)).contentLength;
       // A single-file collection holds exactly one item, so its order resets to 0 on replace.
       const order = config.single
         ? 0
@@ -627,6 +631,21 @@ export class MediaLibrary {
     });
     this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
     return updated;
+  }
+
+  /**
+   * Rewrite the object at `path` without its metadata (`stripMetadata` collections). Returns the
+   * new size, or `undefined` when nothing was rewritten (not an image, nothing to strip).
+   */
+  async #stripMetadata(target: Disk, path: string, mimeType: string): Promise<number | undefined> {
+    if (!mimeType.startsWith('image/') || mimeType.startsWith('image/svg')) return undefined;
+    if (!this.imageProcessor) throw new ImageProcessorMissingError();
+    if (!this.imageProcessor.stripMetadata) return undefined;
+    const original = asBuffer(await target.getBytes(path));
+    const stripped = await this.imageProcessor.stripMetadata(original);
+    if (!stripped) return undefined;
+    await target.put(path, stripped, { contentType: mimeType });
+    return stripped.byteLength;
   }
 
   /** Persist one conversion entry, re-reading first so a concurrent one is not dropped. */
