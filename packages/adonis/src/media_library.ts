@@ -1256,7 +1256,7 @@ export class MediaLibrary {
     return {
       kind: 'stream',
       stream: await disk.getStream(target.path),
-      mimeType: metadata.contentType ?? target.record.mimeType,
+      mimeType: deliveredMimeType(metadata.contentType, target.record.mimeType, conversion),
       size: metadata.contentLength,
       fileName: target.fileName,
       ...vary,
@@ -1362,4 +1362,23 @@ function negotiateFormat(
 function focalPointProp(record: MediaRecord): { focalPoint?: FocalPoint } {
   const focalPoint = focalPointOf(record.customProperties);
   return focalPoint ? { focalPoint } : {};
+}
+
+const GENERIC_CONTENT_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+
+/**
+ * The `Content-Type` of a proxied file. The disk's own type wins — for a conversion the record
+ * describes the ORIGINAL (a `thumb` of a PNG may be WebP) — unless it is a generic one: an object
+ * assembled by a multipart/TUS upload comes back from S3 as `application/octet-stream`, and a PDF
+ * served that way opens in no viewer. For the original, the record's type (checked against the
+ * file's signature on attach) is then the truth.
+ */
+function deliveredMimeType(
+  fromDisk: string | undefined,
+  fromRecord: string,
+  conversion: string | undefined,
+): string {
+  const base = (fromDisk ?? '').split(';')[0]!.trim().toLowerCase();
+  if (!GENERIC_CONTENT_TYPES.has(base)) return fromDisk!;
+  return conversion === undefined ? fromRecord : fromDisk || 'application/octet-stream';
 }

@@ -325,6 +325,54 @@ describe('media.access.deliveryRoute()', () => {
     );
   });
 
+  it('serve(): a controller that finds the record its own way', async () => {
+    const { library, access } = setup();
+    const avatar = await attach(library, 'avatar');
+
+    // by record, with the controller's own rule (the collection's would also apply without it)
+    const byRecord = fakeHttp({ user: stranger });
+    await access.serve(byRecord.ctx, avatar, { authorize: authorizers.authenticated() });
+    expect(byRecord.sent.stream).toBeDefined();
+
+    // by id, falling back to the collection rule
+    const byId = fakeHttp({ user: stranger });
+    await access.serve(byId.ctx, avatar.id);
+    expect(byId.sent.status).toBe(403);
+
+    // nothing found by the controller: 404
+    const none = fakeHttp({ user: owner });
+    await access.serve(none.ctx, undefined);
+    expect(none.sent).toMatchObject({ status: 404, json: { code: 'E_MEDIA_RECORD_NOT_FOUND' } });
+  });
+
+  it('a generic storage type (an S3 multipart/TUS object) is served as the record type', async () => {
+    const { resolve, disks } = inMemoryDiskResolver(['fs']);
+    const library = new MediaLibrary({
+      storage: new StorageManager({ default: 'fs', resolve }),
+      store: new InMemoryMediaStore(),
+      collections: [{ name: 'exams', access: { read: 'public' } }],
+      idGenerator: () => 'id-1',
+      emitDiagnostics: false,
+      deliveryMode: 'proxy',
+    });
+    const record = await library.attach({
+      ownerType: 'User',
+      ownerId: '7',
+      collection: 'exams',
+      fileName: 'laudo.pdf',
+      mimeType: 'application/pdf',
+      contents: Buffer.from('%PDF-1.7 laudo'),
+    });
+    // what a TUS-assembled object looks like on S3
+    await disks.fs.put(record.path, Buffer.from('%PDF-1.7 laudo'), {
+      contentType: 'application/octet-stream',
+    });
+
+    const { ctx, sent } = fakeHttp({ params: { id: record.id } });
+    await new MediaAccess({ library, identity }).deliveryRoute()(ctx);
+    expect(sent.headers['content-type']).toBe('application/pdf');
+  });
+
   it('rethrows what it does not know how to answer', async () => {
     const { library, access } = setup();
     const avatar = await attach(library, 'avatar');

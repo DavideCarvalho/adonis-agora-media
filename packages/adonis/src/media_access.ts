@@ -151,6 +151,85 @@ export class MediaAccess {
   }
 
   /**
+   * Authorize and answer one media read — the core of {@link deliveryRoute}, for a controller that
+   * finds the record its own way (a stable `/profiles/:id/photo` URL, a record looked up by its
+   * owner):
+   *
+   * ```ts
+   * async show(ctx) {
+   *   const [avatar] = await media.library.list('User', ctx.params.id, 'avatar')
+   *   return media.access.serve(ctx, avatar, { authorize: canSeeProfile })
+   * }
+   * ```
+   *
+   * `target` is the record, its id, or `null`/`undefined` (answered 404). Everything else is as in
+   * {@link deliveryRoute}: the read is authorized unless the URL carries a valid signature, the query
+   * (`?conversion`, `?w`, `?q`, `?exp`, `?sig`) and `Accept` are honoured, the file is redirected or
+   * streamed with its headers, and the library's errors are answered as HTTP.
+   */
+  async serve(
+    ctx: DeliveryRouteContext,
+    target: MediaRecord | string | null | undefined,
+    options: Omit<MediaDeliveryRouteOptions, 'param'> = {},
+  ): Promise<unknown> {
+    const { request, response } = ctx;
+    const cacheControl = options.cacheControl ?? 'private, max-age=60';
+    try {
+      const record =
+        typeof target === 'string' ? await this.#library.find(target) : (target ?? null);
+      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
+      const id = record.id;
+
+      const qs = request.qs();
+      const signed = {
+        mediaId: id,
+        conversion: stringParam(qs.conversion),
+        width: stringParam(qs.w),
+        quality: stringParam(qs.q),
+        expires: stringParam(qs.exp),
+        signature: stringParam(qs.sig),
+      };
+      // A valid signature is a prior authorization; an invalid or expired one is refused
+      // (DeliverySignatureError). Unsigned requests are this caller's to authorize.
+      const trusted = this.#library.checkDeliverySignature(signed, { required: false });
+      if (!trusted) await this.authorize(ctx, 'read', record, options.authorize);
+
+      const result = await this.#library.deliver(id, {
+        ...(signed.conversion !== undefined ? { conversion: signed.conversion } : {}),
+        ...(signed.width !== undefined && signed.width !== ''
+          ? {
+              width: signed.width,
+              quality: signed.quality,
+              accept: request.header('accept') ?? undefined,
+            }
+          : {}),
+        ...(trusted ? { trusted: true } : {}),
+        ...(options.mode !== undefined ? { mode: options.mode } : {}),
+        ...(options.signedTtlSeconds !== undefined
+          ? { signedTtlSeconds: options.signedTtlSeconds }
+          : {}),
+      });
+
+      response.header('cache-control', cacheControl);
+      if (result.vary) response.header('vary', result.vary);
+      if (result.kind === 'redirect') return response.redirect(result.url);
+
+      response.header('content-type', result.mimeType);
+      if (result.size !== undefined) response.header('content-length', String(result.size));
+      if (result.fileName) {
+        response.header('content-disposition', inlineDisposition(result.fileName));
+      }
+      return response.stream(result.stream);
+    } catch (error) {
+      const status = httpStatusOf(error);
+      if (status === undefined) throw error;
+      const { code, message } = error as { code: string; message: string };
+      const replied = response.status(status) as { json?: (body: unknown) => unknown };
+      return replied.json?.({ code, message });
+    }
+  }
+
+  /**
    * A ready AdonisJS route handler that serves a media record — the delivery route every app was
    * hand-writing:
    *
@@ -173,63 +252,7 @@ export class MediaAccess {
     options: MediaDeliveryRouteOptions = {},
   ): (ctx: DeliveryRouteContext) => Promise<unknown> {
     const param = options.param ?? 'id';
-    const cacheControl = options.cacheControl ?? 'private, max-age=60';
-
-    return async (ctx) => {
-      const { request, response } = ctx;
-      try {
-        const id = String(ctx.params[param] ?? '');
-        const record = await this.#library.find(id);
-        if (!record) throw new MediaNotFoundError(id);
-
-        const qs = request.qs();
-        const signed = {
-          mediaId: id,
-          conversion: stringParam(qs.conversion),
-          width: stringParam(qs.w),
-          quality: stringParam(qs.q),
-          expires: stringParam(qs.exp),
-          signature: stringParam(qs.sig),
-        };
-        // A valid signature is a prior authorization; an invalid or expired one is refused
-        // (DeliverySignatureError). Unsigned requests are this route's to authorize.
-        const trusted = this.#library.checkDeliverySignature(signed, { required: false });
-        if (!trusted) await this.authorize(ctx, 'read', record, options.authorize);
-
-        const result = await this.#library.deliver(id, {
-          ...(signed.conversion !== undefined ? { conversion: signed.conversion } : {}),
-          ...(signed.width !== undefined && signed.width !== ''
-            ? {
-                width: signed.width,
-                quality: signed.quality,
-                accept: request.header('accept') ?? undefined,
-              }
-            : {}),
-          ...(trusted ? { trusted: true } : {}),
-          ...(options.mode !== undefined ? { mode: options.mode } : {}),
-          ...(options.signedTtlSeconds !== undefined
-            ? { signedTtlSeconds: options.signedTtlSeconds }
-            : {}),
-        });
-
-        response.header('cache-control', cacheControl);
-        if (result.vary) response.header('vary', result.vary);
-        if (result.kind === 'redirect') return response.redirect(result.url);
-
-        response.header('content-type', result.mimeType);
-        if (result.size !== undefined) response.header('content-length', String(result.size));
-        if (result.fileName) {
-          response.header('content-disposition', inlineDisposition(result.fileName));
-        }
-        return response.stream(result.stream);
-      } catch (error) {
-        const status = httpStatusOf(error);
-        if (status === undefined) throw error;
-        const { code, message } = error as { code: string; message: string };
-        const replied = response.status(status) as { json?: (body: unknown) => unknown };
-        return replied.json?.({ code, message });
-      }
-    };
+    return (ctx) => this.serve(ctx, String(ctx.params[param] ?? ''), options);
   }
 }
 
