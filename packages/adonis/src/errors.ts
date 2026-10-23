@@ -398,3 +398,52 @@ export class UploadSessionStoreNotConfiguredError extends Error {
     this.name = 'UploadSessionStoreNotConfiguredError';
   }
 }
+
+/**
+ * A resize was requested at a width or quality outside `delivery.images` — the whitelist that stops
+ * a client from filling the storage with one cached variant per arbitrary size. Map it to a 400.
+ */
+export class ImageSizeNotAllowedError extends Error {
+  readonly code = 'E_MEDIA_IMAGE_SIZE_NOT_ALLOWED';
+  constructor(
+    readonly field: 'width' | 'quality',
+    readonly value: unknown,
+    readonly allowed: readonly number[],
+  ) {
+    super(
+      `Image ${field} ${JSON.stringify(value)} is not allowed. Allowed: ${allowed.join(', ')} (delivery.images.${field === 'width' ? 'widths' : 'qualities'}).`,
+    );
+    this.name = 'ImageSizeNotAllowedError';
+  }
+}
+
+/** A resize (`?w=`) was requested for a record that is not a raster image. Map it to a 400. */
+export class NotAnImageError extends Error {
+  readonly code = 'E_MEDIA_NOT_AN_IMAGE';
+  constructor(
+    readonly mediaId: string,
+    readonly mimeType: string,
+  ) {
+    super(`Media "${mediaId}" is "${mimeType}", not an image that can be resized.`);
+    this.name = 'NotAnImageError';
+  }
+}
+
+/**
+ * A delivery request failed signature checking (`delivery.signing`): it carries no signature while
+ * one is required (`missing`), the signature does not match the request (`invalid` — any
+ * parameter changed, or a URL signed with another key), or it expired (`expired`). Map it to a 403.
+ */
+export class DeliverySignatureError extends Error {
+  readonly code = 'E_MEDIA_DELIVERY_SIGNATURE';
+  constructor(readonly reason: 'missing' | 'invalid' | 'expired') {
+    super(
+      reason === 'missing'
+        ? 'This media URL must be signed (delivery.signing.required).'
+        : reason === 'expired'
+          ? 'This media URL has expired.'
+          : 'This media URL has an invalid signature.',
+    );
+    this.name = 'DeliverySignatureError';
+  }
+}

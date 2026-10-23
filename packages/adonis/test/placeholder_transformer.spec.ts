@@ -165,6 +165,37 @@ describe('SharpImageProcessor', () => {
     expect([meta.width, meta.height]).toEqual([50, 150]);
   });
 
+  it('keeps every frame of an animated GIF in WebP, and the first frame in other formats', async () => {
+    const frames = await Promise.all(
+      [255, 120, 10].map((r) =>
+        sharp({ create: { width: 40, height: 40, channels: 3, background: { r, g: 0, b: 0 } } })
+          .png()
+          .toBuffer(),
+      ),
+    );
+    const strip = await sharp({
+      create: { width: 40, height: 120, channels: 3, background: '#000' },
+    })
+      .composite(frames.map((input, i) => ({ input, top: i * 40, left: 0 })))
+      .raw()
+      .toBuffer();
+    const gif = await sharp(strip, {
+      raw: { width: 40, height: 120, channels: 3, pageHeight: 40 },
+    })
+      .gif()
+      .toBuffer();
+
+    const webp = await processor.convert(gif, { name: 'x', width: 20 });
+    const webpMeta = await sharp(webp.data, { animated: true }).metadata();
+    expect(webpMeta.pages).toBe(3);
+    expect([webp.width, webp.height]).toEqual([20, 20]);
+
+    // JPEG cannot animate: one frame, not the frames stacked into a 20x60 strip
+    const jpeg = await processor.convert(gif, { name: 'x', width: 20, format: 'jpeg' });
+    const jpegMeta = await sharp(jpeg.data).metadata();
+    expect([jpegMeta.width, jpegMeta.height]).toEqual([20, 20]);
+  });
+
   it('blurs when the preset sets `blur`', async () => {
     // a hard black/white edge: blurring must introduce intermediate greys
     const edge = await sharp({

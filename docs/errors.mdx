@@ -50,6 +50,9 @@ try {
 | `ConversionNotDefinedError` | `E_MEDIA_CONVERSION_NOT_DEFINED` | A conversion name the collection doesn't declare is requested. |
 | `ConversionArtifactMissingError` | `E_MEDIA_CONVERSION_ARTIFACT_MISSING` | A conversion with no artifact (a metadata-only transform) is asked for a URL. |
 | `ImageProcessorMissingError` | `E_MEDIA_IMAGE_PROCESSOR_MISSING` | Any conversion is requested with no `imageProcessor` configured. |
+| `ImageSizeNotAllowedError` | `E_MEDIA_IMAGE_SIZE_NOT_ALLOWED` | An on-demand resize (`?w=`/`?q=`) asks for a width or quality outside `delivery.images`. Map to 400. |
+| `NotAnImageError` | `E_MEDIA_NOT_AN_IMAGE` | An on-demand resize is asked of a record that is not a raster image. Map to 400. |
+| `DeliverySignatureError` | `E_MEDIA_DELIVERY_SIGNATURE` | A delivery request fails `delivery.signing`. `reason` is `missing` (unsigned while required), `invalid` (tampered, or another key) or `expired`. Map to 403. |
 | `TransformerNotDefinedError` | `E_MEDIA_TRANSFORMER_NOT_DEFINED` | `transform()` names a transformer the collection doesn't declare. |
 | `TransformNotReadyError` | `E_MEDIA_TRANSFORM_NOT_READY` | A transformer conversion is read before it has been generated. |
 | `TransformerConflictError` | `E_MEDIA_TRANSFORMER_CONFLICT` | Two derivatives in one collection share a name — thrown at **boot**. |

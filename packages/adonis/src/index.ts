@@ -58,14 +58,19 @@ export type {
   DeliveryRequest,
   DeliveryResult,
   MediaDeliveryHandlerOptions,
+  OnDemandImageConfig,
   ResolvedDeliveryMode,
 } from './delivery.js';
 // Configurable delivery (the read-side counterpart to the upload modes)
 export {
   DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+  DEFAULT_IMAGE_QUALITIES,
+  DEFAULT_IMAGE_WIDTHS,
   MediaDeliveryHandler,
   resolveDeliveryMode,
 } from './delivery.js';
+export type { DeliverySigningConfig } from './delivery_signing.js';
+export { DEFAULT_DELIVERY_SIGNING_TTL_SECONDS } from './delivery_signing.js';
 // Diagnostics (event types only — `publishMedia` is the internal emit helper and is not exported)
 export type {
   AttachmentCreatePayload,
@@ -117,14 +122,17 @@ export {
   ContentTypeMismatchError,
   ConversionArtifactMissingError,
   ConversionNotDefinedError,
+  DeliverySignatureError,
   DirectUploadsNotConfiguredError,
   DriveNotReadyError,
   FfmpegFailedError,
   HlsSourceUnsupportedError,
   ImageProcessorMissingError,
+  ImageSizeNotAllowedError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
+  NotAnImageError,
   ResumableUploadsNotConfiguredError,
   StoreNotConfiguredError,
   TransformerConflictError,
@@ -166,7 +174,14 @@ export {
   resolvePackagePath,
   rewriteHlsPlaylist,
 } from './hls/playlist.js';
-export type { ConversionPreset, ConversionResult, ImageProcessor } from './image_processor.js';
+export type {
+  ConversionPreset,
+  ConversionResult,
+  ConvertOptions,
+  CropPosition,
+  FocalPoint,
+  ImageProcessor,
+} from './image_processor.js';
 export type { MediaCollectionConfig } from './media_collection.js';
 export { MediaCollectionRegistry } from './media_collection.js';
 export type {
@@ -192,6 +207,7 @@ export {
   MAX_MEDIA_LIST_LIMIT,
 } from './media_store.js';
 export { isMultipartCapable } from './multipart.js';
+export type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
 export type {
   CreateUploadInput,
   ResumableUploadManagerOptions,

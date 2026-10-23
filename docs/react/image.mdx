@@ -1,0 +1,262 @@
+---
+title: Responsive images
+description: "MediaImage — next/image for stored images: srcset, intrinsic size, lazy loading and a blur-up placeholder. Fed by the server, a plain src, or a loader resized on demand."
+icon: Image
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`<MediaImage>` renders a stored image the way `next/image` does: one `<img>` that
+
+- offers several sizes as **`srcSet`**, so the browser downloads the one the layout needs;
+- carries the intrinsic **`width`/`height`**, so the page does not jump when the image arrives;
+- **lazy-loads** by default, and with `priority` loads eagerly with high fetch priority;
+- paints a **blurred preview** behind itself until it loads.
+
+There are three ways to feed it:
+
+| | Where the sizes come from | Resizes on the request path |
+|---|---|---|
+| [1. `image`](#1-image-built-on-the-server) | The collection's presets, via `media.library.image(id)` | No: presets are generated at attach |
+| [2. `src`](#2-src-a-plain-url) | Wherever you like: a URL, your own `srcSet` | No |
+| [3. `src` + `loader`](#3-a-loader-resized-on-demand) | Any width, resized by the server on first request | Once per width, then cached |
+
+## 1. `image`: built on the server
+
+### Configure the collection
+
+Presets at the widths you want to serve, **eager** so they exist from the attach on, plus the
+[placeholder transformer](/docs/media/transformers#image-placeholders-blur-up), which also supplies the
+intrinsic size:
+
+```ts
+// config/media.ts
+{
+  name: 'banner',
+  acceptsMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+  conversions: [
+    { name: 'sm', width: 640, eager: true },
+    { name: 'md', width: 1280, eager: true },
+  ],
+  transformers: [transformers.placeholder()],
+}
+```
+
+A preset that keeps the aspect ratio (a lone `width`) is always a candidate. Two kinds never are,
+because they are not the same picture at another resolution: a `blur` preset, and one whose fixed
+`width`×`height` crops (`cover`) or pads (`contain`) to a different aspect ratio than the original — a
+square `thumb` of a landscape photo. The original joins as the widest candidate when browsers can
+decode it (JPEG, PNG, WebP, AVIF, GIF — not HEIC or TIFF).
+
+### Build the data on the server
+
+```ts
+// a controller
+return inertia.render('courses/show', {
+  course,
+  banner: course.bannerMediaId ? await media.library.image(course.bannerMediaId) : null,
+})
+```
+
+It returns plain JSON (`ResponsiveImage`):
+
+```ts
+{
+  src: 'https://…/banner.jpg',                                   // the widest candidate
+  srcSet: 'https://…/sm.webp 640w, https://…/md.webp 1280w, https://…/banner.jpg 2400w',
+  width: 2400, height: 1200,                                      // intrinsic, EXIF applied
+  placeholder: { dataUrl: 'data:image/webp;base64,…', color: '#3a4f6b' },
+}
+```
+
+| Option | |
+|---|---|
+| `conversions` | Which presets to offer. Default: every preset of the collection. |
+| `generate` | Generate a candidate preset that was never generated (then cached, like `url()`). Default `false`: missing ones are skipped. |
+| `expiresIn` | Sign every URL for this long instead of using the public URL — for a private bucket. |
+| `url` | `(conversion) => string` — build each URL yourself, e.g. to point at your delivery route. `conversion` is `undefined` for the original. Wins over `expiresIn`. |
+
+<Callout type="info" title="Authorize first">
+  Like `url()`, `image()` answers "how", not "who". Check that the caller may see the image before
+  building its URLs.
+</Callout>
+
+Without `transformers.placeholder()` the result has no `width`/`height` and no `placeholder`, and the
+original is not a candidate (its width is unknown) — the presets still make a `srcSet`.
+
+### Render it
+
+```tsx
+import { MediaImage } from '@adonis-agora/media-react'
+
+<MediaImage
+  image={banner}
+  alt={course.title}
+  sizes="(max-width: 768px) 100vw, 768px"
+  priority
+  style={{ width: '100%', height: 'auto' }}
+/>
+```
+
+| Prop | |
+|---|---|
+| `image` | The `media.library.image(id)` result (mode 1). |
+| `src` | A URL (mode 2), or what the `loader` turns into URLs (mode 3). |
+| `alt` | Required. `""` for a decorative image. |
+| `sizes` | How wide the image renders, so the browser picks from `srcSet` — `next/image` semantics. Without it the browser assumes the full viewport width. |
+| `priority` | Above the fold (the LCP image): `loading="eager"` and `fetchPriority="high"`. On React 19 the server also emits a `<link rel="preload">` for it. |
+| `fill` | Cover the positioned parent (`position: absolute; inset: 0`) instead of sizing from `width`/`height`. Set `objectFit` in `style`. |
+| `placeholder` | `'blur'` (default when there is a preview), `'color'` (dominant colour only) or `'empty'`. |
+| `layout` | `'constrained'` (up to its width), `'fullWidth'` or `'fixed'`. Sets the box style **and** the `sizes`, so you do not write one by hand. See [Layouts](#layouts). |
+| `focalPoint` | `{ x, y }` (mode 2/3; mode 1 gets it from the server) → `object-position`, so a CSS crop keeps that part. |
+| `width` / `height` | Override the intrinsic size attributes. |
+
+Every other `<img>` prop passes through, and so does a `ref`.
+
+```tsx
+// a card cover whose box the layout decides
+<div style={{ position: 'relative', aspectRatio: '16 / 9' }}>
+  <MediaImage image={cover} alt="" fill sizes="320px" style={{ objectFit: 'cover' }} />
+</div>
+```
+
+## 2. `src`: a plain URL
+
+Like `<img src>` (and `<Image src>` in Next), for an image the library did not build, or when you
+already have the URLs:
+
+```tsx
+<MediaImage
+  src="/hero.jpg"
+  srcSet="/hero-640.jpg 640w, /hero.jpg 1600w"   // optional
+  sizes="100vw"
+  width={1600}
+  height={900}
+  blurDataURL={hero.placeholder.dataUrl}           // next/image's name for the preview
+  placeholderColor={hero.placeholder.color}        // optional: the colour under it
+  alt="…"
+/>
+```
+
+`blurDataURL` alone paints the blur. `placeholderColor` alone paints the flat colour
+(`placeholder="color"` by default).
+
+## 3. A loader, resized on demand
+
+With a `loader`, `src` is whatever the loader understands (here a media id), and the component
+builds the `srcSet` itself, using `next/image`'s algorithm and widths. Each candidate is a request
+like `/media/<id>?w=828&q=75`, which the server resizes once and caches:
+
+```tsx
+import { MediaImage, mediaImageLoader } from '@adonis-agora/media-react'
+
+const loader = mediaImageLoader()   // → /media/<id>?w=…; pass { path } for another route
+
+// fixed size: 1x and 2x
+<MediaImage src={course.bannerMediaId} loader={loader} width={800} height={400} alt="" />
+
+// responsive: one candidate per width the `sizes` can need
+<MediaImage src={course.bannerMediaId} loader={loader} width={1600} height={900} sizes="100vw" alt="" />
+```
+
+The server side is the delivery route you already mount, passing `?w=`/`?q=` through. See
+[Resizing on demand](/docs/media/delivery#resizing-on-demand-w).
+
+| Prop | |
+|---|---|
+| `loader` | `({ src, width, quality }) => url`, `next/image`'s contract. `mediaImageLoader({ path })` targets the delivery route. |
+| `quality` | Passed to the loader. It must be in the server's `delivery.images.qualities`. |
+| `deviceSizes` / `imageSizes` | The widths to request (defaults: `next/image`'s). They must be allowed by the server's `delivery.images.widths`, which has the same defaults. |
+| `blurDataURL` / `placeholderColor` | The preview, as in mode 2. |
+
+Which widths get requested follows `next/image`:
+
+- **With `sizes`:** every configured width (`w` descriptors), minus those smaller than the smallest `vw` in `sizes` could ever need.
+- **Without `sizes`:** the `width` at 1x and 2x (`x` descriptors), rounded up to configured widths.
+- **With `fill` and no `sizes`:** every device width.
+
+<Callout type="warn" title="Same widths on both sides">
+  A width the server does not allow answers 400. If you change `deviceSizes`/`imageSizes`, set
+  `delivery.images.widths` to the same list.
+</Callout>
+
+## Layouts
+
+Writing `sizes` by hand is where everyone goes wrong. `layout` (from Unpic/Gatsby) derives it, along
+with the box style, from the image's width:
+
+| `layout` | Box | `sizes` |
+|---|---|---|
+| `constrained` | `width: 100%; max-width: <width>px` | `(min-width: <width>px) <width>px, 100vw` |
+| `fullWidth` | `width: 100%` | `100vw` |
+| `fixed` | `<width>px × <height>px` | `<width>px`, or 1x/2x with a loader |
+
+An explicit `sizes` always wins. A **lazy** image gets `auto, ` in front: browsers that support
+`sizes="auto"` pick the candidate from the size the image is actually laid out at, and older ones read
+the rest of the list. A lazy image with neither a layout nor `sizes` gets `auto, 100vw`.
+
+## Art direction: `<MediaPicture>`
+
+Another crop on some screens, say a square banner on phones and the wide one on desktop:
+
+```ts
+// server: the square presets as their own group
+const banner = await media.library.image(id)
+const bannerSquare = await media.library.image(id, { conversions: ['square-sm', 'square-lg'] })
+```
+
+```tsx
+<MediaPicture
+  image={banner}
+  sources={[{ media: '(max-width: 640px)', image: bannerSquare }]}
+  alt={course.title}
+  sizes="100vw"
+/>
+```
+
+- **The group is its own reference.** When `conversions` is listed explicitly, `image()` compares the candidates against that group's aspect ratio, not the original's: the squares form their own `srcset`, with their own `width`/`height`, without the landscape original.
+- **Each source has its own size.** Every `<source>` carries its `width`/`height`, so the browser reserves the right box for whichever crop it picks.
+- **The fallback is a `<MediaImage>`**, with everything above: blur-up, lazy loading, `priority`, `layout` and focal point.
+- **`type` sources** (`{ type: 'image/avif', image }`) offer another format.
+
+## Private images
+
+With [`delivery.signing`](/docs/media/delivery#signed-urls), every URL `image()` returns goes
+through your delivery route, signed and expiring. Nothing points at the storage, and the `<img>`
+carries its own authorization. `image(id, { onDemand: true })` builds the `srcSet` from signed
+on-demand sizes instead of presets. The browser `loader` can't sign (the secret stays on the
+server), so private images use mode 1.
+
+## How the preview works
+
+Like `next/image`, there is no wrapper element: the preview is the `<img>`'s own background — the
+dominant colour, with the tiny WebP on top blurred through an SVG filter — and it is dropped on
+`load`. So the component styles like any `<img>`, and:
+
+- **Server rendering** already ships the preview in the markup, before any JavaScript runs.
+- An image that **finished loading before hydration** (it never fires `load` again) is detected on mount.
+- An image that **fails** keeps the preview instead of showing the broken-image icon.
+
+## The preview on other components
+
+When the `<img>` belongs to another component — a Radix `Avatar`, a CSS background — paint the
+preview with `placeholderStyle`:
+
+```tsx
+import { placeholderStyle } from '@adonis-agora/media-react'
+
+<AvatarFallback style={user.avatar?.placeholder ? placeholderStyle(user.avatar.placeholder) : undefined}>
+  {initials}
+</AvatarFallback>
+```
+
+Pass `{ width, height }` (the intrinsic size) to keep the picture's proportions in the blur, and
+`objectFit` to mirror the element's (`cover` by default).
+
+## Conversions generated before 0.22
+
+Since 0.22 every generated image conversion records its output size in
+`record.conversions[name].meta` (`{ width, height }`). For conversions generated earlier, `image()`
+derives the width from the preset when the preset pins it down (a lone `width`, or
+`cover`/`fill`/`contain` with both sides). Presets it cannot size (`inside`/`outside` with both sides,
+a lone `height`) are left out of `srcSet` until regenerated.

@@ -1,4 +1,5 @@
-import type { DeliveryMode } from './delivery.js';
+import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
+import type { DeliverySigningConfig } from './delivery_signing.js';
 import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
 import { disks } from './disks/factory.js';
 import type { ImageProcessor } from './image_processor.js';
@@ -193,6 +194,24 @@ export interface MediaDeliveryConfig {
   mode?: DeliveryMode;
   /** Lifetime of the signed URL when delivery resolves to `signed`. Default 300. */
   signedTtlSeconds?: number;
+  /**
+   * On-demand resizing — the `?w=640&q=75` of a `next/image`-style loader, through
+   * `MediaDeliveryHandler`. Only these widths and qualities are served (each resized once, then
+   * cached as a conversion), so a client cannot fill the storage with arbitrary sizes. Defaults
+   * match `next/image` and `@adonis-agora/media-react`'s loader.
+   */
+  images?: OnDemandImageConfig;
+  /**
+   * Sign delivery URLs (`media.library.deliveryUrl()`, and `image()` URLs): the route serves only
+   * what the app signed, until it expires — no public URL, and an `<img>` carries its own
+   * authorization. With `required` (the default), unsigned requests are refused.
+   */
+  signing?: DeliverySigningConfig;
+  /**
+   * The route the app mounts `MediaDeliveryHandler` on, with `:id` — what `deliveryUrl()` builds
+   * URLs for. Default `/media/:id`.
+   */
+  path?: string;
 }
 
 /**

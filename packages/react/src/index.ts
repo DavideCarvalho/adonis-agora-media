@@ -26,6 +26,22 @@ export {
   type OpenConsoleOptions,
   openMediaDashboard,
 } from './console-session.js';
+// `next/image` for stored images: srcSet from the collection's presets, intrinsic size and the
+// blur-up placeholder, all from `media.library.image(id)` on the server.
+export {
+  DEFAULT_DEVICE_SIZES,
+  DEFAULT_IMAGE_SIZES,
+  MediaImage,
+  type MediaImageData,
+  type MediaImageFromDataProps,
+  type MediaImageFromSrcProps,
+  type MediaImageLoader,
+  type MediaImagePlaceholder,
+  type MediaImageProps,
+  mediaImageLoader,
+  placeholderStyle,
+} from './media-image.js';
+export { MediaPicture, type MediaPictureProps, type MediaPictureSource } from './media-picture.js';
 export * from './media-uploader.js';
 export {
   OpenMediaDashboardButton,

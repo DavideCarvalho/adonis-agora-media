@@ -145,6 +145,21 @@ await media.library.list('Post', '1', 'gallery')
   Ordering is append-only — `attach` always takes the next slot. There's no built-in reorder API; if you need to resequence, update the `order` field through your own store access. (See the [Roadmap](/docs/media/roadmap).)
 </Callout>
 
+### Stripping metadata (GPS, EXIF)
+
+A phone photo carries the GPS position where it was taken, the device and the time. Conversions
+never keep any of it, but the **original** is served as uploaded. `stripMetadata: true` rewrites
+the original on attach without EXIF, XMP or IPTC:
+
+```ts
+{ name: 'avatar', acceptsMimeTypes: ['image/jpeg', 'image/png'], stripMetadata: true }
+```
+
+- **What it keeps:** the format and the colour profile. The orientation is baked into the pixels, since removing only the tag would display the photo sideways.
+- **Re-encoding:** lossy formats are re-encoded at high quality.
+- **What it skips:** images with nothing to strip, and non-images, stay byte-for-byte.
+- **Cost:** it reads and rewrites the original, one round trip per attach, and that includes `attachExisting`.
+
 ### Per-collection disk
 
 A collection can pin itself to a specific disk, overriding the top-level `disk`. A per-`attach` `disk` still wins over the collection's. Useful when, say, public images live on a CDN-backed disk and private documents live on a locked-down one:
@@ -202,7 +217,29 @@ These map straight onto sharp. The image is always auto-oriented from its EXIF t
 - **`format`** — the output encoding: `jpeg`, `png`, `webp`, `avif`. **Defaults to `webp`** when omitted. The actual extension and content-type follow the chosen format.
 - **`quality`** — the encoder quality (passed to sharp's `toFormat`). Omit for sharp's default.
 - **`blur`** — gaussian blur sigma (sharp's `blur(sigma)`, `0.3`–`1000`), applied after the resize. `{ name: 'blurred', width: 40, blur: 4 }` is a blurred low-res variant served as a file; for an *inline* blur-up placeholder, use [`transformers.placeholder()`](/docs/media/transformers#image-placeholders-blur-up) instead.
+- **`position`** — what a crop (`fit: 'cover'` with both sides) keeps: a gravity (`'top'`, `'left bottom'`, …, default `'centre'`), or a content strategy. `'attention'` keeps the most salient region (faces, saturated colour) and `'entropy'` the most detailed one. A record's [focal point](#focal-points) wins over it.
+- **`withoutEnlargement`** — never upscale: an original narrower than `width` keeps its size.
+- **`onlyDownscale`** — skip the conversion when it would not be narrower than the original (recorded as `meta.skipped`, no file), instead of storing a same-size copy. [`responsive`](#responsive-collections) collections use it.
 - **`eager`** — see below.
+
+Every generated image conversion records its output size in `record.conversions[name].meta` (`{ width, height }`).
+
+### Focal points
+
+Crops cut around the centre by default, which beheads a portrait or loses a banner's subject. Set a
+**focal point**, the part every crop must keep, as fractions of the displayed image (`{ x: 0, y: 0 }`
+is the top-left corner):
+
+```ts
+await media.library.setFocalPoint(user.avatarMediaId, { x: 0.42, y: 0.31 }) // null clears it
+// or at attach: attach({ ..., customProperties: { focalPoint: { x: 0.42, y: 0.31 } } })
+```
+
+Every cropping preset is then cut so the point sits as close to the centre as the image allows.
+`setFocalPoint` drops the crops cut around the old point: it regenerates the eager ones and lets the
+lazy ones regenerate on access. `media.library.image()` returns the point too, and
+[`<MediaImage>`](/docs/media/react/image) turns it into `object-position`, so CSS crops
+(`object-fit: cover`) keep the same part.
 
 ### Eager vs lazy
 
@@ -294,11 +331,36 @@ interface MediaConversion {
 }
 ```
 
-- An **image conversion** (a `ConversionPreset`) fills `path` + `disk`: one file, one key.
+- An **image conversion** (a `ConversionPreset`) fills `path` + `disk`: one file, one key. Since 0.22 its `meta` also records the output size, `{ width, height }` — what [`media.library.image()`](/docs/media/react/image) builds a `srcset` from.
 - A **multi-file transformer output** — an HLS package — fills `path` (the master playlist), `prefix` (the folder every artifact lives under) and `files` (all of them). `files` is the authority both for serving individual artifacts and for deleting the package whole.
 - A **metadata-only transform** — a probe, a blurhash — writes no artifact at all: `path`, `disk`, `prefix` and `files` are all absent and only `meta` carries the result.
 
 Which is why nothing here can be assumed present. Reading `record.conversions.probe.path` on a probe result gets you `undefined`, not a key; narrow on the field you actually need.
+
+---
+
+## Responsive images
+
+### Responsive collections
+
+Instead of writing presets by hand, `responsive: true` (spatie's `withResponsiveImages()`) gives a
+collection eager presets `responsive-320` … `responsive-2560`, plus `transformers.placeholder()` if
+it has none:
+
+```ts
+{ name: 'banner', responsive: true }
+{ name: 'banner', responsive: { widths: [480, 960, 1440], format: 'avif', quality: 60 } }
+```
+
+Widths at or above the original's are skipped, not stored as copies. `media.library.image(id)` then
+returns the `srcSet`, the intrinsic size and the blur-up preview, with no preset written by hand.
+
+### Rendering
+
+Presets at a few widths plus `transformers.placeholder()` are everything `next/image`-style rendering
+needs: `media.library.image(id)` turns them into `src`, `srcSet`, the intrinsic size and the blur-up
+preview, and `<MediaImage>` from `@adonis-agora/media-react` renders them. See
+[Responsive images](/docs/media/react/image).
 
 ---
 

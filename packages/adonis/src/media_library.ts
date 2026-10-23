@@ -4,20 +4,34 @@ import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_t
 import { asBuffer, peekContents, peekStream, toBytes } from './contents.js';
 import {
   DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+  DEFAULT_IMAGE_QUALITIES,
+  DEFAULT_IMAGE_WIDTHS,
   type DeliveryMode,
   type DeliveryResult,
+  type OnDemandImageConfig,
   resolveDeliveryMode,
 } from './delivery.js';
+import {
+  DEFAULT_DELIVERY_SIGNING_TTL_SECONDS,
+  type DeliverySigningConfig,
+  deliveryExpiry,
+  deliveryQueryString,
+  signDelivery,
+  verifyDelivery,
+} from './delivery_signing.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
 import {
   ContentSignatureUnrecognizedError,
   ContentTypeMismatchError,
   ConversionArtifactMissingError,
   ConversionNotDefinedError,
+  DeliverySignatureError,
   ImageProcessorMissingError,
+  ImageSizeNotAllowedError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
+  NotAnImageError,
   TransformerNotDefinedError,
   TransformerOutputError,
   TransformNotReadyError,
@@ -25,11 +39,23 @@ import {
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
 import { sanitizeFileName } from './file_name.js';
-import type { ImageProcessor } from './image_processor.js';
+import {
+  type ConversionPreset,
+  type FocalPoint,
+  focalPointOf,
+  type ImageProcessor,
+  presetCrops,
+} from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import { resolveDeclaredMimeType } from './mime_type.js';
+import {
+  BROWSER_IMAGE_TYPES,
+  imageCandidates,
+  type ResponsiveImage,
+  type ResponsiveImageOptions,
+} from './responsive_image.js';
 import type { StorageManager } from './storage_manager.js';
 import type {
   Transformer,
@@ -37,6 +63,7 @@ import type {
   TransformerWriteOptions,
   TransformResult,
 } from './transformer.js';
+import { placeholderOf } from './transformers/placeholder.js';
 import type { Disk, SignedUrlOptions } from './types.js';
 
 export interface MediaLibraryOptions {
@@ -55,6 +82,12 @@ export interface MediaLibraryOptions {
   deliveryMode?: DeliveryMode;
   /** Signed-URL lifetime when delivery resolves to `signed`. Default 300s. */
   deliverySignedTtlSeconds?: number;
+  /** On-demand resizing for `deliver(id, { width })` (`delivery.images`). */
+  deliveryImages?: OnDemandImageConfig;
+  /** Signed delivery URLs (`delivery.signing`). */
+  deliverySigning?: DeliverySigningConfig;
+  /** Route the app mounts `MediaDeliveryHandler` on, with `:id` (`delivery.path`). Default `/media/:id`. */
+  deliveryPath?: string;
 }
 
 export interface AttachInput {
@@ -124,6 +157,20 @@ export interface DeliverOptions {
   mode?: DeliveryMode | undefined;
   /** Override the configured signed-URL lifetime, when the resolved mode is `signed`. */
   signedTtlSeconds?: number | undefined;
+  /**
+   * Deliver the image resized to this width (see {@link MediaLibrary.resized}). Wins over
+   * `conversion`. Strings (a query-string value) are parsed and validated.
+   */
+  width?: number | string | undefined;
+  /** Quality of the resized image; defaults to the first of `delivery.images.qualities`. */
+  quality?: number | string | undefined;
+  /** The request's `Accept` header, to negotiate the resized image's format. */
+  accept?: string | undefined;
+  /**
+   * The request was authorized by a valid delivery signature (`MediaDeliveryHandler` sets this):
+   * any `width`/`quality` is served, not just the `delivery.images` whitelist — the app chose it.
+   */
+  trusted?: boolean | undefined;
 }
 
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
@@ -195,6 +242,9 @@ export class MediaLibrary {
   private readonly now: () => Date;
   private readonly deliveryMode: DeliveryMode;
   private readonly deliverySignedTtlSeconds: number;
+  private readonly deliveryImages: Required<OnDemandImageConfig>;
+  private readonly deliverySigning: DeliverySigningConfig | undefined;
+  private readonly deliveryPath: string;
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -207,6 +257,13 @@ export class MediaLibrary {
     this.deliveryMode = options.deliveryMode ?? 'auto';
     this.deliverySignedTtlSeconds =
       options.deliverySignedTtlSeconds ?? DEFAULT_DELIVERY_SIGNED_TTL_SECONDS;
+    this.deliveryImages = {
+      widths: options.deliveryImages?.widths ?? DEFAULT_IMAGE_WIDTHS,
+      qualities: options.deliveryImages?.qualities ?? DEFAULT_IMAGE_QUALITIES,
+      formats: options.deliveryImages?.formats ?? ['webp'],
+    };
+    this.deliverySigning = options.deliverySigning;
+    this.deliveryPath = options.deliveryPath ?? '/media/:id';
   }
 
   private emit<E extends 'attach' | 'delete' | 'conversion'>(
@@ -420,9 +477,13 @@ export class MediaLibrary {
 
     let saved: MediaRecord;
     try {
+      const strippedSize = config.stripMetadata
+        ? await this.#stripMetadata(target, path, input.mimeType)
+        : undefined;
       // `getMetaData` is a HEAD-shaped metadata read, never a body download — the zero-copy
-      // guarantee of `attachExisting` holds even when the caller omits `size`.
-      const size = input.size ?? (await target.getMetaData(path)).contentLength;
+      // guarantee of `attachExisting` holds even when the caller omits `size` (and the collection
+      // does not `stripMetadata`, which has to read the bytes).
+      const size = strippedSize ?? input.size ?? (await target.getMetaData(path)).contentLength;
       // A single-file collection holds exactly one item, so its order resets to 0 on replace.
       const order = config.single
         ? 0
@@ -533,26 +594,166 @@ export class MediaLibrary {
       }
       throw new ConversionNotDefinedError(record.collection, conversionName);
     }
+    return this.#generateConversion(record, preset);
+  }
+
+  /** Run `preset` over the record's original, store the output and persist it as a conversion. */
+  async #generateConversion(record: MediaRecord, preset: ConversionPreset): Promise<MediaRecord> {
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
 
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
-    const result = await this.imageProcessor.convert(original, preset);
+    if (preset.onlyDownscale && preset.width && this.imageProcessor.dimensions) {
+      const size = await this.imageProcessor.dimensions(original);
+      if (size && size.width <= preset.width) {
+        return this.#recordConversion(record, preset.name, {
+          meta: { skipped: 'not-smaller-than-original', width: size.width, height: size.height },
+        });
+      }
+    }
+    const focalPoint = focalPointOf(record.customProperties);
+    const result = await this.imageProcessor.convert(
+      original,
+      preset,
+      focalPoint ? { focalPoint } : {},
+    );
     const dir = record.path.slice(0, record.path.lastIndexOf('/'));
-    const conversionPath = `${dir}/conversions/${conversionName}.${result.format}`;
+    const conversionPath = `${dir}/conversions/${preset.name}.${result.format}`;
     await this.storage.disk(record.disk).put(conversionPath, result.data, {
       contentType: result.contentType,
     });
 
-    const updated = await this.store.save({
-      ...record,
-      conversions: {
-        ...record.conversions,
-        [conversionName]: { path: conversionPath, disk: record.disk },
-      },
+    const updated = await this.#recordConversion(record, preset.name, {
+      path: conversionPath,
+      disk: record.disk,
+      ...(result.width && result.height
+        ? { meta: { width: result.width, height: result.height } }
+        : {}),
+    });
+    this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
+    return updated;
+  }
+
+  /**
+   * Rewrite the object at `path` without its metadata (`stripMetadata` collections). Returns the
+   * new size, or `undefined` when nothing was rewritten (not an image, nothing to strip).
+   */
+  async #stripMetadata(target: Disk, path: string, mimeType: string): Promise<number | undefined> {
+    if (!mimeType.startsWith('image/') || mimeType.startsWith('image/svg')) return undefined;
+    if (!this.imageProcessor) throw new ImageProcessorMissingError();
+    if (!this.imageProcessor.stripMetadata) return undefined;
+    const original = asBuffer(await target.getBytes(path));
+    const stripped = await this.imageProcessor.stripMetadata(original);
+    if (!stripped) return undefined;
+    await target.put(path, stripped, { contentType: mimeType });
+    return stripped.byteLength;
+  }
+
+  /** Persist one conversion entry, re-reading first so a concurrent one is not dropped. */
+  async #recordConversion(
+    record: MediaRecord,
+    name: string,
+    conversion: MediaConversion,
+  ): Promise<MediaRecord> {
+    const current = (await this.store.find(record.id)) ?? record;
+    return this.store.save({
+      ...current,
+      conversions: { ...current.conversions, [name]: conversion },
       updatedAt: this.now(),
     });
-    this.emit('conversion', { id, conversion: conversionName, path: conversionPath });
+  }
+
+  /**
+   * Set (or clear, with `null`) the part of the image every crop must keep — a face in an avatar,
+   * the subject of a banner. Stored as `customProperties.focalPoint` (`{ x, y }`, fractions of the
+   * displayed image), handed to the processor for every cropping preset (`fit: 'cover'` with both
+   * sides), and returned by {@link image} so CSS crops (`object-fit: cover`) keep it too.
+   *
+   * The cropping conversions already generated are dropped — the eager ones regenerated at once,
+   * the lazy ones on next access — since they were cut around the old point.
+   *
+   * ```ts
+   * await media.library.setFocalPoint(user.avatarMediaId, { x: 0.42, y: 0.31 })
+   * ```
+   */
+  async setFocalPoint(id: string, point: FocalPoint | null): Promise<MediaRecord> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (point !== null && !focalPointOf({ focalPoint: point })) {
+      throw new RangeError(
+        `Focal point must be { x, y } with both between 0 and 1, got ${JSON.stringify(point)}.`,
+      );
+    }
+
+    const { focalPoint: _previous, ...rest } = record.customProperties;
+    const presets = this.collections.get(record.collection).conversions ?? [];
+    const cropping = presets.filter((preset) => presetCrops(preset));
+    const conversions = { ...record.conversions };
+    for (const preset of cropping) {
+      const stale = conversions[preset.name];
+      if (stale?.path && stale.disk) await this.storage.disk(stale.disk).delete(stale.path);
+      delete conversions[preset.name];
+    }
+
+    let updated = await this.store.save({
+      ...record,
+      customProperties: point ? { ...rest, focalPoint: { x: point.x, y: point.y } } : rest,
+      conversions,
+      updatedAt: this.now(),
+    });
+    for (const preset of cropping) {
+      if (preset.eager) updated = await this.#generateConversion(updated, preset);
+    }
     return updated;
+  }
+
+  /**
+   * Resize the image to one of `delivery.images.widths`, on demand — the server half of a
+   * `next/image`-style loader (`?w=640&q=75`). Generated once and kept as the conversion
+   * `@w640q75`, so later requests (and `delete()`) treat it like any other conversion. Never
+   * enlarges: past the original's width it is the original's size, re-encoded.
+   *
+   * Returns the conversion to deliver, or `undefined` for an SVG (served as is: it scales by itself).
+   * Throws {@link ImageSizeNotAllowedError} outside the whitelist and {@link NotAnImageError} for a
+   * record that is not an image.
+   */
+  async resized(
+    id: string,
+    request: {
+      width: number | string;
+      quality?: number | string | undefined;
+      accept?: string | undefined;
+      /** Signed by the app: any width/quality in range, not just the whitelist. */
+      trusted?: boolean | undefined;
+    },
+  ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
+    const { widths, qualities, formats } = this.deliveryImages;
+    const width = request.trusted
+      ? numberInRange('width', request.width, 1, MAX_SIGNED_WIDTH)
+      : allowedNumber('width', request.width, widths);
+    const quality =
+      request.quality === undefined || request.quality === ''
+        ? qualities[0]!
+        : request.trusted
+          ? numberInRange('quality', request.quality, 1, 100)
+          : allowedNumber('quality', request.quality, qualities);
+
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (record.mimeType.startsWith('image/svg')) return { record, conversion: undefined };
+    if (!record.mimeType.startsWith('image/')) throw new NotAnImageError(id, record.mimeType);
+
+    const format = negotiateFormat(request.accept, formats, record.mimeType);
+    const name = `@w${width}q${quality}-${format}`;
+    if (record.conversions[name]) return { record, conversion: name };
+    const updated = await this.#generateConversion(record, {
+      name,
+      width,
+      quality,
+      format,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+    return { record: updated, conversion: name };
   }
 
   /**
@@ -824,6 +1025,181 @@ export class MediaLibrary {
   }
 
   /**
+   * Everything an `<img>` needs to render a stored image like `next/image`: `srcSet` from the
+   * collection's presets, the intrinsic `width`/`height` and the blur-up `placeholder` — as plain
+   * JSON, for a page prop. Render it with `<MediaImage>` from `@adonis-agora/media-react`.
+   *
+   * ```ts
+   * // config: presets at a few widths (eager, so they exist from the attach on) + the placeholder
+   * { name: 'banner', conversions: [{ name: 'sm', width: 640, eager: true }, { name: 'lg', width: 1280, eager: true }],
+   *   transformers: [transformers.placeholder()] }
+   *
+   * return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+   * ```
+   *
+   * The intrinsic size and the original-as-candidate come from the placeholder, so without
+   * `transformers.placeholder()` the result has no `width`/`height` and only the presets in
+   * `srcSet`. Like {@link url}, this answers "how", not "who": authorize the caller first.
+   */
+  async image(id: string, options: ResponsiveImageOptions = {}): Promise<ResponsiveImage> {
+    let record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (options.onDemand) return this.#onDemandImage(record, options.onDemand);
+    const presets = this.collections.get(record.collection).conversions ?? [];
+
+    if (options.generate) {
+      for (const preset of presets) {
+        if (options.conversions && !options.conversions.includes(preset.name)) continue;
+        if (!preset.blur && !record.conversions[preset.name]) {
+          record = await this.ensureConversion(id, preset.name);
+        }
+      }
+    }
+
+    const urlOf = (conversion: string | undefined): string | Promise<string> => {
+      if (options.url) return options.url(conversion);
+      if (options.expiresIn !== undefined) {
+        return this.signedUrl(id, options.expiresIn, conversion ? { conversion } : {});
+      }
+      // With signing configured, nothing goes out as a storage URL: everything through the route.
+      if (this.deliverySigning) return this.deliveryUrl(id, conversion ? { conversion } : {});
+      return this.url(id, conversion);
+    };
+
+    const candidates = imageCandidates(record, presets, options.conversions);
+    const urls = await Promise.all(candidates.map((c) => urlOf(c.conversion)));
+    const widest = urls.at(-1);
+    const placeholder = placeholderOf(record);
+    // An explicit group (an art-directed `<source>`) reports its own size — a square crop is not
+    // the original's shape.
+    const groupSize = options.conversions
+      ? [...candidates].reverse().find((c) => c.height !== undefined)
+      : undefined;
+    const size = groupSize
+      ? { width: groupSize.width, height: groupSize.height! }
+      : placeholder
+        ? { width: placeholder.width, height: placeholder.height }
+        : undefined;
+
+    return {
+      src: widest ?? (await urlOf(undefined)),
+      ...(candidates.length > 0
+        ? { srcSet: candidates.map((c, i) => `${urls[i]} ${c.width}w`).join(', ') }
+        : {}),
+      ...(size ?? {}),
+      ...(placeholder
+        ? { placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color } }
+        : {}),
+      ...focalPointProp(record),
+    };
+  }
+
+  /** {@link image} with `onDemand`: candidates are delivery-route URLs resized per width. */
+  #onDemandImage(
+    record: MediaRecord,
+    onDemand: true | { widths?: readonly number[]; quality?: number },
+  ): ResponsiveImage {
+    const settings = onDemand === true ? {} : onDemand;
+    const placeholder = placeholderOf(record);
+    const extra = {
+      ...(placeholder
+        ? {
+            width: placeholder.width,
+            height: placeholder.height,
+            placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
+          }
+        : {}),
+      ...focalPointProp(record),
+    };
+    const original = this.deliveryUrl(record.id);
+    // Not resizable (an SVG scales itself; a non-image has no widths): the route serves it as is.
+    if (!record.mimeType.startsWith('image/') || record.mimeType.startsWith('image/svg')) {
+      return { src: original, ...extra };
+    }
+
+    const originalWidth = placeholder?.width;
+    const widths = [...(settings.widths ?? this.deliveryImages.widths)]
+      .filter((w) => (originalWidth === undefined ? w >= 256 : w < originalWidth))
+      .sort((a, b) => a - b);
+    const candidates = widths.map((width) => ({
+      url: this.deliveryUrl(record.id, {
+        width,
+        ...(settings.quality !== undefined ? { quality: settings.quality } : {}),
+      }),
+      width,
+    }));
+    // The original, full size, as the widest — when its width is known and browsers decode it.
+    if (originalWidth !== undefined && BROWSER_IMAGE_TYPES.has(record.mimeType)) {
+      candidates.push({ url: original, width: originalWidth });
+    }
+    if (candidates.length === 0) return { src: original, ...extra };
+    return {
+      src: candidates.at(-1)!.url,
+      srcSet: candidates.map((c) => `${c.url} ${c.width}w`).join(', '),
+      ...extra,
+    };
+  }
+
+  /**
+   * URL of the delivery route (`delivery.path`, default `/media/:id`) for a record — optionally a
+   * conversion, or resized (`width`/`quality`). With `delivery.signing` configured it is signed and
+   * expires, and `MediaDeliveryHandler` serves exactly what was signed (any width) and nothing else;
+   * without it, a plain route URL (widths limited to `delivery.images`).
+   *
+   * ```ts
+   * media.library.deliveryUrl(id)                 // /media/<id>?exp=…&sig=…
+   * media.library.deliveryUrl(id, { width: 640 }) // /media/<id>?w=640&exp=…&sig=…
+   * ```
+   */
+  deliveryUrl(
+    id: string,
+    options: {
+      conversion?: string;
+      width?: number;
+      quality?: number;
+      /** Seconds; overrides `delivery.signing.expiresIn`. */
+      expiresIn?: number;
+    } = {},
+  ): string {
+    const path = this.deliveryPath.replace(':id', encodeURIComponent(id));
+    const { conversion, width, quality } = options;
+    if (!this.deliverySigning) return path + deliveryQueryString({ conversion, width, quality });
+    const ttl =
+      options.expiresIn ?? this.deliverySigning.expiresIn ?? DEFAULT_DELIVERY_SIGNING_TTL_SECONDS;
+    const expires = deliveryExpiry(this.now().getTime(), ttl);
+    const signature = signDelivery(this.deliverySigning.secret, {
+      mediaId: id,
+      conversion,
+      width,
+      quality,
+      expires,
+    });
+    return path + deliveryQueryString({ conversion, width, quality, expires, signature });
+  }
+
+  /**
+   * Check a delivery request against `delivery.signing`: `true` when it is signed and valid (serve
+   * any size it names), `false` when signing is off or the request is unsigned and that is allowed.
+   * Throws {@link DeliverySignatureError} for an invalid or expired signature, or a missing one when
+   * `delivery.signing.required` (the default). `MediaDeliveryHandler` calls this for you.
+   */
+  checkDeliverySignature(request: {
+    mediaId: string;
+    conversion?: string | undefined;
+    width?: number | string | undefined;
+    quality?: number | string | undefined;
+    expires?: number | string | undefined;
+    signature?: string | undefined;
+  }): boolean {
+    if (!this.deliverySigning) return false;
+    const signed = verifyDelivery(this.deliverySigning.secret, request, this.now().getTime());
+    if (!signed && (this.deliverySigning.required ?? true)) {
+      throw new DeliverySignatureError('missing');
+    }
+    return signed;
+  }
+
+  /**
    * Resolve how a media record should reach the client, per the configured `delivery.mode` — the
    * read-side counterpart to `uploads.mode`. Returns either a URL to redirect to (`public`/`signed`)
    * or a {@link Readable} to pipe (`proxy`), so an app on a private bucket with no
@@ -840,14 +1216,32 @@ export class MediaLibrary {
    * ```
    */
   async deliver(id: string, options: DeliverOptions = {}): Promise<DeliveryResult> {
-    const target = await this.#resolveTarget(id, options.conversion);
+    const resizing = options.width !== undefined && options.width !== '';
+    const conversion = resizing
+      ? (
+          await this.resized(id, {
+            width: options.width!,
+            quality: options.quality,
+            accept: options.accept,
+            trusted: options.trusted,
+          })
+        ).conversion
+      : options.conversion;
+    const vary = resizing && options.accept !== undefined ? { vary: 'Accept' as const } : {};
+    const target = await this.#resolveTarget(id, conversion);
     const disk = this.storage.disk(target.disk);
     const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, target.path);
 
-    if (mode === 'public') return { kind: 'redirect', url: await disk.getUrl(target.path) };
+    if (mode === 'public') {
+      return { kind: 'redirect', url: await disk.getUrl(target.path), ...vary };
+    }
     if (mode === 'signed') {
       const expiresIn = options.signedTtlSeconds ?? this.deliverySignedTtlSeconds;
-      return { kind: 'redirect', url: await disk.getSignedUrl(target.path, { expiresIn }) };
+      return {
+        kind: 'redirect',
+        url: await disk.getSignedUrl(target.path, { expiresIn }),
+        ...vary,
+      };
     }
 
     // Prefer the disk's own metadata over the record's: for a conversion the record describes the
@@ -859,6 +1253,7 @@ export class MediaLibrary {
       mimeType: metadata.contentType ?? target.record.mimeType,
       size: metadata.contentLength,
       fileName: target.fileName,
+      ...vary,
     };
   }
 
@@ -909,4 +1304,56 @@ function assertSafeArtifactPath(transformer: string, relativePath: string): stri
     );
   }
   return normalized;
+}
+
+/** Widest image a signed URL may ask for — a sanity bound; the original's width still caps it. */
+const MAX_SIGNED_WIDTH = 8192;
+
+/** Parse a requested width/quality and check it is within `[min, max]` (signed requests). */
+function numberInRange(
+  field: 'width' | 'quality',
+  value: number | string,
+  min: number,
+  max: number,
+): number {
+  const parsed =
+    typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new ImageSizeNotAllowedError(field, value, [min, max]);
+  }
+  return parsed;
+}
+
+/** Parse a requested width/quality (a query-string value, possibly) and check it is whitelisted. */
+function allowedNumber(
+  field: 'width' | 'quality',
+  value: number | string,
+  allowed: readonly number[],
+): number {
+  const parsed =
+    typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!allowed.includes(parsed)) throw new ImageSizeNotAllowedError(field, value, allowed);
+  return parsed;
+}
+
+/**
+ * The resized image's format: the first configured modern format the browser accepts. A browser
+ * that accepts none gets a format every browser decodes: PNG for an original that may be
+ * transparent, JPEG otherwise. No `Accept` at all (a server-side caller) ⇒ the first configured.
+ */
+function negotiateFormat(
+  accept: string | undefined,
+  formats: readonly ('avif' | 'webp')[],
+  originalMimeType: string,
+): 'avif' | 'webp' | 'jpeg' | 'png' {
+  if (accept === undefined) return formats[0] ?? 'webp';
+  const accepted = accept.toLowerCase();
+  const modern = formats.find((format) => accepted.includes(`image/${format}`));
+  if (modern) return modern;
+  return originalMimeType === 'image/png' || originalMimeType === 'image/gif' ? 'png' : 'jpeg';
+}
+
+function focalPointProp(record: MediaRecord): { focalPoint?: FocalPoint } {
+  const focalPoint = focalPointOf(record.customProperties);
+  return focalPoint ? { focalPoint } : {};
 }

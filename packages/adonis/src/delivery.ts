@@ -24,7 +24,7 @@ export const DEFAULT_DELIVERY_SIGNED_TTL_SECONDS = 300;
  * because the library is framework-agnostic: the app turns a `redirect` into `response.redirect(url)`
  * and a `stream` into `response.stream(stream)` with whatever headers it wants.
  */
-export type DeliveryResult =
+export type DeliveryResult = (
   | { kind: 'redirect'; url: string }
   | {
       kind: 'stream';
@@ -32,7 +32,15 @@ export type DeliveryResult =
       mimeType: string;
       size?: number | undefined;
       fileName?: string | undefined;
-    };
+    }
+) & {
+  /**
+   * `'Accept'` when the format was negotiated from the request's `Accept` header (on-demand
+   * resize): send it as the `Vary` header, or a cache in between hands an AVIF to a browser that
+   * asked for WebP.
+   */
+  vary?: 'Accept' | undefined;
+};
 
 /**
  * Collapse a requested {@link DeliveryMode} to a concrete one for a specific object.
@@ -62,6 +70,49 @@ export interface DeliveryRequest {
   mediaId: string;
   /** Deliver this named conversion instead of the original (generated lazily if absent). */
   conversion?: string | undefined;
+  /**
+   * Deliver the image resized to this width — the `?w=` of a `next/image`-style loader. Must be one
+   * of `delivery.images.widths`; resized once, then cached. A query-string value can be passed as
+   * is: it is parsed and validated here.
+   */
+  width?: number | string | undefined;
+  /** Quality of the resized image (`?q=`); one of `delivery.images.qualities`. */
+  quality?: number | string | undefined;
+  /**
+   * The request's `Accept` header: picks the first of `delivery.images.formats` the browser
+   * supports (AVIF before WebP, say). Absent ⇒ the first configured format.
+   */
+  accept?: string | undefined;
+  /** `?exp=` of a signed URL (`delivery.signing`). */
+  expires?: number | string | undefined;
+  /** `?sig=` of a signed URL (`delivery.signing`). */
+  signature?: string | undefined;
+}
+
+/**
+ * `next/image`'s default `deviceSizes` + `imageSizes`: the widths a loader may ask for. The same
+ * list on both sides is what keeps a loader's `srcset` and the server's whitelist in step.
+ */
+export const DEFAULT_IMAGE_WIDTHS: readonly number[] = [
+  16, 32, 48, 64, 96, 128, 256, 384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840,
+];
+
+/** `next/image`'s default `qualities`: one, so a client cannot multiply the cache by quality. */
+export const DEFAULT_IMAGE_QUALITIES: readonly number[] = [75];
+
+/** On-demand resizing for `?w=`/`?q=` delivery (`delivery.images`). */
+export interface OnDemandImageConfig {
+  /** Widths a request may ask for. Default {@link DEFAULT_IMAGE_WIDTHS}. */
+  widths?: readonly number[];
+  /** Qualities a request may ask for; the first is the default. Default {@link DEFAULT_IMAGE_QUALITIES}. */
+  qualities?: readonly number[];
+  /**
+   * Modern formats to serve, in order of preference, negotiated against the request's `Accept`
+   * (like `next/image`'s `images.formats`). A browser that accepts none of them gets JPEG — or PNG
+   * when the original is a PNG/GIF, to keep transparency. Default `['webp']`: AVIF is markedly
+   * smaller but many times slower to encode, so it is opt-in (`['avif', 'webp']`).
+   */
+  formats?: readonly ('avif' | 'webp')[];
 }
 
 export interface MediaDeliveryHandlerOptions {
@@ -107,9 +158,16 @@ export class MediaDeliveryHandler {
     this.signedTtlSeconds = options.signedTtlSeconds;
   }
 
-  handle(request: DeliveryRequest): Promise<DeliveryResult> {
+  async handle(request: DeliveryRequest): Promise<DeliveryResult> {
+    // With `delivery.signing`, a signed request is authorized by its signature (any size the app
+    // signed); an unsigned one is refused when signing is required. Throws DeliverySignatureError.
+    const trusted = this.library.checkDeliverySignature(request);
     return this.library.deliver(request.mediaId, {
+      ...(trusted ? { trusted: true } : {}),
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
+      ...(request.width !== undefined && request.width !== ''
+        ? { width: request.width, quality: request.quality, accept: request.accept }
+        : {}),
       ...(this.mode !== undefined ? { mode: this.mode } : {}),
       ...(this.signedTtlSeconds !== undefined ? { signedTtlSeconds: this.signedTtlSeconds } : {}),
     });
