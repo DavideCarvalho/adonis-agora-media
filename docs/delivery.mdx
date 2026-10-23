@@ -82,6 +82,8 @@ router
 
 The handler's own `mode` / `signedTtlSeconds` override the configured ones, so one app can serve avatars as public URLs and exam PDFs through a proxy route.
 
+In `proxy` mode the stream's `mimeType` is the storage object's own type, unless that type is generic. An object assembled by a multipart or TUS upload comes back from S3 as `application/octet-stream`, and the original is then served with the record's type instead (checked against the file's signature on attach). Without that, a PDF served that way opens in no viewer.
+
 ### Resizing on demand (`?w=`)
 
 Pass `width` (and `quality`) through and the same route serves the image resized, which is the

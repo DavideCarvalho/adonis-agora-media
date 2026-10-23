@@ -152,6 +152,25 @@ rule throwing, the database down) is rethrown to your exception handler.
 | `cacheControl` | `'private, max-age=60'` | `'public, max-age=…'` for public collections. |
 | `mode` / `signedTtlSeconds` | `delivery.*` | Override how this route serves. |
 
+### `serve()`: the same, for your own controller
+
+When the URL is not a media id, use `serve`. It does the same authorization and HTTP answer as the
+route; your controller only finds the record. That covers a stable `/profiles/:id/photo` stored in
+the database, or a record looked up by its owner:
+
+```ts
+async show(ctx: HttpContext) {
+  const profile = await Profile.findOrFail(ctx.params.id)
+  const [avatar] = await media.library.list('Profile', profile.id, 'avatar')
+  return media.access.serve(ctx, avatar, {
+    authorize: async ({ subject }) => Boolean(subject && (await canAccessProfile(subject.id, profile.id))),
+  })
+}
+```
+
+`target` is the record, its id, or nothing found (`null`/`undefined`, answered `404`). The
+options are the route's, except `param`.
+
 ## In your own code
 
 ```ts
