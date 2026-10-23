@@ -207,6 +207,33 @@ describe('media.library.image()', () => {
   });
 });
 
+describe('media.library.image() for an art-directed group', () => {
+  it('an explicit list of square crops is its own srcset, with its own size, without the original', async () => {
+    const { library } = makeLibrary([
+      {
+        name: 'banner',
+        conversions: [
+          { name: 'sq-sm', width: 200, height: 200, eager: true },
+          { name: 'sq-lg', width: 400, height: 400, eager: true },
+          { name: 'wide', width: 640, eager: true },
+        ],
+        transformers: [transformers.placeholder()],
+      },
+    ]);
+    const record = await attach(library, await png(1000, 500));
+
+    const square = await library.image(record.id, { conversions: ['sq-sm', 'sq-lg'] });
+    expect(square.srcSet).toBe(`${url('sq-sm')} 200w, ${url('sq-lg')} 400w`);
+    expect(square).toMatchObject({ width: 400, height: 400 });
+    expect(square.placeholder).toBeDefined();
+
+    // the landscape default is unchanged: squares out, original in
+    const wide = await library.image(record.id);
+    expect(wide.srcSet).toBe(`${url('wide')} 640w, ${original} 1000w`);
+    expect(wide).toMatchObject({ width: 1000, height: 500 });
+  });
+});
+
 describe('imageCandidates (conversions generated before sizes were recorded)', () => {
   const record = (conversions: MediaRecord['conversions']): MediaRecord => ({
     id: 'm1',
@@ -250,9 +277,9 @@ describe('imageCandidates (conversions generated before sizes were recorded)', (
     );
     // `inside`/`tall` outputs depend on the original: unknown without the recorded size
     expect(candidates).toEqual([
-      { conversion: 'w', width: 320 },
-      { conversion: 'cover', width: 600 },
-      { conversion: undefined, width: 1000 },
+      { conversion: 'w', width: 320, height: 160 },
+      { conversion: 'cover', width: 600, height: 300 },
+      { conversion: undefined, width: 1000, height: 500 },
     ]);
   });
 
@@ -266,9 +293,9 @@ describe('imageCandidates (conversions generated before sizes were recorded)', (
       presets,
     );
     expect(candidates).toEqual([
-      { conversion: 'inside', width: 400 },
-      { conversion: 'cover', width: 600 },
-      { conversion: undefined, width: 1000 },
+      { conversion: 'inside', width: 400, height: 200 },
+      { conversion: 'cover', width: 600, height: 300 },
+      { conversion: undefined, width: 1000, height: 500 },
     ]);
   });
 });

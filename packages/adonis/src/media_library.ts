@@ -1070,18 +1070,25 @@ export class MediaLibrary {
     const urls = await Promise.all(candidates.map((c) => urlOf(c.conversion)));
     const widest = urls.at(-1);
     const placeholder = placeholderOf(record);
+    // An explicit group (an art-directed `<source>`) reports its own size — a square crop is not
+    // the original's shape.
+    const groupSize = options.conversions
+      ? [...candidates].reverse().find((c) => c.height !== undefined)
+      : undefined;
+    const size = groupSize
+      ? { width: groupSize.width, height: groupSize.height! }
+      : placeholder
+        ? { width: placeholder.width, height: placeholder.height }
+        : undefined;
 
     return {
       src: widest ?? (await urlOf(undefined)),
       ...(candidates.length > 0
         ? { srcSet: candidates.map((c, i) => `${urls[i]} ${c.width}w`).join(', ') }
         : {}),
+      ...(size ?? {}),
       ...(placeholder
-        ? {
-            width: placeholder.width,
-            height: placeholder.height,
-            placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
-          }
+        ? { placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color } }
         : {}),
       ...focalPointProp(record),
     };

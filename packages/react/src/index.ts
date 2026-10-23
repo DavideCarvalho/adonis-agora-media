@@ -41,6 +41,7 @@ export {
   mediaImageLoader,
   placeholderStyle,
 } from './media-image.js';
+export { MediaPicture, type MediaPictureProps, type MediaPictureSource } from './media-picture.js';
 export * from './media-uploader.js';
 export {
   OpenMediaDashboardButton,

@@ -71,12 +71,19 @@ export const BROWSER_IMAGE_TYPES = new Set([
 export interface ImageCandidate {
   conversion: string | undefined;
   width: number;
+  /** Its height, when known — what an art-directed group reports as its intrinsic size. */
+  height?: number;
 }
 
 /**
  * Pick the `srcset` candidates of a record: the generated presets that are the same picture at
  * another width, plus the original when it is a browser-decodable image of known width. Sorted
  * narrowest first, one per width. Pure — {@link MediaLibrary.image} resolves the URLs.
+ *
+ * "The same picture" means the same aspect ratio as a reference: the original's, or — when the
+ * caller lists `include` explicitly, which is how an art-directed `<source>` (square crops for
+ * phones, say) asks for its group — the first listed conversion's. The original joins only if it
+ * matches that reference.
  *
  * @internal exported for tests.
  */
@@ -86,9 +93,15 @@ export function imageCandidates(
   include?: string[],
 ): ImageCandidate[] {
   const placeholder = placeholderOf(record);
-  const aspect = placeholder ? placeholder.width / placeholder.height : undefined;
+  const originalAspect = placeholder ? placeholder.width / placeholder.height : undefined;
 
-  const candidates: ImageCandidate[] = [];
+  const sized: Array<{
+    name: string;
+    width: number;
+    height: number | undefined;
+    aspect: number | undefined;
+    keepsAspect: boolean;
+  }> = [];
   for (const preset of presets) {
     if (include && !include.includes(preset.name)) continue;
     if (preset.blur) continue;
@@ -96,11 +109,49 @@ export function imageCandidates(
     if (!conversion?.path) continue;
     const size = conversionSize(preset, conversion.meta);
     if (!size) continue;
-    if (!size.keepsAspect && !sameAspect(size.width, size.height, aspect)) continue;
-    candidates.push({ conversion: preset.name, width: size.width });
+    const aspect =
+      size.height !== undefined
+        ? size.width / size.height
+        : size.keepsAspect
+          ? originalAspect
+          : undefined;
+    sized.push({
+      name: preset.name,
+      width: size.width,
+      height: size.height,
+      aspect,
+      keepsAspect: size.keepsAspect,
+    });
   }
-  if (placeholder && BROWSER_IMAGE_TYPES.has(record.mimeType)) {
-    candidates.push({ conversion: undefined, width: placeholder.width });
+
+  let reference = originalAspect;
+  if (include) {
+    const first = include
+      .map((name) => sized.find((s) => s.name === name))
+      .find((s) => s?.aspect !== undefined);
+    if (first) reference = first.aspect;
+  }
+
+  const candidates: ImageCandidate[] = [];
+  for (const s of sized) {
+    const fits =
+      reference === undefined
+        ? s.keepsAspect
+        : s.aspect !== undefined && sameAspect(s.aspect, reference);
+    if (!fits) continue;
+    const height = s.height ?? (s.aspect ? Math.round(s.width / s.aspect) : undefined);
+    candidates.push({ conversion: s.name, width: s.width, ...(height ? { height } : {}) });
+  }
+  if (
+    placeholder &&
+    BROWSER_IMAGE_TYPES.has(record.mimeType) &&
+    (reference === undefined || sameAspect(originalAspect!, reference))
+  ) {
+    candidates.push({
+      conversion: undefined,
+      width: placeholder.width,
+      height: placeholder.height,
+    });
   }
 
   candidates.sort((a, b) => a.width - b.width);
@@ -135,15 +186,7 @@ function isDimension(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-/**
- * Same picture at another size? Whole-pixel rounding skews tiny outputs, hence the tolerance.
- * Without the original's aspect ratio (no placeholder) there is nothing to compare against.
- */
-function sameAspect(
-  width: number,
-  height: number | undefined,
-  original: number | undefined,
-): boolean {
-  if (height === undefined || original === undefined) return false;
-  return Math.abs(width / height - original) / original < 0.02;
+/** Same picture at another size? Whole-pixel rounding skews tiny outputs, hence the tolerance. */
+function sameAspect(candidate: number, reference: number): boolean {
+  return Math.abs(candidate - reference) / reference < 0.02;
 }
