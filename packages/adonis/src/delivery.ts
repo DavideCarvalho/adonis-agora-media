@@ -62,6 +62,35 @@ export interface DeliveryRequest {
   mediaId: string;
   /** Deliver this named conversion instead of the original (generated lazily if absent). */
   conversion?: string | undefined;
+  /**
+   * Deliver the image resized to this width — the `?w=` of a `next/image`-style loader. Must be one
+   * of `delivery.images.widths`; resized once, then cached. A query-string value can be passed as
+   * is: it is parsed and validated here.
+   */
+  width?: number | string | undefined;
+  /** Quality of the resized image (`?q=`); one of `delivery.images.qualities`. */
+  quality?: number | string | undefined;
+}
+
+/**
+ * `next/image`'s default `deviceSizes` + `imageSizes`: the widths a loader may ask for. The same
+ * list on both sides is what keeps a loader's `srcset` and the server's whitelist in step.
+ */
+export const DEFAULT_IMAGE_WIDTHS: readonly number[] = [
+  16, 32, 48, 64, 96, 128, 256, 384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840,
+];
+
+/** `next/image`'s default `qualities`: one, so a client cannot multiply the cache by quality. */
+export const DEFAULT_IMAGE_QUALITIES: readonly number[] = [75];
+
+/** On-demand resizing for `?w=`/`?q=` delivery (`delivery.images`). */
+export interface OnDemandImageConfig {
+  /** Widths a request may ask for. Default {@link DEFAULT_IMAGE_WIDTHS}. */
+  widths?: readonly number[];
+  /** Qualities a request may ask for; the first is the default. Default {@link DEFAULT_IMAGE_QUALITIES}. */
+  qualities?: readonly number[];
+  /** Output format of the resized images. Default `webp`. */
+  format?: 'webp' | 'avif' | 'jpeg' | 'png';
 }
 
 export interface MediaDeliveryHandlerOptions {
@@ -110,6 +139,9 @@ export class MediaDeliveryHandler {
   handle(request: DeliveryRequest): Promise<DeliveryResult> {
     return this.library.deliver(request.mediaId, {
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
+      ...(request.width !== undefined && request.width !== ''
+        ? { width: request.width, quality: request.quality }
+        : {}),
       ...(this.mode !== undefined ? { mode: this.mode } : {}),
       ...(this.signedTtlSeconds !== undefined ? { signedTtlSeconds: this.signedTtlSeconds } : {}),
     });

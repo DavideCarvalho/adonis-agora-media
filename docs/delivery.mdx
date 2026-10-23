@@ -75,6 +75,45 @@ router
 
 The handler's own `mode` / `signedTtlSeconds` override the configured ones, so one app can serve avatars as public URLs and exam PDFs through a proxy route.
 
+### Resizing on demand (`?w=`)
+
+Pass `width` (and `quality`) through and the same route serves the image resized, which is the
+server half of a `next/image`-style loader
+([`<MediaImage loader>`](/docs/media/react/image#3-a-loader-resized-on-demand)):
+
+```ts title="start/routes.ts"
+const result = await delivery.handle({
+  mediaId: params.id,
+  conversion: request.input('conversion'),
+  width: request.input('w'),   // '640' — parsed and validated by the library
+  quality: request.input('q'),
+})
+```
+
+- **Whitelisted.** Only the widths and qualities in `delivery.images` are served. Anything else
+  throws `ImageSizeNotAllowedError`; map it to a 400. Without the whitelist, one client could fill
+  the storage with a variant per arbitrary width. The defaults are `next/image`'s and match the React loader's:
+  `16 32 48 64 96 128 256 384 640 750 828 1080 1200 1920 2048 3840`, quality `75`.
+- **Resized once.** The first request generates the variant and keeps it as the conversion
+  `@w640q75`. Every later request is a plain delivery, and `delete()` removes it with the record.
+- **Never enlarged.** Past the original's width you get the original's size, re-encoded.
+- **SVGs** are served as they are, since they scale by themselves. A non-image throws
+  `NotAnImageError`.
+
+```ts title="config/media.ts"
+delivery: {
+  images: {
+    widths: [320, 640, 1280],   // what your loader asks for
+    qualities: [75],            // the first is the default
+    format: 'webp',             // or 'avif' | 'jpeg' | 'png'
+  },
+}
+```
+
+The first request for a size pays the resize on the request path. For widths you know up front, eager
+[presets](/docs/media/collections-and-conversions#conversions) with
+[`media.library.image()`](/docs/media/react/image) avoid that.
+
 ---
 
 ## Without a route

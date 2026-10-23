@@ -58,11 +58,14 @@ export type {
   DeliveryRequest,
   DeliveryResult,
   MediaDeliveryHandlerOptions,
+  OnDemandImageConfig,
   ResolvedDeliveryMode,
 } from './delivery.js';
 // Configurable delivery (the read-side counterpart to the upload modes)
 export {
   DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+  DEFAULT_IMAGE_QUALITIES,
+  DEFAULT_IMAGE_WIDTHS,
   MediaDeliveryHandler,
   resolveDeliveryMode,
 } from './delivery.js';
@@ -122,9 +125,11 @@ export {
   FfmpegFailedError,
   HlsSourceUnsupportedError,
   ImageProcessorMissingError,
+  ImageSizeNotAllowedError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
+  NotAnImageError,
   ResumableUploadsNotConfiguredError,
   StoreNotConfiguredError,
   TransformerConflictError,

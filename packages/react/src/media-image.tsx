@@ -28,18 +28,34 @@ export interface MediaImageData {
 /** The blur-up preview alone — the `placeholder` of {@link MediaImageData}. */
 export type MediaImagePlaceholder = NonNullable<MediaImageData['placeholder']>;
 
-export interface MediaImageProps
+/**
+ * `next/image`'s loader contract: the URL of `src` at `width` px (and `quality`). With one,
+ * {@link MediaImage} builds the `srcSet` itself. See {@link mediaImageLoader} for the server's
+ * on-demand resize route.
+ */
+export type MediaImageLoader = (params: {
+  src: string;
+  width: number;
+  quality?: number | undefined;
+}) => string;
+
+/** `next/image`'s default `deviceSizes`: the widths a full-width image is offered at. */
+export const DEFAULT_DEVICE_SIZES: readonly number[] = [
+  640, 750, 828, 1080, 1200, 1920, 2048, 3840,
+];
+/** `next/image`'s default `imageSizes`: extra widths for images narrower than the screen. */
+export const DEFAULT_IMAGE_SIZES: readonly number[] = [16, 32, 48, 64, 96, 128, 256, 384];
+
+interface MediaImageCommonProps
   extends Omit<
     ImgHTMLAttributes<HTMLImageElement>,
     'src' | 'srcSet' | 'width' | 'height' | 'placeholder' | 'alt'
   > {
-  /** The descriptor from `media.library.image(id)`. */
-  image: MediaImageData;
   /** Required, like `next/image`: describe the picture, or `""` when it is decorative. */
   alt: string;
   /**
-   * Which `srcSet` width the browser should pick, e.g. `"(max-width: 768px) 100vw, 50vw"`. Without
-   * it the browser assumes the image spans the whole viewport and downloads accordingly.
+   * How wide the image renders, so the browser picks from `srcSet` — e.g.
+   * `"(max-width: 768px) 100vw, 50vw"`. Without it the browser assumes the full viewport width.
    */
   sizes?: string;
   /**
@@ -54,27 +70,76 @@ export interface MediaImageProps
   fill?: boolean;
   /**
    * What shows until the image loads: `'blur'` (the preview, default when there is one),
-   * `'color'` (the dominant colour only) or `'empty'`.
+   * `'color'` (the flat colour only) or `'empty'`.
    */
   placeholder?: 'blur' | 'color' | 'empty';
-  /** Override the intrinsic width (attribute). Defaults to `image.width`. */
+  /** Intrinsic width (attribute). With `image`, overrides `image.width`. */
   width?: number;
-  /** Override the intrinsic height (attribute). Defaults to `image.height`. */
+  /** Intrinsic height (attribute). With `image`, overrides `image.height`. */
   height?: number;
 }
 
+/** Render the descriptor `media.library.image(id)` built on the server. */
+export interface MediaImageFromDataProps extends MediaImageCommonProps {
+  /** The descriptor from `media.library.image(id)`. */
+  image: MediaImageData;
+  src?: never;
+  loader?: never;
+}
+
+/** Render a URL — or, with a `loader`, whatever the loader understands (a media id). */
+export interface MediaImageFromSrcProps extends MediaImageCommonProps {
+  image?: never;
+  /** A URL, like `<img src>`. With a `loader`, the value the loader turns into URLs. */
+  src: string;
+  /** Your own `srcset`. Ignored with a `loader`, which builds it. */
+  srcSet?: string;
+  /** Build each candidate's URL — `next/image`'s `loader`. */
+  loader?: MediaImageLoader;
+  /** Quality handed to the `loader`. Default: the server's. */
+  quality?: number;
+  /** The tiny preview as a `data:` URL — `next/image`'s `blurDataURL`. */
+  blurDataURL?: string;
+  /** Flat colour under the preview, or alone with `placeholder="color"`. */
+  placeholderColor?: string;
+  /** Widths for full-width images; must be allowed by the server (`delivery.images.widths`). */
+  deviceSizes?: readonly number[];
+  /** Widths for smaller images; same caveat. */
+  imageSizes?: readonly number[];
+}
+
+export type MediaImageProps = MediaImageFromDataProps | MediaImageFromSrcProps;
+
+type AnyMediaImageProps = MediaImageCommonProps &
+  Partial<Omit<MediaImageFromDataProps, keyof MediaImageCommonProps>> &
+  Partial<Omit<MediaImageFromSrcProps, keyof MediaImageCommonProps>>;
+
+/** What every mode resolves to before rendering. */
+interface ResolvedImage {
+  src: string;
+  srcSet: string | undefined;
+  /** `srcSet` uses `w` descriptors, so `sizes` applies. */
+  sizesApply: boolean;
+  width: number | undefined;
+  height: number | undefined;
+  preview: { dataUrl?: string | undefined; color?: string | undefined } | undefined;
+}
+
 /**
- * A stored image rendered the way `next/image` does it: one `<img>` with the collection's sizes as
- * `srcSet`, its intrinsic `width`/`height` (so the page does not jump when it arrives), lazy
- * loading, and a blurred preview painted behind it until it loads.
+ * A stored image rendered the way `next/image` does it: one `<img>` with a `srcSet`, its intrinsic
+ * `width`/`height` (so the page does not jump when it arrives), lazy loading, and a blurred preview
+ * painted behind it until it loads. Three ways to feed it:
  *
  * ```tsx
- * // server: return { banner: await media.library.image(course.bannerMediaId) }
+ * // 1. the server builds it: return { banner: await media.library.image(course.bannerMediaId) }
  * <MediaImage image={banner} alt={course.title} sizes="(max-width: 768px) 100vw, 768px" priority />
  *
- * <div style={{ position: 'relative', aspectRatio: '16 / 9' }}>
- *   <MediaImage image={cover} alt="" fill style={{ objectFit: 'cover' }} />
- * </div>
+ * // 2. a plain URL, like <img src> (+ the preview if you have one)
+ * <MediaImage src="/hero.jpg" width={1600} height={900} blurDataURL={hero.dataUrl} alt="" />
+ *
+ * // 3. a loader, like next/image: srcSet built here, each width resized on demand by the server
+ * <MediaImage src={course.bannerMediaId} loader={mediaImageLoader()} width={1600} height={900}
+ *   sizes="100vw" alt="" />
  * ```
  *
  * The preview is the image's own background (a blurred SVG over the dominant colour), removed on
@@ -82,79 +147,218 @@ export interface MediaImageProps
  * stays instead of the broken-image icon. Server-rendered markup already shows the preview, and an
  * image that finished loading before hydration is detected (it never fires `load` again).
  */
-export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(function MediaImage(
-  {
-    image,
-    alt,
-    sizes,
-    priority = false,
-    fill = false,
-    placeholder,
-    width,
-    height,
-    loading,
-    decoding,
-    fetchPriority,
-    style,
-    onLoad,
-    ...rest
+export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
+  function MediaImage(props, ref) {
+    const {
+      image,
+      src,
+      srcSet,
+      loader,
+      quality,
+      blurDataURL,
+      placeholderColor,
+      deviceSizes,
+      imageSizes,
+      alt,
+      sizes,
+      priority = false,
+      fill = false,
+      placeholder,
+      width,
+      height,
+      loading,
+      decoding,
+      fetchPriority,
+      style,
+      onLoad,
+      ...rest
+    } = props as AnyMediaImageProps;
+    const [loaded, setLoaded] = useState(false);
+
+    const imgRef = useCallback(
+      (node: HTMLImageElement | null) => {
+        if (node?.complete && node.naturalWidth > 0) setLoaded(true);
+        if (typeof ref === 'function') ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
+
+    const resolved = resolveImage({
+      image,
+      src,
+      srcSet,
+      loader,
+      quality,
+      blurDataURL,
+      placeholderColor,
+      deviceSizes,
+      imageSizes,
+      sizes,
+      width: fill ? undefined : width,
+      height,
+    });
+
+    const preview = resolved.preview;
+    const mode = placeholder ?? (preview?.dataUrl ? 'blur' : preview?.color ? 'color' : 'empty');
+    const showPlaceholder =
+      !loaded &&
+      ((mode === 'blur' && preview?.dataUrl !== undefined) ||
+        (mode === 'color' && preview?.color !== undefined));
+    const objectFit = style?.objectFit;
+
+    return (
+      <img
+        {...rest}
+        {...fetchPriorityProp(priority ? 'high' : fetchPriority)}
+        ref={imgRef}
+        src={resolved.src}
+        srcSet={resolved.srcSet}
+        sizes={resolved.sizesApply ? sizes : undefined}
+        width={fill ? undefined : resolved.width}
+        height={fill ? undefined : resolved.height}
+        alt={alt}
+        loading={priority ? 'eager' : (loading ?? 'lazy')}
+        decoding={decoding ?? 'async'}
+        data-media-image=""
+        onLoad={(event) => {
+          setLoaded(true);
+          onLoad?.(event);
+        }}
+        style={{
+          ...(fill ? FILL_STYLE : {}),
+          ...(showPlaceholder
+            ? mode === 'blur'
+              ? placeholderStyle(
+                  { dataUrl: preview!.dataUrl!, color: preview!.color },
+                  { objectFit, width: resolved.width, height: resolved.height },
+                )
+              : { backgroundColor: preview!.color }
+            : {}),
+          // While the preview shows, the alt text would print over it in some browsers.
+          ...(showPlaceholder ? { color: 'transparent' } : {}),
+          ...style,
+        }}
+      />
+    );
   },
-  ref,
-) {
-  const [loaded, setLoaded] = useState(false);
+);
 
-  const imgRef = useCallback(
-    (node: HTMLImageElement | null) => {
-      if (node?.complete && node.naturalWidth > 0) setLoaded(true);
-      if (typeof ref === 'function') ref(node);
-      else if (ref) ref.current = node;
-    },
-    [ref],
+function resolveImage(input: {
+  image: MediaImageData | undefined;
+  src: string | undefined;
+  srcSet: string | undefined;
+  loader: MediaImageLoader | undefined;
+  quality: number | undefined;
+  blurDataURL: string | undefined;
+  placeholderColor: string | undefined;
+  deviceSizes: readonly number[] | undefined;
+  imageSizes: readonly number[] | undefined;
+  sizes: string | undefined;
+  width: number | undefined;
+  height: number | undefined;
+}): ResolvedImage {
+  const { image } = input;
+  if (image) {
+    return {
+      src: image.src,
+      srcSet: image.srcSet,
+      sizesApply: image.srcSet !== undefined,
+      width: input.width ?? image.width,
+      height: input.height ?? image.height,
+      preview: image.placeholder,
+    };
+  }
+
+  const src = input.src ?? '';
+  const preview =
+    input.blurDataURL !== undefined || input.placeholderColor !== undefined
+      ? { dataUrl: input.blurDataURL, color: input.placeholderColor }
+      : undefined;
+
+  if (!input.loader) {
+    return {
+      src,
+      srcSet: input.srcSet,
+      sizesApply: input.srcSet !== undefined,
+      width: input.width,
+      height: input.height,
+      preview,
+    };
+  }
+
+  const { widths, kind } = loaderWidths(
+    input.width,
+    input.sizes,
+    input.deviceSizes ?? DEFAULT_DEVICE_SIZES,
+    input.imageSizes ?? DEFAULT_IMAGE_SIZES,
   );
+  const loader = input.loader;
+  const url = (width: number) => loader({ src, width, quality: input.quality });
+  return {
+    src: url(widths.at(-1)!),
+    srcSet: widths.map((w, i) => `${url(w)} ${kind === 'w' ? w : i + 1}${kind}`).join(', '),
+    sizesApply: kind === 'w',
+    width: input.width,
+    height: input.height,
+    preview,
+  };
+}
 
-  const mode = placeholder ?? (image.placeholder ? 'blur' : 'empty');
-  const showPlaceholder = !loaded && mode !== 'empty' && image.placeholder !== undefined;
-  const objectFit = style?.objectFit;
+/**
+ * Which widths a loader is asked for — `next/image`'s algorithm, so the same `sizes`/`width`
+ * produce the same requests:
+ *
+ * - with `sizes`: every configured width (`w` descriptors), dropping those below what the smallest
+ *   `vw` in `sizes` could ever need on the narrowest device;
+ * - without `sizes` but with `width`: the width at 1x and 2x, rounded up to configured widths
+ *   (`x` descriptors) — a fixed-size image;
+ * - with neither (`fill`): every device width.
+ *
+ * @internal exported for tests.
+ */
+export function loaderWidths(
+  width: number | undefined,
+  sizes: string | undefined,
+  deviceSizes: readonly number[],
+  imageSizes: readonly number[],
+): { widths: number[]; kind: 'w' | 'x' } {
+  const all = [...deviceSizes, ...imageSizes].sort((a, b) => a - b);
+  if (sizes) {
+    const percents = [...sizes.matchAll(/(^|\s)(1?\d?\d)vw/g)].map((m) => Number(m[2]));
+    if (percents.length > 0) {
+      const smallest = Math.min(...percents) * 0.01;
+      const narrowestDevice = Math.min(...deviceSizes);
+      return { widths: all.filter((s) => s >= narrowestDevice * smallest), kind: 'w' };
+    }
+    return { widths: all, kind: 'w' };
+  }
+  if (width === undefined) return { widths: [...deviceSizes].sort((a, b) => a - b), kind: 'w' };
+  const widths = [width, width * 2].map((w) => all.find((s) => s >= w) ?? all.at(-1)!);
+  return { widths: [...new Set(widths)], kind: 'x' };
+}
 
-  const resolvedWidth = fill ? undefined : (width ?? image.width);
-  const resolvedHeight = fill ? undefined : (height ?? image.height);
-
-  return (
-    <img
-      {...rest}
-      {...fetchPriorityProp(priority ? 'high' : fetchPriority)}
-      ref={imgRef}
-      src={image.src}
-      srcSet={image.srcSet}
-      sizes={image.srcSet ? sizes : undefined}
-      width={resolvedWidth}
-      height={resolvedHeight}
-      alt={alt}
-      loading={priority ? 'eager' : (loading ?? 'lazy')}
-      decoding={decoding ?? 'async'}
-      data-media-image=""
-      onLoad={(event) => {
-        setLoaded(true);
-        onLoad?.(event);
-      }}
-      style={{
-        ...(fill ? FILL_STYLE : {}),
-        ...(showPlaceholder
-          ? mode === 'blur'
-            ? placeholderStyle(image.placeholder!, {
-                objectFit,
-                width: image.width,
-                height: image.height,
-              })
-            : { backgroundColor: image.placeholder!.color }
-          : {}),
-        // While the preview shows, the alt text would print over it in some browsers.
-        ...(showPlaceholder ? { color: 'transparent' } : {}),
-        ...style,
-      }}
-    />
-  );
-});
+/**
+ * Loader for the server's on-demand resize: `MediaDeliveryHandler` mounted on a route that passes
+ * `?w=`/`?q=` through (see the docs). `path` maps the `src` (a media id) to that route; default
+ * `/media/<id>`.
+ *
+ * ```ts
+ * // routes: router.get('/media/:id', ({ params, request }) =>
+ * //   delivery.handle({ mediaId: params.id, width: request.qs().w, quality: request.qs().q }))
+ * <MediaImage src={mediaId} loader={mediaImageLoader()} width={800} height={400} alt="" />
+ * ```
+ */
+export function mediaImageLoader(
+  options: { path?: (src: string) => string } = {},
+): MediaImageLoader {
+  const path = options.path ?? ((src: string) => `/media/${encodeURIComponent(src)}`);
+  return ({ src, width, quality }) => {
+    const base = path(src);
+    const join = base.includes('?') ? '&' : '?';
+    return `${base}${join}w=${width}${quality !== undefined ? `&q=${quality}` : ''}`;
+  };
+}
 
 const FILL_STYLE: CSSProperties = {
   position: 'absolute',
@@ -177,7 +381,7 @@ const FILL_STYLE: CSSProperties = {
  * `objectFit` mirrors the image's (`cover` by default).
  */
 export function placeholderStyle(
-  placeholder: MediaImagePlaceholder,
+  placeholder: { dataUrl: string; color?: string | undefined },
   options: {
     objectFit?: CSSProperties['objectFit'] | undefined;
     width?: number | undefined;

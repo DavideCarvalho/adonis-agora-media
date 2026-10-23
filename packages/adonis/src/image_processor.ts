@@ -10,6 +10,8 @@ export interface ConversionPreset {
    * small `width` for a blurred low-res variant served as a file.
    */
   blur?: number;
+  /** Never enlarge: an original narrower than `width` keeps its own size. */
+  withoutEnlargement?: boolean;
   /** Generate eagerly on attach instead of lazily on first access. */
   eager?: boolean;
 }

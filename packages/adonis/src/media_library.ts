@@ -4,8 +4,11 @@ import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_t
 import { asBuffer, peekContents, peekStream, toBytes } from './contents.js';
 import {
   DEFAULT_DELIVERY_SIGNED_TTL_SECONDS,
+  DEFAULT_IMAGE_QUALITIES,
+  DEFAULT_IMAGE_WIDTHS,
   type DeliveryMode,
   type DeliveryResult,
+  type OnDemandImageConfig,
   resolveDeliveryMode,
 } from './delivery.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
@@ -15,9 +18,11 @@ import {
   ConversionArtifactMissingError,
   ConversionNotDefinedError,
   ImageProcessorMissingError,
+  ImageSizeNotAllowedError,
   MediaNotFoundError,
   MediaObjectMissingError,
   MimeNotAllowedError,
+  NotAnImageError,
   TransformerNotDefinedError,
   TransformerOutputError,
   TransformNotReadyError,
@@ -25,7 +30,7 @@ import {
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
 import { sanitizeFileName } from './file_name.js';
-import type { ImageProcessor } from './image_processor.js';
+import type { ConversionPreset, ImageProcessor } from './image_processor.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
@@ -61,6 +66,8 @@ export interface MediaLibraryOptions {
   deliveryMode?: DeliveryMode;
   /** Signed-URL lifetime when delivery resolves to `signed`. Default 300s. */
   deliverySignedTtlSeconds?: number;
+  /** On-demand resizing for `deliver(id, { width })` (`delivery.images`). */
+  deliveryImages?: OnDemandImageConfig;
 }
 
 export interface AttachInput {
@@ -130,6 +137,13 @@ export interface DeliverOptions {
   mode?: DeliveryMode | undefined;
   /** Override the configured signed-URL lifetime, when the resolved mode is `signed`. */
   signedTtlSeconds?: number | undefined;
+  /**
+   * Deliver the image resized to this width (see {@link MediaLibrary.resized}). Wins over
+   * `conversion`. Strings (a query-string value) are parsed and validated.
+   */
+  width?: number | string | undefined;
+  /** Quality of the resized image; defaults to the first of `delivery.images.qualities`. */
+  quality?: number | string | undefined;
 }
 
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
@@ -201,6 +215,7 @@ export class MediaLibrary {
   private readonly now: () => Date;
   private readonly deliveryMode: DeliveryMode;
   private readonly deliverySignedTtlSeconds: number;
+  private readonly deliveryImages: Required<OnDemandImageConfig>;
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -213,6 +228,11 @@ export class MediaLibrary {
     this.deliveryMode = options.deliveryMode ?? 'auto';
     this.deliverySignedTtlSeconds =
       options.deliverySignedTtlSeconds ?? DEFAULT_DELIVERY_SIGNED_TTL_SECONDS;
+    this.deliveryImages = {
+      widths: options.deliveryImages?.widths ?? DEFAULT_IMAGE_WIDTHS,
+      qualities: options.deliveryImages?.qualities ?? DEFAULT_IMAGE_QUALITIES,
+      format: options.deliveryImages?.format ?? 'webp',
+    };
   }
 
   private emit<E extends 'attach' | 'delete' | 'conversion'>(
@@ -539,21 +559,28 @@ export class MediaLibrary {
       }
       throw new ConversionNotDefinedError(record.collection, conversionName);
     }
+    return this.#generateConversion(record, preset);
+  }
+
+  /** Run `preset` over the record's original, store the output and persist it as a conversion. */
+  async #generateConversion(record: MediaRecord, preset: ConversionPreset): Promise<MediaRecord> {
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
 
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
     const result = await this.imageProcessor.convert(original, preset);
     const dir = record.path.slice(0, record.path.lastIndexOf('/'));
-    const conversionPath = `${dir}/conversions/${conversionName}.${result.format}`;
+    const conversionPath = `${dir}/conversions/${preset.name}.${result.format}`;
     await this.storage.disk(record.disk).put(conversionPath, result.data, {
       contentType: result.contentType,
     });
 
+    // Re-read before saving: a concurrent conversion of the same record must not be dropped.
+    const current = (await this.store.find(record.id)) ?? record;
     const updated = await this.store.save({
-      ...record,
+      ...current,
       conversions: {
-        ...record.conversions,
-        [conversionName]: {
+        ...current.conversions,
+        [preset.name]: {
           path: conversionPath,
           disk: record.disk,
           ...(result.width && result.height
@@ -563,8 +590,47 @@ export class MediaLibrary {
       },
       updatedAt: this.now(),
     });
-    this.emit('conversion', { id, conversion: conversionName, path: conversionPath });
+    this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
     return updated;
+  }
+
+  /**
+   * Resize the image to one of `delivery.images.widths`, on demand — the server half of a
+   * `next/image`-style loader (`?w=640&q=75`). Generated once and kept as the conversion
+   * `@w640q75`, so later requests (and `delete()`) treat it like any other conversion. Never
+   * enlarges: past the original's width it is the original's size, re-encoded.
+   *
+   * Returns the conversion to deliver, or `undefined` for an SVG (served as is: it scales by itself).
+   * Throws {@link ImageSizeNotAllowedError} outside the whitelist and {@link NotAnImageError} for a
+   * record that is not an image.
+   */
+  async resized(
+    id: string,
+    request: { width: number | string; quality?: number | string | undefined },
+  ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
+    const { widths, qualities, format } = this.deliveryImages;
+    const width = allowedNumber('width', request.width, widths);
+    const quality =
+      request.quality === undefined || request.quality === ''
+        ? qualities[0]!
+        : allowedNumber('quality', request.quality, qualities);
+
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    if (record.mimeType.startsWith('image/svg')) return { record, conversion: undefined };
+    if (!record.mimeType.startsWith('image/')) throw new NotAnImageError(id, record.mimeType);
+
+    const name = `@w${width}q${quality}`;
+    if (record.conversions[name]) return { record, conversion: name };
+    const updated = await this.#generateConversion(record, {
+      name,
+      width,
+      quality,
+      format,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+    return { record: updated, conversion: name };
   }
 
   /**
@@ -911,7 +977,11 @@ export class MediaLibrary {
    * ```
    */
   async deliver(id: string, options: DeliverOptions = {}): Promise<DeliveryResult> {
-    const target = await this.#resolveTarget(id, options.conversion);
+    const conversion =
+      options.width !== undefined && options.width !== ''
+        ? (await this.resized(id, { width: options.width, quality: options.quality })).conversion
+        : options.conversion;
+    const target = await this.#resolveTarget(id, conversion);
     const disk = this.storage.disk(target.disk);
     const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, target.path);
 
@@ -980,4 +1050,16 @@ function assertSafeArtifactPath(transformer: string, relativePath: string): stri
     );
   }
   return normalized;
+}
+
+/** Parse a requested width/quality (a query-string value, possibly) and check it is whitelisted. */
+function allowedNumber(
+  field: 'width' | 'quality',
+  value: number | string,
+  allowed: readonly number[],
+): number {
+  const parsed =
+    typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!allowed.includes(parsed)) throw new ImageSizeNotAllowedError(field, value, allowed);
+  return parsed;
 }

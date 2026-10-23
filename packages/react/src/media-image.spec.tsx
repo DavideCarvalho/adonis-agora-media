@@ -3,7 +3,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MediaImage, type MediaImageData, placeholderStyle } from './media-image.js';
+import {
+  loaderWidths,
+  MediaImage,
+  type MediaImageData,
+  mediaImageLoader,
+  placeholderStyle,
+} from './media-image.js';
 
 const image: MediaImageData = {
   src: 'https://cdn.test/banner.png',
@@ -129,6 +135,126 @@ describe('<MediaImage>', () => {
   it('style from the caller wins', () => {
     render(<MediaImage image={image} alt="" style={{ backgroundColor: 'red' }} />);
     expect(img().style.backgroundColor).toBe('red');
+  });
+});
+
+describe('<MediaImage src>', () => {
+  it('renders a plain URL like <img src>, with your own srcSet and size', () => {
+    render(
+      <MediaImage
+        src="/hero.jpg"
+        srcSet="/hero-640.jpg 640w, /hero.jpg 1600w"
+        sizes="100vw"
+        width={1600}
+        height={900}
+        alt="Hero"
+      />,
+    );
+    const el = img();
+    expect(el.getAttribute('src')).toBe('/hero.jpg');
+    expect(el.getAttribute('srcset')).toBe('/hero-640.jpg 640w, /hero.jpg 1600w');
+    expect(el.getAttribute('sizes')).toBe('100vw');
+    expect(el.getAttribute('width')).toBe('1600');
+    expect(el.getAttribute('loading')).toBe('lazy');
+    expect(el.style.backgroundImage).toBe('');
+  });
+
+  it('blurDataURL paints the preview (next/image naming); placeholderColor goes under it', () => {
+    render(
+      <MediaImage
+        src="/hero.jpg"
+        width={1600}
+        height={900}
+        blurDataURL="data:image/webp;base64,AAAA"
+        placeholderColor="#1478c8"
+        alt=""
+      />,
+    );
+    const el = img();
+    expect(el.style.backgroundColor).toBe('rgb(20, 120, 200)');
+    expect(decodedSvg(el.style.backgroundImage)).toContain("viewBox='0 0 640 360'");
+    fireEvent.load(el);
+    expect(el.style.backgroundImage).toBe('');
+  });
+
+  it('a colour alone defaults to placeholder="color"', () => {
+    render(<MediaImage src="/a.jpg" placeholderColor="#1478c8" alt="" />);
+    expect(img().style.backgroundColor).toBe('rgb(20, 120, 200)');
+    expect(img().style.backgroundImage).toBe('');
+  });
+});
+
+describe('<MediaImage src loader>', () => {
+  const loader = mediaImageLoader();
+
+  it('fixed size (width, no sizes): 1x and 2x, rounded up to allowed widths', () => {
+    render(
+      <MediaImage src="m1" loader={loader} width={800} height={400} sizes={undefined} alt="" />,
+    );
+    const el = img();
+    expect(el.getAttribute('srcset')).toBe('/media/m1?w=828 1x, /media/m1?w=1920 2x');
+    expect(el.getAttribute('src')).toBe('/media/m1?w=1920');
+    expect(el.getAttribute('sizes')).toBeNull();
+    expect(el.getAttribute('width')).toBe('800');
+  });
+
+  it('responsive (sizes): w descriptors, skipping widths the smallest vw never needs', () => {
+    render(<MediaImage src="m1" loader={loader} quality={75} sizes="50vw" alt="" />);
+    const el = img();
+    const widths = el
+      .getAttribute('srcset')!
+      .split(', ')
+      .map((c) => c.split(' ')[1]);
+    expect(widths).toEqual([
+      '384w',
+      '640w',
+      '750w',
+      '828w',
+      '1080w',
+      '1200w',
+      '1920w',
+      '2048w',
+      '3840w',
+    ]);
+    expect(el.getAttribute('srcset')).toContain('/media/m1?w=384&q=75 384w');
+    expect(el.getAttribute('sizes')).toBe('50vw');
+  });
+
+  it('fill: every device width', () => {
+    render(<MediaImage src="m1" loader={loader} fill alt="" />);
+    expect(img().getAttribute('srcset')!.split(', ')).toHaveLength(8);
+  });
+
+  it('custom deviceSizes/imageSizes (must match the server whitelist)', () => {
+    render(
+      <MediaImage
+        src="m1"
+        loader={loader}
+        width={100}
+        deviceSizes={[200]}
+        imageSizes={[100]}
+        alt=""
+      />,
+    );
+    expect(img().getAttribute('srcset')).toBe('/media/m1?w=100 1x, /media/m1?w=200 2x');
+  });
+});
+
+describe('mediaImageLoader / loaderWidths', () => {
+  it('maps src through `path`, keeping an existing query string, and encodes the default path', () => {
+    expect(mediaImageLoader()({ src: 'a b', width: 640 })).toBe('/media/a%20b?w=640');
+    const signed = mediaImageLoader({ path: (id) => `/files/${id}?token=t` });
+    expect(signed({ src: 'x', width: 640, quality: 75 })).toBe('/files/x?token=t&w=640&q=75');
+  });
+
+  it('sizes without vw keeps every width; a width past the largest caps at it', () => {
+    expect(
+      loaderWidths(undefined, '(max-width: 600px) 480px, 800px', [640, 1080], [256]).widths,
+    ).toEqual([256, 640, 1080]);
+    expect(loaderWidths(5000, undefined, [640, 1080], [256])).toEqual({
+      widths: [1080],
+      kind: 'x',
+    });
   });
 });
 

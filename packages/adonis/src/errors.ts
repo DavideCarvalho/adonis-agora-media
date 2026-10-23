@@ -398,3 +398,33 @@ export class UploadSessionStoreNotConfiguredError extends Error {
     this.name = 'UploadSessionStoreNotConfiguredError';
   }
 }
+
+/**
+ * A resize was requested at a width or quality outside `delivery.images` — the whitelist that stops
+ * a client from filling the storage with one cached variant per arbitrary size. Map it to a 400.
+ */
+export class ImageSizeNotAllowedError extends Error {
+  readonly code = 'E_MEDIA_IMAGE_SIZE_NOT_ALLOWED';
+  constructor(
+    readonly field: 'width' | 'quality',
+    readonly value: unknown,
+    readonly allowed: readonly number[],
+  ) {
+    super(
+      `Image ${field} ${JSON.stringify(value)} is not allowed. Allowed: ${allowed.join(', ')} (delivery.images.${field === 'width' ? 'widths' : 'qualities'}).`,
+    );
+    this.name = 'ImageSizeNotAllowedError';
+  }
+}
+
+/** A resize (`?w=`) was requested for a record that is not a raster image. Map it to a 400. */
+export class NotAnImageError extends Error {
+  readonly code = 'E_MEDIA_NOT_AN_IMAGE';
+  constructor(
+    readonly mediaId: string,
+    readonly mimeType: string,
+  ) {
+    super(`Media "${mediaId}" is "${mimeType}", not an image that can be resized.`);
+    this.name = 'NotAnImageError';
+  }
+}

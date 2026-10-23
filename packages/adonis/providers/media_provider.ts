@@ -140,6 +140,9 @@ export default class MediaProvider {
         ...(config.delivery?.signedTtlSeconds !== undefined
           ? { deliverySignedTtlSeconds: config.delivery.signedTtlSeconds }
           : {}),
+        ...(config.delivery?.images !== undefined
+          ? { deliveryImages: config.delivery.images }
+          : {}),
       });
     });
   }

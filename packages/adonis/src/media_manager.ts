@@ -1,5 +1,5 @@
 import { AttachmentManager } from './attachment.js';
-import type { DeliveryMode } from './delivery.js';
+import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import { DirectUploadManager } from './direct_upload.js';
 import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
@@ -63,6 +63,8 @@ export interface MediaManagerOptions {
   deliveryMode?: DeliveryMode;
   /** Signed-URL lifetime in seconds when delivery resolves to `signed`. Default 300. */
   deliverySignedTtlSeconds?: number;
+  /** On-demand resizing for `library.deliver(id, { width })` (`delivery.images`). */
+  deliveryImages?: OnDemandImageConfig;
 }
 
 /**
@@ -107,6 +109,7 @@ export class MediaManager {
       ...(options.deliverySignedTtlSeconds !== undefined
         ? { deliverySignedTtlSeconds: options.deliverySignedTtlSeconds }
         : {}),
+      ...(options.deliveryImages !== undefined ? { deliveryImages: options.deliveryImages } : {}),
     });
     this.attachments = new AttachmentManager({
       storage: this.storage,

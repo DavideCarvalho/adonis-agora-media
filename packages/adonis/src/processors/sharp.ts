@@ -24,6 +24,7 @@ export class SharpImageProcessor implements ImageProcessor {
         ...(preset.width ? { width: preset.width } : {}),
         ...(preset.height ? { height: preset.height } : {}),
         fit: preset.fit ?? 'cover',
+        ...(preset.withoutEnlargement ? { withoutEnlargement: true } : {}),
       });
     }
 

@@ -1,6 +1,6 @@
 ---
 title: Responsive images
-description: "MediaImage — next/image for stored images: srcset from the collection's presets, intrinsic size, lazy loading and a blur-up placeholder, from one call on the server."
+description: "MediaImage — next/image for stored images: srcset, intrinsic size, lazy loading and a blur-up placeholder. Fed by the server, a plain src, or a loader resized on demand."
 icon: Image
 ---
 
@@ -8,15 +8,22 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 `<MediaImage>` renders a stored image the way `next/image` does: one `<img>` that
 
-- offers the collection's sizes as **`srcSet`**, so the browser downloads the one the layout needs;
+- offers several sizes as **`srcSet`**, so the browser downloads the one the layout needs;
 - carries the intrinsic **`width`/`height`**, so the page does not jump when the image arrives;
 - **lazy-loads** by default, and with `priority` loads eagerly with high fetch priority;
 - paints a **blurred preview** behind itself until it loads.
 
-The server builds the data in one call, `media.library.image(id)`, and the page renders it. Nothing
-resizes on the request path: the sizes are the collection's presets, generated at attach.
+There are three ways to feed it:
 
-## 1. Configure the collection
+| | Where the sizes come from | Resizes on the request path |
+|---|---|---|
+| [1. `image`](#1-image-built-on-the-server) | The collection's presets, via `media.library.image(id)` | No: presets are generated at attach |
+| [2. `src`](#2-src-a-plain-url) | Wherever you like: a URL, your own `srcSet` | No |
+| [3. `src` + `loader`](#3-a-loader-resized-on-demand) | Any width, resized by the server on first request | Once per width, then cached |
+
+## 1. `image`: built on the server
+
+### Configure the collection
 
 Presets at the widths you want to serve, **eager** so they exist from the attach on, plus the
 [placeholder transformer](/docs/media/transformers#image-placeholders-blur-up), which also supplies the
@@ -41,7 +48,7 @@ because they are not the same picture at another resolution: a `blur` preset, an
 square `thumb` of a landscape photo. The original joins as the widest candidate when browsers can
 decode it (JPEG, PNG, WebP, AVIF, GIF — not HEIC or TIFF).
 
-## 2. Build the data on the server
+### Build the data on the server
 
 ```ts
 // a controller
@@ -77,7 +84,7 @@ It returns plain JSON (`ResponsiveImage`):
 Without `transformers.placeholder()` the result has no `width`/`height` and no `placeholder`, and the
 original is not a candidate (its width is unknown) — the presets still make a `srcSet`.
 
-## 3. Render it
+### Render it
 
 ```tsx
 import { MediaImage } from '@adonis-agora/media-react'
@@ -93,7 +100,8 @@ import { MediaImage } from '@adonis-agora/media-react'
 
 | Prop | |
 |---|---|
-| `image` | The `media.library.image(id)` result. |
+| `image` | The `media.library.image(id)` result (mode 1). |
+| `src` | A URL (mode 2), or what the `loader` turns into URLs (mode 3). |
 | `alt` | Required. `""` for a decorative image. |
 | `sizes` | How wide the image renders, so the browser picks from `srcSet` — `next/image` semantics. Without it the browser assumes the full viewport width. |
 | `priority` | Above the fold (the LCP image): `loading="eager"` and `fetchPriority="high"`. On React 19 the server also emits a `<link rel="preload">` for it. |
@@ -110,7 +118,67 @@ Every other `<img>` prop passes through, and so does a `ref`.
 </div>
 ```
 
-### How the preview works
+## 2. `src`: a plain URL
+
+Like `<img src>` (and `<Image src>` in Next), for an image the library did not build, or when you
+already have the URLs:
+
+```tsx
+<MediaImage
+  src="/hero.jpg"
+  srcSet="/hero-640.jpg 640w, /hero.jpg 1600w"   // optional
+  sizes="100vw"
+  width={1600}
+  height={900}
+  blurDataURL={hero.placeholder.dataUrl}           // next/image's name for the preview
+  placeholderColor={hero.placeholder.color}        // optional: the colour under it
+  alt="…"
+/>
+```
+
+`blurDataURL` alone paints the blur. `placeholderColor` alone paints the flat colour
+(`placeholder="color"` by default).
+
+## 3. A loader, resized on demand
+
+With a `loader`, `src` is whatever the loader understands (here a media id), and the component
+builds the `srcSet` itself, using `next/image`'s algorithm and widths. Each candidate is a request
+like `/media/<id>?w=828&q=75`, which the server resizes once and caches:
+
+```tsx
+import { MediaImage, mediaImageLoader } from '@adonis-agora/media-react'
+
+const loader = mediaImageLoader()   // → /media/<id>?w=…; pass { path } for another route
+
+// fixed size: 1x and 2x
+<MediaImage src={course.bannerMediaId} loader={loader} width={800} height={400} alt="" />
+
+// responsive: one candidate per width the `sizes` can need
+<MediaImage src={course.bannerMediaId} loader={loader} width={1600} height={900} sizes="100vw" alt="" />
+```
+
+The server side is the delivery route you already mount, passing `?w=`/`?q=` through. See
+[Resizing on demand](/docs/media/delivery#resizing-on-demand-w).
+
+| Prop | |
+|---|---|
+| `loader` | `({ src, width, quality }) => url`, `next/image`'s contract. `mediaImageLoader({ path })` targets the delivery route. |
+| `quality` | Passed to the loader. It must be in the server's `delivery.images.qualities`. |
+| `deviceSizes` / `imageSizes` | The widths to request (defaults: `next/image`'s). They must be allowed by the server's `delivery.images.widths`, which has the same defaults. |
+| `blurDataURL` / `placeholderColor` | The preview, as in mode 2. |
+
+Which widths get requested follows `next/image`:
+
+- **With `sizes`:** every configured width (`w` descriptors), minus those smaller than the smallest `vw` in `sizes` could ever need.
+- **Without `sizes`:** the `width` at 1x and 2x (`x` descriptors), rounded up to configured widths.
+- **With `fill` and no `sizes`:** every device width.
+
+<Callout type="warn" title="Same widths on both sides">
+  A width the server does not allow answers 400. If you change `deviceSizes`/`imageSizes`, set
+  `delivery.images.widths` to the same list.
+</Callout>
+
+## How the preview works
 
 Like `next/image`, there is no wrapper element: the preview is the `<img>`'s own background — the
 dominant colour, with the tiny WebP on top blurred through an SVG filter — and it is dropped on
