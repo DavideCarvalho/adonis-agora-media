@@ -240,6 +240,67 @@ describe('<MediaImage src loader>', () => {
   });
 });
 
+describe('<MediaImage layout> and sizes', () => {
+  it('constrained: sizes up to its width, prefixed with auto when lazy; box capped at the width', () => {
+    render(<MediaImage image={image} alt="" layout="constrained" />);
+    const el = img();
+    expect(el.getAttribute('sizes')).toBe('auto, (min-width: 1000px) 1000px, 100vw');
+    expect(el.style.maxWidth).toBe('1000px');
+    expect(el.style.width).toBe('100%');
+    expect(el.style.height).toBe('auto');
+  });
+
+  it('priority images are not lazy, so no auto', () => {
+    render(<MediaImage image={image} alt="" layout="constrained" priority />);
+    expect(img().getAttribute('sizes')).toBe('(min-width: 1000px) 1000px, 100vw');
+  });
+
+  it('fullWidth: 100vw and a full-width box', () => {
+    render(<MediaImage image={image} alt="" layout="fullWidth" />);
+    expect(img().getAttribute('sizes')).toBe('auto, 100vw');
+    expect(img().style.width).toBe('100%');
+  });
+
+  it('fixed with a loader: 1x/2x at that size, no sizes, a fixed box', () => {
+    render(
+      <MediaImage
+        src="m1"
+        loader={mediaImageLoader()}
+        layout="fixed"
+        width={400}
+        height={200}
+        alt=""
+      />,
+    );
+    const el = img();
+    expect(el.getAttribute('srcset')).toBe('/media/m1?w=640 1x, /media/m1?w=828 2x');
+    expect(el.getAttribute('sizes')).toBeNull();
+    expect(el.style.width).toBe('400px');
+    expect(el.style.height).toBe('200px');
+  });
+
+  it('constrained with a loader: the w list that sizes implies', () => {
+    render(
+      <MediaImage src="m1" loader={mediaImageLoader()} layout="constrained" width={800} alt="" />,
+    );
+    expect(img().getAttribute('sizes')).toBe('auto, (min-width: 800px) 800px, 100vw');
+    expect(img().getAttribute('srcset')).toContain('/media/m1?w=640 640w');
+  });
+
+  it('an explicit sizes always wins, untouched', () => {
+    render(<MediaImage image={image} alt="" layout="constrained" sizes="50vw" />);
+    expect(img().getAttribute('sizes')).toBe('50vw');
+  });
+
+  it('no layout, no sizes: lazy gets "auto, 100vw", eager leaves it to the browser', () => {
+    const { unmount } = render(<MediaImage image={image} alt="" />);
+    expect(img().getAttribute('sizes')).toBe('auto, 100vw');
+    unmount();
+    render(<MediaImage image={image} alt="" loading="eager" />);
+    expect(img().getAttribute('sizes')).toBeNull();
+  });
+});
+
 describe('mediaImageLoader / loaderWidths', () => {
   it('maps src through `path`, keeping an existing query string, and encodes the default path', () => {
     expect(mediaImageLoader()({ src: 'a b', width: 640 })).toBe('/media/a%20b?w=640');

@@ -73,6 +73,17 @@ interface MediaImageCommonProps
    * `'color'` (the flat colour only) or `'empty'`.
    */
   placeholder?: 'blur' | 'color' | 'empty';
+  /**
+   * How the image sizes itself, Unpic/Gatsby-style — and, from that, the `sizes` the browser needs,
+   * so you do not write one by hand:
+   * - `'constrained'`: up to its `width`, shrinking on narrower screens
+   *   (`sizes="(min-width: Wpx) Wpx, 100vw"`);
+   * - `'fullWidth'`: always the full width (`sizes="100vw"`);
+   * - `'fixed'`: exactly `width`×`height` (`sizes="Wpx"`; 1x/2x with a loader).
+   * An explicit `sizes` wins. Without either, a lazy image gets `sizes="auto, 100vw"`: browsers
+   * that support `auto` pick from the size it is actually laid out at.
+   */
+  layout?: 'constrained' | 'fullWidth' | 'fixed';
   /** Intrinsic width (attribute). With `image`, overrides `image.width`. */
   width?: number;
   /** Intrinsic height (attribute). With `image`, overrides `image.height`. */
@@ -110,9 +121,10 @@ export interface MediaImageFromSrcProps extends MediaImageCommonProps {
 
 export type MediaImageProps = MediaImageFromDataProps | MediaImageFromSrcProps;
 
-type AnyMediaImageProps = MediaImageCommonProps &
-  Partial<Omit<MediaImageFromDataProps, keyof MediaImageCommonProps>> &
-  Partial<Omit<MediaImageFromSrcProps, keyof MediaImageCommonProps>>;
+/** Both modes' props at once, for destructuring (the `never`s of the union cancel out otherwise). */
+type AnyMediaImageProps = MediaImageCommonProps & {
+  image?: MediaImageData;
+} & Partial<Omit<MediaImageFromSrcProps, keyof MediaImageCommonProps | 'image'>>;
 
 /** What every mode resolves to before rendering. */
 interface ResolvedImage {
@@ -161,6 +173,7 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       imageSizes,
       alt,
       sizes,
+      layout,
       priority = false,
       fill = false,
       placeholder,
@@ -184,6 +197,10 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       [ref],
     );
 
+    const displayWidth = fill ? undefined : (width ?? image?.width);
+    const displayHeight = fill ? undefined : (height ?? image?.height);
+    const derivedSizes = layoutSizes(layout, displayWidth);
+
     const resolved = resolveImage({
       image,
       src,
@@ -194,10 +211,20 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
       placeholderColor,
       deviceSizes,
       imageSizes,
-      sizes,
+      // A fixed image needs 1x/2x, not a `w` list: keep `sizes` out of the loader's choice.
+      sizes: sizes ?? (layout === 'fixed' ? undefined : derivedSizes),
       width: fill ? undefined : width,
       height,
     });
+
+    const lazy = !priority && (loading ?? 'lazy') === 'lazy';
+    const sizesAttr = !resolved.sizesApply
+      ? undefined
+      : sizes !== undefined
+        ? sizes
+        : lazy
+          ? `auto, ${derivedSizes ?? '100vw'}`
+          : derivedSizes;
 
     const preview = resolved.preview;
     const mode = placeholder ?? (preview?.dataUrl ? 'blur' : preview?.color ? 'color' : 'empty');
@@ -214,7 +241,7 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
         ref={imgRef}
         src={resolved.src}
         srcSet={resolved.srcSet}
-        sizes={resolved.sizesApply ? sizes : undefined}
+        sizes={sizesAttr}
         width={fill ? undefined : resolved.width}
         height={fill ? undefined : resolved.height}
         alt={alt}
@@ -226,7 +253,7 @@ export const MediaImage = forwardRef<HTMLImageElement, MediaImageProps>(
           onLoad?.(event);
         }}
         style={{
-          ...(fill ? FILL_STYLE : {}),
+          ...(fill ? FILL_STYLE : layoutStyle(layout, displayWidth, displayHeight)),
           ...(showPlaceholder
             ? mode === 'blur'
               ? placeholderStyle(
@@ -358,6 +385,37 @@ export function mediaImageLoader(
     const join = base.includes('?') ? '&' : '?';
     return `${base}${join}w=${width}${quality !== undefined ? `&q=${quality}` : ''}`;
   };
+}
+
+/** The `sizes` a layout implies at a given display width (`undefined` when it cannot tell). */
+function layoutSizes(
+  layout: MediaImageCommonProps['layout'],
+  width: number | undefined,
+): string | undefined {
+  if (layout === 'fullWidth') return '100vw';
+  if (width === undefined) return undefined;
+  if (layout === 'fixed') return `${width}px`;
+  if (layout === 'constrained') return `(min-width: ${width}px) ${width}px, 100vw`;
+  return undefined;
+}
+
+/** The box a layout implies; the caller's `style` still wins. */
+function layoutStyle(
+  layout: MediaImageCommonProps['layout'],
+  width: number | undefined,
+  height: number | undefined,
+): CSSProperties {
+  if (layout === 'fullWidth') return { width: '100%', height: 'auto' };
+  if (layout === 'constrained') {
+    return { width: '100%', height: 'auto', ...(width !== undefined ? { maxWidth: width } : {}) };
+  }
+  if (layout === 'fixed') {
+    return {
+      ...(width !== undefined ? { width } : {}),
+      ...(height !== undefined ? { height } : {}),
+    };
+  }
+  return {};
 }
 
 const FILL_STYLE: CSSProperties = {
