@@ -83,6 +83,10 @@ export interface DeliveryRequest {
    * supports (AVIF before WebP, say). Absent ⇒ the first configured format.
    */
   accept?: string | undefined;
+  /** `?exp=` of a signed URL (`delivery.signing`). */
+  expires?: number | string | undefined;
+  /** `?sig=` of a signed URL (`delivery.signing`). */
+  signature?: string | undefined;
 }
 
 /**
@@ -154,8 +158,12 @@ export class MediaDeliveryHandler {
     this.signedTtlSeconds = options.signedTtlSeconds;
   }
 
-  handle(request: DeliveryRequest): Promise<DeliveryResult> {
+  async handle(request: DeliveryRequest): Promise<DeliveryResult> {
+    // With `delivery.signing`, a signed request is authorized by its signature (any size the app
+    // signed); an unsigned one is refused when signing is required. Throws DeliverySignatureError.
+    const trusted = this.library.checkDeliverySignature(request);
     return this.library.deliver(request.mediaId, {
+      ...(trusted ? { trusted: true } : {}),
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
       ...(request.width !== undefined && request.width !== ''
         ? { width: request.width, quality: request.quality, accept: request.accept }

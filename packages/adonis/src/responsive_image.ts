@@ -44,10 +44,17 @@ export interface ResponsiveImageOptions {
    * app's delivery route. Takes precedence over {@link expiresIn}.
    */
   url?: (conversion: string | undefined) => string | Promise<string>;
+  /**
+   * Build the `srcSet` from the delivery route's on-demand resize instead of presets: one
+   * candidate per width, as `media.library.deliveryUrl(id, { width })` — signed when
+   * `delivery.signing` is configured. `true` uses `delivery.images.widths` below the original's
+   * width; pass `widths` (any, when signed) and `quality` to choose.
+   */
+  onDemand?: boolean | { widths?: readonly number[]; quality?: number };
 }
 
 /** Formats every current browser decodes; anything else (HEIC, TIFF) is never a candidate. */
-const BROWSER_IMAGE_TYPES = new Set([
+export const BROWSER_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',

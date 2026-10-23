@@ -428,3 +428,22 @@ export class NotAnImageError extends Error {
     this.name = 'NotAnImageError';
   }
 }
+
+/**
+ * A delivery request failed signature checking (`delivery.signing`): it carries no signature while
+ * one is required (`missing`), the signature does not match the request (`invalid` — any
+ * parameter changed, or a URL signed with another key), or it expired (`expired`). Map it to a 403.
+ */
+export class DeliverySignatureError extends Error {
+  readonly code = 'E_MEDIA_DELIVERY_SIGNATURE';
+  constructor(readonly reason: 'missing' | 'invalid' | 'expired') {
+    super(
+      reason === 'missing'
+        ? 'This media URL must be signed (delivery.signing.required).'
+        : reason === 'expired'
+          ? 'This media URL has expired.'
+          : 'This media URL has an invalid signature.',
+    );
+    this.name = 'DeliverySignatureError';
+  }
+}

@@ -143,6 +143,10 @@ export default class MediaProvider {
         ...(config.delivery?.images !== undefined
           ? { deliveryImages: config.delivery.images }
           : {}),
+        ...(config.delivery?.signing !== undefined
+          ? { deliverySigning: config.delivery.signing }
+          : {}),
+        ...(config.delivery?.path !== undefined ? { deliveryPath: config.delivery.path } : {}),
       });
     });
   }

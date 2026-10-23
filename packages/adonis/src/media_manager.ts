@@ -1,5 +1,6 @@
 import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
+import type { DeliverySigningConfig } from './delivery_signing.js';
 import { DirectUploadManager } from './direct_upload.js';
 import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
@@ -65,6 +66,10 @@ export interface MediaManagerOptions {
   deliverySignedTtlSeconds?: number;
   /** On-demand resizing for `library.deliver(id, { width })` (`delivery.images`). */
   deliveryImages?: OnDemandImageConfig;
+  /** Signed delivery URLs (`delivery.signing`). */
+  deliverySigning?: DeliverySigningConfig;
+  /** Route of the delivery handler, with `:id` (`delivery.path`). */
+  deliveryPath?: string;
 }
 
 /**
@@ -110,6 +115,10 @@ export class MediaManager {
         ? { deliverySignedTtlSeconds: options.deliverySignedTtlSeconds }
         : {}),
       ...(options.deliveryImages !== undefined ? { deliveryImages: options.deliveryImages } : {}),
+      ...(options.deliverySigning !== undefined
+        ? { deliverySigning: options.deliverySigning }
+        : {}),
+      ...(options.deliveryPath !== undefined ? { deliveryPath: options.deliveryPath } : {}),
     });
     this.attachments = new AttachmentManager({
       storage: this.storage,

@@ -11,12 +11,21 @@ import {
   type OnDemandImageConfig,
   resolveDeliveryMode,
 } from './delivery.js';
+import {
+  DEFAULT_DELIVERY_SIGNING_TTL_SECONDS,
+  type DeliverySigningConfig,
+  deliveryExpiry,
+  deliveryQueryString,
+  signDelivery,
+  verifyDelivery,
+} from './delivery_signing.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
 import {
   ContentSignatureUnrecognizedError,
   ContentTypeMismatchError,
   ConversionArtifactMissingError,
   ConversionNotDefinedError,
+  DeliverySignatureError,
   ImageProcessorMissingError,
   ImageSizeNotAllowedError,
   MediaNotFoundError,
@@ -36,6 +45,7 @@ import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
 import { resolveDeclaredMimeType } from './mime_type.js';
 import {
+  BROWSER_IMAGE_TYPES,
   imageCandidates,
   type ResponsiveImage,
   type ResponsiveImageOptions,
@@ -68,6 +78,10 @@ export interface MediaLibraryOptions {
   deliverySignedTtlSeconds?: number;
   /** On-demand resizing for `deliver(id, { width })` (`delivery.images`). */
   deliveryImages?: OnDemandImageConfig;
+  /** Signed delivery URLs (`delivery.signing`). */
+  deliverySigning?: DeliverySigningConfig;
+  /** Route the app mounts `MediaDeliveryHandler` on, with `:id` (`delivery.path`). Default `/media/:id`. */
+  deliveryPath?: string;
 }
 
 export interface AttachInput {
@@ -146,6 +160,11 @@ export interface DeliverOptions {
   quality?: number | string | undefined;
   /** The request's `Accept` header, to negotiate the resized image's format. */
   accept?: string | undefined;
+  /**
+   * The request was authorized by a valid delivery signature (`MediaDeliveryHandler` sets this):
+   * any `width`/`quality` is served, not just the `delivery.images` whitelist — the app chose it.
+   */
+  trusted?: boolean | undefined;
 }
 
 /** Options for {@link MediaLibrary.signedUrl}: the disk's response headers, plus a conversion to sign instead of the original. */
@@ -218,6 +237,8 @@ export class MediaLibrary {
   private readonly deliveryMode: DeliveryMode;
   private readonly deliverySignedTtlSeconds: number;
   private readonly deliveryImages: Required<OnDemandImageConfig>;
+  private readonly deliverySigning: DeliverySigningConfig | undefined;
+  private readonly deliveryPath: string;
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -235,6 +256,8 @@ export class MediaLibrary {
       qualities: options.deliveryImages?.qualities ?? DEFAULT_IMAGE_QUALITIES,
       formats: options.deliveryImages?.formats ?? ['webp'],
     };
+    this.deliverySigning = options.deliverySigning;
+    this.deliveryPath = options.deliveryPath ?? '/media/:id';
   }
 
   private emit<E extends 'attach' | 'delete' | 'conversion'>(
@@ -612,14 +635,20 @@ export class MediaLibrary {
       width: number | string;
       quality?: number | string | undefined;
       accept?: string | undefined;
+      /** Signed by the app: any width/quality in range, not just the whitelist. */
+      trusted?: boolean | undefined;
     },
   ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
     const { widths, qualities, formats } = this.deliveryImages;
-    const width = allowedNumber('width', request.width, widths);
+    const width = request.trusted
+      ? numberInRange('width', request.width, 1, MAX_SIGNED_WIDTH)
+      : allowedNumber('width', request.width, widths);
     const quality =
       request.quality === undefined || request.quality === ''
         ? qualities[0]!
-        : allowedNumber('quality', request.quality, qualities);
+        : request.trusted
+          ? numberInRange('quality', request.quality, 1, 100)
+          : allowedNumber('quality', request.quality, qualities);
 
     const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
@@ -928,6 +957,7 @@ export class MediaLibrary {
   async image(id: string, options: ResponsiveImageOptions = {}): Promise<ResponsiveImage> {
     let record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
+    if (options.onDemand) return this.#onDemandImage(record, options.onDemand);
     const presets = this.collections.get(record.collection).conversions ?? [];
 
     if (options.generate) {
@@ -944,6 +974,8 @@ export class MediaLibrary {
       if (options.expiresIn !== undefined) {
         return this.signedUrl(id, options.expiresIn, conversion ? { conversion } : {});
       }
+      // With signing configured, nothing goes out as a storage URL: everything through the route.
+      if (this.deliverySigning) return this.deliveryUrl(id, conversion ? { conversion } : {});
       return this.url(id, conversion);
     };
 
@@ -965,6 +997,108 @@ export class MediaLibrary {
           }
         : {}),
     };
+  }
+
+  /** {@link image} with `onDemand`: candidates are delivery-route URLs resized per width. */
+  #onDemandImage(
+    record: MediaRecord,
+    onDemand: true | { widths?: readonly number[]; quality?: number },
+  ): ResponsiveImage {
+    const settings = onDemand === true ? {} : onDemand;
+    const placeholder = placeholderOf(record);
+    const extra = placeholder
+      ? {
+          width: placeholder.width,
+          height: placeholder.height,
+          placeholder: { dataUrl: placeholder.dataUrl, color: placeholder.color },
+        }
+      : {};
+    const original = this.deliveryUrl(record.id);
+    // Not resizable (an SVG scales itself; a non-image has no widths): the route serves it as is.
+    if (!record.mimeType.startsWith('image/') || record.mimeType.startsWith('image/svg')) {
+      return { src: original, ...extra };
+    }
+
+    const originalWidth = placeholder?.width;
+    const widths = [...(settings.widths ?? this.deliveryImages.widths)]
+      .filter((w) => (originalWidth === undefined ? w >= 256 : w < originalWidth))
+      .sort((a, b) => a - b);
+    const candidates = widths.map((width) => ({
+      url: this.deliveryUrl(record.id, {
+        width,
+        ...(settings.quality !== undefined ? { quality: settings.quality } : {}),
+      }),
+      width,
+    }));
+    // The original, full size, as the widest — when its width is known and browsers decode it.
+    if (originalWidth !== undefined && BROWSER_IMAGE_TYPES.has(record.mimeType)) {
+      candidates.push({ url: original, width: originalWidth });
+    }
+    if (candidates.length === 0) return { src: original, ...extra };
+    return {
+      src: candidates.at(-1)!.url,
+      srcSet: candidates.map((c) => `${c.url} ${c.width}w`).join(', '),
+      ...extra,
+    };
+  }
+
+  /**
+   * URL of the delivery route (`delivery.path`, default `/media/:id`) for a record — optionally a
+   * conversion, or resized (`width`/`quality`). With `delivery.signing` configured it is signed and
+   * expires, and `MediaDeliveryHandler` serves exactly what was signed (any width) and nothing else;
+   * without it, a plain route URL (widths limited to `delivery.images`).
+   *
+   * ```ts
+   * media.library.deliveryUrl(id)                 // /media/<id>?exp=…&sig=…
+   * media.library.deliveryUrl(id, { width: 640 }) // /media/<id>?w=640&exp=…&sig=…
+   * ```
+   */
+  deliveryUrl(
+    id: string,
+    options: {
+      conversion?: string;
+      width?: number;
+      quality?: number;
+      /** Seconds; overrides `delivery.signing.expiresIn`. */
+      expiresIn?: number;
+    } = {},
+  ): string {
+    const path = this.deliveryPath.replace(':id', encodeURIComponent(id));
+    const { conversion, width, quality } = options;
+    if (!this.deliverySigning) return path + deliveryQueryString({ conversion, width, quality });
+    const ttl =
+      options.expiresIn ?? this.deliverySigning.expiresIn ?? DEFAULT_DELIVERY_SIGNING_TTL_SECONDS;
+    const expires = deliveryExpiry(this.now().getTime(), ttl);
+    const signature = signDelivery(this.deliverySigning.secret, {
+      mediaId: id,
+      conversion,
+      width,
+      quality,
+      expires,
+    });
+    return path + deliveryQueryString({ conversion, width, quality, expires, signature });
+  }
+
+  /**
+   * Check a delivery request against `delivery.signing`: `true` when it is signed and valid (serve
+   * any size it names), `false` when signing is off or the request is unsigned and that is allowed.
+   * Throws {@link DeliverySignatureError} for an invalid or expired signature, or a missing one when
+   * `delivery.signing.required` (the default). `MediaDeliveryHandler` calls this for you.
+   */
+  checkDeliverySignature(request: {
+    mediaId: string;
+    conversion?: string | undefined;
+    width?: number | string | undefined;
+    quality?: number | string | undefined;
+    expires?: number | string | undefined;
+    signature?: string | undefined;
+  }): boolean {
+    if (!this.deliverySigning) return false;
+    const signed = verifyDelivery(this.deliverySigning.secret, request, this.now().getTime());
+    if (!signed && (this.deliverySigning.required ?? true)) {
+      throw new DeliverySignatureError('missing');
+    }
+    return signed;
   }
 
   /**
@@ -991,6 +1125,7 @@ export class MediaLibrary {
             width: options.width!,
             quality: options.quality,
             accept: options.accept,
+            trusted: options.trusted,
           })
         ).conversion
       : options.conversion;
@@ -1071,6 +1206,24 @@ function assertSafeArtifactPath(transformer: string, relativePath: string): stri
     );
   }
   return normalized;
+}
+
+/** Widest image a signed URL may ask for — a sanity bound; the original's width still caps it. */
+const MAX_SIGNED_WIDTH = 8192;
+
+/** Parse a requested width/quality and check it is within `[min, max]` (signed requests). */
+function numberInRange(
+  field: 'width' | 'quality',
+  value: number | string,
+  min: number,
+  max: number,
+): number {
+  const parsed =
+    typeof value === 'number' ? value : /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new ImageSizeNotAllowedError(field, value, [min, max]);
+  }
+  return parsed;
 }
 
 /** Parse a requested width/quality (a query-string value, possibly) and check it is whitelisted. */

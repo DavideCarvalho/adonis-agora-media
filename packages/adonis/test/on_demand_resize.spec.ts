@@ -141,7 +141,9 @@ describe('on-demand resize (deliver with ?w=)', () => {
 
   it('a JPEG original falls back to JPEG for a browser without modern formats', async () => {
     const { library } = makeLibrary();
-    const jpeg = await sharp(await png(400, 200)).jpeg().toBuffer();
+    const jpeg = await sharp(await png(400, 200))
+      .jpeg()
+      .toBuffer();
     const record = await attach(library, jpeg, 'image/jpeg', 'a.jpg');
     expect(await library.deliver(record.id, { width: 256, accept: 'image/png,*/*' })).toEqual({
       kind: 'redirect',
@@ -186,7 +188,12 @@ describe('on-demand resize (deliver with ?w=)', () => {
     const handler = new MediaDeliveryHandler({ library });
 
     expect(
-      await handler.handle({ mediaId: record.id, width: '384', quality: '75', accept: 'image/webp' }),
+      await handler.handle({
+        mediaId: record.id,
+        width: '384',
+        quality: '75',
+        accept: 'image/webp',
+      }),
     ).toEqual({
       kind: 'redirect',
       url: `memory://fs/${resizedKey('@w384q75-webp')}`,

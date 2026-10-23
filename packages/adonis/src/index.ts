@@ -69,6 +69,8 @@ export {
   MediaDeliveryHandler,
   resolveDeliveryMode,
 } from './delivery.js';
+export type { DeliverySigningConfig } from './delivery_signing.js';
+export { DEFAULT_DELIVERY_SIGNING_TTL_SECONDS } from './delivery_signing.js';
 // Diagnostics (event types only — `publishMedia` is the internal emit helper and is not exported)
 export type {
   AttachmentCreatePayload,
@@ -120,6 +122,7 @@ export {
   ContentTypeMismatchError,
   ConversionArtifactMissingError,
   ConversionNotDefinedError,
+  DeliverySignatureError,
   DirectUploadsNotConfiguredError,
   DriveNotReadyError,
   FfmpegFailedError,
