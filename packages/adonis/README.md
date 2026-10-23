@@ -18,7 +18,7 @@ probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configu
 provider + `defineConfig`, and a testing kit. The management
 **console ships embedded** — registering `@adonis-agora/media/dashboard_provider` is all a consuming
 app needs (see [Dashboard](#dashboard) below); no separate install. Pair it with
-[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react)
+[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react)
 for a browser upload client.
 
 ## Subpath exports
@@ -196,6 +196,34 @@ the context hands you the record, the original's bytes/stream, and a sandboxed `
 every artifact under the conversion's own prefix.
 
 
+## Responsive images (`next/image`-style)
+
+`media.library.image(id)` returns everything an `<img>` needs as plain JSON: `src`, a `srcSet` built
+from the collection's same-picture presets, the intrinsic `width`/`height`, the blur-up
+`placeholder` and the `focalPoint`. Render it with `<MediaImage>` from
+`@adonis-agora/media-react`. It is one `<img>` with lazy loading, `priority`, `fill`, a
+`layout` that computes `sizes`, and the blurred preview behind it until it loads.
+
+```ts
+// config/media.ts — presets at standard widths + the placeholder, from one flag
+{ name: 'banner', responsive: true, stripMetadata: true }
+
+// controller
+return inertia.render('courses/show', { banner: await media.library.image(course.bannerMediaId) })
+```
+
+```tsx
+<MediaImage image={banner} alt={course.title} layout="constrained" priority />
+```
+
+More on the image side:
+
+- **Focal points:** `media.library.setFocalPoint(id, { x, y })` makes every crop keep that part, and so does `object-fit: cover` in the browser. Presets also take `position: 'attention'`.
+- **Art direction:** `image(id, { conversions: [...] })` returns a group, which `<MediaPicture>` swaps in on some screens.
+- **On-demand resizing:** the delivery route serves `?w=640`, resized once and cached, as WebP (or AVIF, when you opt in) depending on `Accept`. Only whitelisted widths are served, unless the URL is signed.
+- **Signed URLs:** with `delivery.signing`, `media.library.deliveryUrl()` and `image()` hand out signed, expiring URLs, and the route serves nothing else.
+- **`stripMetadata: true`:** removes GPS, camera and timestamps from uploaded originals.
+
 ## Uploads, S3 and delivery
 
 Large-file uploads ship in three flavours — **proxy** (bytes stream through your app), **direct-S3
@@ -222,9 +250,14 @@ a hand-rolled streaming route. `MediaDeliveryHandler` and `TusUploadHandler` are
 route halves your app mounts with its own middleware; **neither performs authorization** — guard the
 route before calling `handle`.
 
+The same delivery route resizes on demand (`delivery.handle({ mediaId, width: qs.w, quality: qs.q,
+accept })`). It serves only widths in `delivery.images.widths` unless the request is signed, and it
+negotiates AVIF/WebP from `Accept`. With `delivery.signing` (`{ secret, expiresIn }`), it serves only
+URLs built by `media.library.deliveryUrl()` or `image()`, until they expire.
+
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
-[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react).
+[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react).
 
 ## Dashboard
 
@@ -257,7 +290,7 @@ export default defineConfig({
 The console reads/writes through the real `@adonis-agora/media` surface (disk
 `list`/`stat`/`copy`/`move`/`deleteMany`, the resumable session store, the `MediaStore`) — nothing
 about storage is reimplemented. Full config reference, routes, and folder-operations semantics are
-documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard),
+documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/dashboard),
 which is now the **build-time source** of the console's SPA bundle (embedded here at build time) and
 remains installable **standalone** — its own provider is a thin delegate to this one, kept for hosts
 that already register it directly. Don't register both providers in the same app.
@@ -294,8 +327,8 @@ fake while keeping the rest of the wiring intact.
 ## Links
 
 - Repo: https://github.com/DavideCarvalho/adonis-media
-- Changelog: https://github.com/DavideCarvalho/adonis-media/blob/master/packages/adonis/CHANGELOG.md
-- Sibling packages: [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react), [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard)
+- Changelog: https://github.com/DavideCarvalho/adonis-agora-media/blob/master/packages/adonis/CHANGELOG.md
+- Sibling packages: [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react), [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/dashboard)
 
 ## License
 

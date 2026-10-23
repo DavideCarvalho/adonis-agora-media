@@ -186,19 +186,33 @@ A `StoreFactory` receives a `StoreContext` (`{ app }`), the booted application �
 
 ## The `ImageProcessor` — conversions
 
-The conversion engine is a one-method interface:
+The conversion engine is one required method, plus two optional ones that unlock features:
 
 ```ts
 interface ImageProcessor {
-  convert(input: Buffer, preset: ConversionPreset): Promise<ConversionResult>
+  convert(input: Buffer, preset: ConversionPreset, options?: ConvertOptions): Promise<ConversionResult>
+  /** Displayed size (EXIF applied). Enables `onlyDownscale` / `responsive` collections. */
+  dimensions?(input: Buffer): Promise<{ width: number; height: number } | undefined>
+  /** The image without EXIF/XMP/IPTC, same format. Enables `stripMetadata` collections. */
+  stripMetadata?(input: Buffer): Promise<Buffer | undefined>
+}
+
+interface ConvertOptions {
+  focalPoint?: { x: number; y: number } // the record's focal point, for cropping presets
 }
 
 interface ConversionResult {
   data: Buffer
   format: string      // actual output format/extension, e.g. 'webp'
   contentType: string
+  width?: number      // output size — recorded in conversions[name].meta, what srcset is built from
+  height?: number
 }
 ```
+
+A processor without `dimensions` makes `onlyDownscale` a no-op (every width is generated). One
+without `stripMetadata` leaves originals untouched. And if it skips `width`/`height`,
+`media.library.image()` falls back to deriving widths from the presets.
 
 ### The sharp processor
 
@@ -206,8 +220,20 @@ interface ConversionResult {
 
 - `width` / `height` → `resize({ width, height, fit })` (only when a dimension is set);
 - `fit` → sharp's `fit` (default `cover`);
+- `position` → sharp's `position` (a gravity, or the `attention` / `entropy` strategies);
+- `withoutEnlargement` → sharp's `withoutEnlargement`;
+- `blur` → `blur(sigma)`, after the resize;
 - `format` → `toFormat(format)` — **default `webp`**;
 - `quality` → the format's `quality` option.
+
+On top of that mapping:
+
+- **EXIF orientation is always applied** (`rotate()`) before anything else, so phone photos stay upright.
+- **A focal point** (`options.focalPoint`) on a cropping preset (`cover` with both sides) scales the image to cover the box and cuts the box around the point. It wins over `position`.
+- **Animated GIF/WebP keep every frame** when the output is WebP. Other formats get the first frame, never the frames stacked into one tall image.
+- **The output size is reported** (`width`, `height`, with one frame's height for an animation).
+- **`dimensions()`** reads the displayed size from the header, without decoding the image.
+- **`stripMetadata()`** re-encodes JPEG, PNG, WebP, AVIF and TIFF without metadata, keeping the colour profile and baking the orientation into the pixels. An image with nothing to strip returns `undefined`, so the original is untouched.
 
 Import it directly from `@adonis-agora/media/processors/sharp` if you want the class, or select it lazily with `processors.sharp()` in config.
 

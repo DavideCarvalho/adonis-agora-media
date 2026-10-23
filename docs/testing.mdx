@@ -36,7 +36,7 @@ import {
 | `InMemoryMediaStore` | `MediaStore` | `Map`-backed metadata store. |
 | `InMemoryDisk` | `Disk` | `Map`-backed disk; exposes `.files` for assertions. |
 | `inMemoryDiskResolver(names)` | `DiskResolver` factory | Builds a resolver over named in-memory disks; returns `{ resolve, disks }`. |
-| `FakeImageProcessor` | `ImageProcessor` | Deterministic, sharp-free; records every `convert` call on `.calls`. |
+| `FakeImageProcessor` | `ImageProcessor` | Deterministic, sharp-free; records every `convert` call on `.calls` (`{ inputSize, preset, options? }`, where `options.focalPoint` is the record's focal point). Implements neither `dimensions` nor `stripMetadata`, so `onlyDownscale` and `stripMetadata` are no-ops under it; use the sharp processor to test those. |
 | `InMemoryUploadSessionStore` | `UploadSessionStore` | `Map`-backed resumable-upload session store; drives TUS / multipart tests with no database. Non-durable (sessions vanish on restart) and returns defensive copies. |
 | `FakeTransformer` | `Transformer` | Deterministic, engine-free transformer; writes exactly the artifacts it was configured with and records every context on `.calls`. |
 | `DiskVisibility` | type | `'public'` \| `'private'` \| `'unknown'` — what an in-memory disk reports from `getVisibility`. |
@@ -170,6 +170,38 @@ test('lazy conversions run on first url(), then cache', async () => {
 ```
 
 Flip the preset to `eager: true` and assert `processor.calls` has length `1` immediately after `attach`.
+
+---
+
+## Testing signed URLs and expiry
+
+Pass a `clock` and the signing config to the `MediaLibrary`, and drive the real handler with
+what your route would hand it:
+
+```ts
+let now = Date.UTC(2026, 0, 1, 12, 1, 40)
+const library = new MediaLibrary({
+  storage, store, collections, imageProcessor,
+  clock: () => new Date(now),
+  deliverySigning: { secret: 'test-secret', expiresIn: 600 },
+})
+const delivery = new MediaDeliveryHandler({ library })
+
+const url = new URL(library.deliveryUrl(id, { width: 500 }), 'http://app.test')
+const request = {
+  mediaId: id,
+  width: url.searchParams.get('w') ?? undefined,
+  expires: url.searchParams.get('exp') ?? undefined,
+  signature: url.searchParams.get('sig') ?? undefined,
+}
+await delivery.handle(request)                         // served
+
+now += 1201 * 1000
+await delivery.handle(request)                         // throws DeliverySignatureError('expired')
+```
+
+Expiries round up to a multiple of `expiresIn`, so start the clock mid-window. On a boundary, the
+next second already lands in the next window and the URL changes.
 
 ---
 

@@ -45,7 +45,7 @@ export default defineConfig({
 | `imageProcessor` | `ImageProcessor \| ImageProcessorFactory` | — | The conversion engine. Required only if any collection has conversions. |
 | `collections` | `MediaCollectionConfig[]` | `[]` | Collection definitions — see [Collections & Conversions](/docs/media/collections-and-conversions). |
 | `uploads` | `MediaUploadsConfig` | — | Large-file uploads: default mode, part size, presign TTL, and the opt-in routes for [direct](/docs/media/uploads/upload-modes), [direct sessions](/docs/media/uploads/direct-sessions) and [TUS](/docs/media/uploads/resumable-tus). |
-| `delivery` | `MediaDeliveryConfig` | `{ mode: 'auto' }` | How stored media is served back — `auto` / `public` / `signed` / `proxy`, plus the signed-URL TTL. See [Delivery](/docs/media/delivery). |
+| `delivery` | `MediaDeliveryConfig` | `{ mode: 'auto' }` | How stored media is served back. `mode` (`auto` / `public` / `signed` / `proxy`) and the signed-URL TTL; `images` (on-demand resize: allowed `widths` / `qualities`, `formats` negotiated with `Accept`); `signing` (signed delivery URLs: `secret`, `expiresIn`, `required`); `path` (the delivery route, default `/media/:id`). See [Delivery](/docs/media/delivery). |
 | `attachmentKeyPrefix` | `string` | `attachments` | Key prefix for column attachments created via the `AttachmentManager`. |
 | `emitDiagnostics` | `boolean` | `true` | Whether to emit `agora:media:*` diagnostics events. |
 
@@ -123,7 +123,12 @@ export default defineConfig({
 })
 ```
 
-It is only required if some collection (or attachment call) actually defines conversions. If you never convert images, omit it — and asking for a conversion later will throw `ImageProcessorMissingError` rather than silently failing.
+It is only required if something actually processes images: a collection with conversions,
+`responsive` or `stripMetadata`, an attachment call with variants, or an on-demand resize
+(`?w=`). If you never process images, omit it, and asking for a conversion later throws
+`ImageProcessorMissingError` rather than silently failing. `processors.sharp()` implements every
+optional capability (`dimensions`, `stripMetadata`, focal-point crops). See
+[Stores & Processors](/docs/media/stores-and-processors#the-imageprocessor--conversions).
 
 ---
 
@@ -145,6 +150,19 @@ defineConfig({
   ],
 })
 ```
+
+Every key of a collection:
+
+| Key | What it does |
+|---|---|
+| `name` | The collection's name: what `attach({ collection })` refers to. |
+| `single` | Attaching replaces the existing file (an avatar). |
+| `acceptsMimeTypes` | MIME whitelist, also checked against the file's content. |
+| `disk` | Per-collection disk. |
+| `conversions` | Image presets (`width`, `height`, `fit`, `position`, `format`, `quality`, `blur`, `withoutEnlargement`, `onlyDownscale`, `eager`). |
+| `transformers` | Content transformers: `transformers.hls()`, `.probe()`, `.placeholder()`, or your own. |
+| `responsive` | `true` or `{ widths, format, quality }`: srcset presets and the placeholder, generated for you. |
+| `stripMetadata` | Rewrite the original without EXIF/GPS/XMP/IPTC on attach. |
 
 This whole surface is documented on [Collections & Conversions](/docs/media/collections-and-conversions).
 
