@@ -18,7 +18,7 @@ probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configu
 provider + `defineConfig`, and a testing kit. The management
 **console ships embedded** — registering `@adonis-agora/media/dashboard_provider` is all a consuming
 app needs (see [Dashboard](#dashboard) below); no separate install. Pair it with
-[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react)
+[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react)
 for a browser upload client.
 
 ## Subpath exports
@@ -257,7 +257,7 @@ URLs built by `media.library.deliveryUrl()` or `image()`, until they expire.
 
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
-[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react).
+[`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react).
 
 ## Dashboard
 
@@ -290,7 +290,7 @@ export default defineConfig({
 The console reads/writes through the real `@adonis-agora/media` surface (disk
 `list`/`stat`/`copy`/`move`/`deleteMany`, the resumable session store, the `MediaStore`) — nothing
 about storage is reimplemented. Full config reference, routes, and folder-operations semantics are
-documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard),
+documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/dashboard),
 which is now the **build-time source** of the console's SPA bundle (embedded here at build time) and
 remains installable **standalone** — its own provider is a thin delegate to this one, kept for hosts
 that already register it directly. Don't register both providers in the same app.
@@ -327,8 +327,8 @@ fake while keeping the rest of the wiring intact.
 ## Links
 
 - Repo: https://github.com/DavideCarvalho/adonis-media
-- Changelog: https://github.com/DavideCarvalho/adonis-media/blob/master/packages/adonis/CHANGELOG.md
-- Sibling packages: [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/react), [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-media/tree/master/packages/dashboard)
+- Changelog: https://github.com/DavideCarvalho/adonis-agora-media/blob/master/packages/adonis/CHANGELOG.md
+- Sibling packages: [`@adonis-agora/media-react`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/react), [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/dashboard)
 
 ## License
 
