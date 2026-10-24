@@ -161,7 +161,7 @@ Every key of a collection:
 | `acceptsMimeTypes` | MIME whitelist, also checked against the file's content. |
 | `disk` | Per-collection disk. |
 | `conversions` | Image presets (`width`, `height`, `fit`, `position`, `format`, `quality`, `blur`, `withoutEnlargement`, `onlyDownscale`, `eager`). |
-| `transformers` | Content transformers: `transformers.hls()`, `.probe()`, `.placeholder()`, or your own. |
+| `transformers` | Content transformers: `transformers.video()`, `.probe()`, `.placeholder()`, or your own. |
 | `responsive` | `true` or `{ widths, format, quality }`: srcset presets and the placeholder, generated for you. |
 | `stripMetadata` | Rewrite the original without EXIF/GPS/XMP/IPTC on attach. |
 | `access` | `{ read?, write? }`: who may read and upload, applied by `media.access`. Absent means denied. See [Authorization](/docs/media/access). |

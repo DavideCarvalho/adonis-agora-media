@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   FfmpegFailedError,
   HlsSourceUnsupportedError,
   TransformerRuntimeMissingError,
 } from '../errors.js';
-import type { DashPackageEngine, DashPackageRequest } from './dash.js';
-import type { HlsRemuxEngine, HlsRemuxRequest, HlsRemuxSummary } from './hls.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
+import type { VideoPackageRequest, VideoPackageSummary, VideoPackagingEngine } from './video.js';
 
 /**
  * Engines backed by the system `ffmpeg` / `ffprobe` binaries — the alternative to the default
@@ -21,7 +21,7 @@ import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
  * import { engines, transformers } from '@adonis-agora/media'
  *
  * transformers: [
- *   transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) }),
+ *   transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) }),
  *   transformers.probe({ engine: engines.ffprobe() }),
  * ]
  * ```
@@ -48,17 +48,22 @@ export interface FfmpegBinaryOptions {
   ffprobePath?: string;
 }
 
-export interface FfmpegHlsEngineOptions extends FfmpegBinaryOptions {
+export interface FfmpegVideoEngineOptions extends FfmpegBinaryOptions {
   /**
-   * Renditions to encode. Omit for **remux** (stream copy, no re-encode — fast, but the source must
-   * already be MPEG-TS compatible, e.g. h264/aac). With a ladder, every rendition is transcoded to
-   * h264/aac and listed in the master playlist. Rungs taller than the source are dropped (never
-   * upscale); if every rung is taller, the smallest one is kept at the source height.
+   * Renditions to encode. Omit to **remux** (stream copy, no re-encode — fast; TS segments need an
+   * h264/aac source, CMAF carries h264, hevc, vp9 or av1 alike). With a ladder, every rung is
+   * transcoded to h264/aac and listed in the manifests. Rungs taller than the source are dropped
+   * (never upscale); if every rung is taller, the smallest one is kept at the source height.
    */
   ladder?: FfmpegRendition[];
+  /**
+   * AAC bitrate of the shared audio track of a CMAF ladder (TS renditions each carry their rung's
+   * `audioBitrate`). Default: the ladder's highest, else `'128k'`.
+   */
+  audioBitrate?: string;
   /** x264 preset when transcoding. Default `'veryfast'`. */
   preset?: string;
-  /** Extra ffmpeg arguments, inserted right before the HLS muxer options. */
+  /** Extra ffmpeg arguments, inserted right before the muxer options. */
   extraArgs?: string[];
 }
 
@@ -199,7 +204,7 @@ export function effectiveLadder(
 }
 
 /**
- * Build the ffmpeg argument list for one HLS run. Exported for tests and for anyone wrapping the
+ * Build the ffmpeg argument list for one HLS run with TS segments. Exported for tests and for anyone wrapping the
  * engine; `renditions` empty means remux.
  */
 export function buildHlsArgs(input: {
@@ -302,73 +307,6 @@ function parseBitrate(value: string): number {
   return unit === 'k' ? n * 1_000 : unit === 'm' ? n * 1_000_000 : n;
 }
 
-/**
- * {@link HlsRemuxEngine} backed by the system ffmpeg: remux by default, or an adaptive-bitrate
- * ladder when `ladder` is set. The output is the same shape the mediabunny engine produces — a
- * master playlist at `entryName` plus per-rendition playlists and MPEG-TS segments — so delivery
- * (`MediaHlsDeliveryHandler`, playlist rewriting) works unchanged.
- */
-export function ffmpegHlsEngine(options: FfmpegHlsEngineOptions = {}): HlsRemuxEngine {
-  const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
-  const ffprobePath = options.ffprobePath ?? 'ffprobe';
-  validateLadder(options.ladder);
-
-  return {
-    async remux(request: HlsRemuxRequest): Promise<HlsRemuxSummary> {
-      const summary = await probeSource(ffprobePath, request.sourcePath, 'hls');
-      // Same definitive signal the mediabunny engine gives for an unusable source, so callers
-      // branch on one error regardless of engine (and don't retry an audio-only file forever).
-      if (!summary.hasVideo) {
-        throw new HlsSourceUnsupportedError(
-          'the source has no video stream',
-          'HLS packaging needs a video track; this file is audio-only or not a video.',
-        );
-      }
-
-      const renditions = options.ladder ? effectiveLadder(options.ladder, summary.height) : [];
-      await run(
-        ffmpegPath,
-        buildHlsArgs({
-          sourcePath: request.sourcePath,
-          outputDir: request.outputDir,
-          entryName: request.entryName,
-          targetDuration: request.targetDuration,
-          hasAudio: summary.hasAudio,
-          renditions,
-          preset: options.preset ?? 'veryfast',
-          extraArgs: options.extraArgs ?? [],
-        }),
-        'hls',
-      );
-
-      const result: HlsRemuxSummary = {};
-      if (summary.durationSeconds !== undefined) result.durationSeconds = summary.durationSeconds;
-      if (summary.width !== undefined) result.width = summary.width;
-      if (summary.height !== undefined) result.height = summary.height;
-      result.videoCodec = renditions.length > 0 ? 'h264' : (summary.videoCodec ?? null);
-      if (summary.hasAudio)
-        result.audioCodec = renditions.length > 0 ? 'aac' : (summary.audioCodec ?? null);
-      return result;
-    },
-  };
-}
-
-export interface FfmpegDashEngineOptions extends FfmpegBinaryOptions {
-  /**
-   * Renditions to encode. Omit to **remux** (stream copy into fragmented MP4 — fast, and fMP4
-   * carries h264, hevc, vp9 or av1 alike). With a ladder, every rung is transcoded to h264 and
-   * listed in the manifest; the audio is encoded once, to AAC, and shared by every rung. Rungs
-   * taller than the source are dropped (never upscale).
-   */
-  ladder?: FfmpegRendition[];
-  /** AAC bitrate of the shared audio track when transcoding. Default: the ladder's highest, else `'128k'`. */
-  audioBitrate?: string;
-  /** x264 preset when transcoding. Default `'veryfast'`. */
-  preset?: string;
-  /** Extra ffmpeg arguments, inserted right before the DASH muxer options. */
-  extraArgs?: string[];
-}
-
 /** Segment names of a CMAF package; `$…$` are DASH template identifiers ffmpeg fills in. */
 const DASH_INIT_PATTERN = 'init-$RepresentationID$.m4s';
 const DASH_SEGMENT_PATTERN = 'chunk-$RepresentationID$-$Number%05d$.m4s';
@@ -456,10 +394,16 @@ export function buildDashArgs(input: {
 }
 
 /**
- * {@link DashPackageEngine} backed by the system ffmpeg: remux into a CMAF package by default, or
- * an adaptive-bitrate ladder when `ladder` is set. Needs ffmpeg ≥ 4.3 (`-hls_master_name`).
+ * {@link VideoPackagingEngine} backed by the system ffmpeg: remux by default, or an
+ * adaptive-bitrate ladder when `ladder` is set.
+ *
+ * - CMAF segments go through ffmpeg's DASH muxer, which writes the MPD and (for HLS) a master
+ *   playlist over the same fragmented-MP4 segments — one audio track shared by every rung.
+ * - TS segments go through the HLS muxer, every rendition carrying its own audio.
+ *
+ * Needs ffmpeg ≥ 4.3 (`-hls_master_name`).
  */
-export function ffmpegDashEngine(options: FfmpegDashEngineOptions = {}): DashPackageEngine {
+export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): VideoPackagingEngine {
   const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
   const ffprobePath = options.ffprobePath ?? 'ffprobe';
   validateLadder(options.ladder);
@@ -473,34 +417,45 @@ export function ffmpegDashEngine(options: FfmpegDashEngineOptions = {}): DashPac
     '128k';
 
   return {
-    async package(request: DashPackageRequest): Promise<HlsRemuxSummary> {
-      const summary = await probeSource(ffprobePath, request.sourcePath, 'dash');
+    async package(request: VideoPackageRequest): Promise<VideoPackageSummary> {
+      const summary = await probeSource(ffprobePath, request.sourcePath, 'video');
+      // Same definitive signal the mediabunny engine gives for an unusable source, so callers
+      // branch on one error regardless of engine (and don't retry an audio-only file forever).
       if (!summary.hasVideo) {
         throw new HlsSourceUnsupportedError(
           'the source has no video stream',
-          'DASH packaging needs a video track; this file is audio-only or not a video.',
+          'Video packaging needs a video track; this file is audio-only or not a video.',
         );
       }
 
       const renditions = options.ladder ? effectiveLadder(options.ladder, summary.height) : [];
-      await run(
-        ffmpegPath,
-        buildDashArgs({
-          sourcePath: request.sourcePath,
-          outputDir: request.outputDir,
-          manifestName: request.manifestName,
-          hlsEntryName: request.hlsEntryName,
-          targetDuration: request.targetDuration,
-          hasAudio: summary.hasAudio,
-          renditions,
-          audioBitrate,
-          preset: options.preset ?? 'veryfast',
-          extraArgs: options.extraArgs ?? [],
-        }),
-        'dash',
-      );
+      const common = {
+        sourcePath: request.sourcePath,
+        outputDir: request.outputDir,
+        targetDuration: request.targetDuration,
+        hasAudio: summary.hasAudio,
+        renditions,
+        preset: options.preset ?? 'veryfast',
+        extraArgs: options.extraArgs ?? [],
+      };
 
-      const result: HlsRemuxSummary = {};
+      if (request.segments === 'ts') {
+        if (!request.hlsEntry) {
+          throw new Error('TS segments only play over HLS: the request needs an `hlsEntry`.');
+        }
+        await run(ffmpegPath, buildHlsArgs({ ...common, entryName: request.hlsEntry }), 'video');
+      } else {
+        // The DASH muxer always writes an MPD; an HLS-only package drops it afterwards.
+        const manifestName = request.dashManifest ?? 'manifest.mpd';
+        await run(
+          ffmpegPath,
+          buildDashArgs({ ...common, manifestName, hlsEntryName: request.hlsEntry, audioBitrate }),
+          'video',
+        );
+        if (!request.dashManifest) await rm(join(request.outputDir, manifestName));
+      }
+
+      const result: VideoPackageSummary = {};
       if (summary.durationSeconds !== undefined) result.durationSeconds = summary.durationSeconds;
       if (summary.width !== undefined) result.width = summary.width;
       if (summary.height !== undefined) result.height = summary.height;

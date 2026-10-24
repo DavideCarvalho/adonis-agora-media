@@ -786,7 +786,7 @@ export class MediaLibrary {
    *
    * ```ts
    * // app job (the app owns the queue, retries and any locking):
-   * await media.library.transform(payload.mediaId, 'hls')
+   * await media.library.transform(payload.mediaId, 'video')
    * ```
    *
    * Deliberately explicit: unlike image presets, a transformer conversion is never generated
@@ -1201,7 +1201,7 @@ export class MediaLibrary {
 
   /**
    * What a player needs to stream a video: the URLs of every HLS/DASH manifest the record's
-   * conversions provide (`transformers.hls()`, `transformers.dash()`), HLS first, through the
+   * conversions provide (`transformers.video()`), HLS first, through the
    * stream route (`delivery.streamPath`, served by `media.access.streamRoute()`). Pass the result
    * to `useMediaStream` from `@adonis-agora/media-react` as is.
    *

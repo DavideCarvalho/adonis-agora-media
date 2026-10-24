@@ -1,14 +1,14 @@
 ---
-title: Transformers & HLS
-description: Pluggable content transformations — turn a stored media into derived artifacts (an HLS or DASH package, an extracted audio track) or pure metadata (a probe), persisted as named conversions. Ships with HLS and DASH (CMAF) transformers, a metadata probe and an image placeholder.
+title: Transformers
+description: Pluggable content transformations — turn a stored media into derived artifacts (an HLS or DASH package, an extracted audio track) or pure metadata (a probe), persisted as named conversions. Ships with a video transformer (CMAF or TS segments, HLS and DASH manifests), a metadata probe and an image placeholder.
 icon: Film
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-A **transformer** turns the content of a stored media into something derived: many files (an HLS package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurred image placeholder). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
+A **transformer** turns the content of a stored media into something derived: many files (a video package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurred image placeholder). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
 
-Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships four — [`transformers.hls()`](#the-hls-transformer), [`transformers.dash()`](#the-dash-transformer-cmaf), [`transformers.probe()`](#the-metadata-probe) and [`transformers.placeholder()`](#image-placeholders-blur-up) — and the contract is deliberately small so you can write your own. For playing videos end to end (packaging, the authorized stream route, the React player), see [Video streaming](/docs/media/streaming).
+Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships three — [`transformers.video()`](#the-video-transformer), [`transformers.probe()`](#the-metadata-probe) and [`transformers.placeholder()`](#image-placeholders-blur-up) — and the contract is deliberately small so you can write your own. For playing videos end to end (packaging, the authorized stream route, the React player), see [Video streaming](/docs/media/streaming).
 
 ---
 
@@ -25,7 +25,7 @@ export default defineConfig({
       name: 'videos',
       acceptsMimeTypes: ['video/mp4'],
       transformers: [
-        transformers.hls({ targetDuration: 4 }),
+        transformers.video(),
         transformers.probe({ eager: true }),
       ],
     },
@@ -48,7 +48,7 @@ pnpm add mediabunny
 ```ts
 import type { InferConversions, InferTransformers } from '@adonis-agora/media'
 
-type AppTransformer = InferTransformers<typeof config> // 'hls' | 'probe'
+type AppTransformer = InferTransformers<typeof config> // 'video' | 'probe'
 type AppConversion = InferConversions<typeof config>   // presets + transformers
 ```
 
@@ -66,9 +66,9 @@ import { defineStep } from '@adonis-agora/durable'
 import media from '@adonis-agora/media/services/main'
 
 export const transcodeVideo = defineStep(
-  'media:transcode-hls',
+  'media:package-video',
   async (input: { mediaId: string }) => {
-    await media.library.transform(input.mediaId, 'hls')
+    await media.library.transform(input.mediaId, 'video')
   },
   // A transcode takes minutes: give it room before it counts as stuck.
   { retries: 3, timeoutMs: 30 * 60_000 },
@@ -121,58 +121,76 @@ Reserve `eager` for cheap transforms (a probe on small files). A remux inside an
 A transformer's output lands on `record.conversions[name]`:
 
 ```ts
-// multi-artifact (HLS)
+// multi-artifact (a video package)
 {
-  path: 'Course/1/videos/<id>/conversions/hls/index.m3u8', // entry artifact
+  path: 'Course/1/videos/<id>/conversions/video/index.m3u8', // entry artifact
   disk: 'fs',
-  prefix: 'Course/1/videos/<id>/conversions/hls/',
-  files: ['index.m3u8', 'playlist-1.m3u8', 'segment-1-0.ts', ...], // authority for serving + deletion
-  meta: { durationSeconds: 41.6, width: 1920, height: 1080, videoCodec: 'avc1.64001f', audioCodec: 'mp4a.40.2', segmentCount: 11, playlistCount: 2, targetDuration: 4 },
+  prefix: 'Course/1/videos/<id>/conversions/video/',
+  files: ['index.m3u8', 'manifest.mpd', 'video/init-1.m4s', 'video/segment-1-1.m4s', ...], // authority for serving + deletion
+  meta: { durationSeconds: 41.6, width: 1920, height: 1080, videoCodec: 'avc1.64001f', audioCodec: 'mp4a.40.2', segments: 'cmaf', segmentCount: 22, targetDuration: 4, hlsEntry: 'index.m3u8', dashManifest: 'manifest.mpd' },
 }
 
 // metadata-only (probe)
 { meta: { durationSeconds: 41.6, hasVideo: true, ... } }
 ```
 
-Deleting the media deletes every listed artifact (batched via `deleteMany` on capable disks — an HLS package is hundreds of segments). `url()`/`signedUrl()`/`deliver()` on the conversion resolve the entry artifact; a metadata-only conversion has none and throws `ConversionArtifactMissingError` — read the record instead.
+Deleting the media deletes every listed artifact (batched via `deleteMany` on capable disks — a video package is hundreds of segments). `url()`/`signedUrl()`/`deliver()` on the conversion resolve the entry artifact; a metadata-only conversion has none and throws `ConversionArtifactMissingError` — read the record instead.
 
 ---
 
-## The HLS transformer
+## The video transformer
 
-`transformers.hls()` converts a stored video into an HLS package — MPEG-TS segments and media playlists behind one master playlist — using [mediabunny](https://mediabunny.dev): pure TypeScript, **no ffmpeg binary**, so it runs in production containers where system ffmpeg doesn't exist.
+`transformers.video()` packages a stored video for adaptive streaming: segments, plus an HLS master playlist and/or a DASH manifest. Serving and playing the result is covered on [Video streaming](/docs/media/streaming).
 
 | Option | Default | What it does |
 |---|---|---|
-| `name` | `'hls'` | Conversion name on the record. |
+| `name` | `'video'` | Conversion name on the record. |
+| `formats` | `['hls', 'dash']` | Which manifests to write. |
+| `segments` | `'cmaf'` | Segment container: `'cmaf'` (fragmented MP4) or `'ts'` (MPEG-TS, HLS only). |
 | `targetDuration` | `4` | Target (max) segment duration, seconds. |
+| `engine` | mediabunny | `engines.ffmpeg({ ladder })` to transcode, or your own engine. |
+| `webcodecs` | — | Inject a WebCodecs implementation into the mediabunny engine (see below). |
 | `eager` | `false` | Run inside attach (think twice — see above). |
-| `webcodecs` | — | Inject a WebCodecs implementation (see below). |
-| `engine` | mediabunny | Replace the remux engine (mainly for tests). |
 
-### Remux-only, and why
+### CMAF or TS
 
-The engine **stream-copies** the source's tracks into segments without re-encoding. Encoding requires WebCodecs, which Node does not expose — so by default:
+The segments decide which formats can play the package:
 
-- a source whose codecs MPEG-TS can carry (h264/aac — what phones and browsers produce) remuxes fast, with **no quality loss**;
-- a source it cannot carry (vp9, av1…) fails with `HlsSourceUnsupportedError`, listing each track's codec and reason. This is definitive for the file: retrying cannot fix it;
-- the package has a **single variant** at the original resolution — no 360p/480p/720p ladder, because a ladder requires encoding.
+| `segments` | Files | HLS | DASH |
+|---|---|---|---|
+| `'cmaf'` (default) | fragmented MP4 (`.m4s`) | yes | yes |
+| `'ts'` | MPEG-TS (`.ts`) | yes | **no**, dash.js does not play TS |
 
-The engine also handles the trap the naive implementation falls into: AAC audio with priming (an mp4 edit list) starts at a **negative** timestamp, and a conversion trimmed at t=0 kicks that track off the stream-copy fast path — impossible without an encoder. The conversion is trimmed at the source's real first timestamp instead, shifting all tracks equally (A/V sync unchanged) and keeping every track copyable.
+**CMAF** (*Common Media Application Format*, ISO/IEC 23000-19) is the segment format HLS and DASH share. That is why the default writes both manifests: one copy of the segments, described twice. Each track gets its own playlist (`video/`, `audio/`), because DASH players don't play audio and video muxed into one segment.
+
+**TS** is the original HLS segment format, with audio and video in the same segment. Pick it for players that predate fMP4 HLS (iOS 9 and older, some set-top boxes and smart TVs): `transformers.video({ segments: 'ts', formats: ['hls'] })`. Asking for DASH over TS throws at boot.
+
+### The default engine: mediabunny, remux only
+
+The default engine is [mediabunny](https://mediabunny.dev): pure TypeScript, **no ffmpeg binary**, so it runs in production containers where system ffmpeg doesn't exist. It **stream-copies** the source's tracks without re-encoding, because encoding requires WebCodecs, which Node does not expose. So by default:
+
+- a source whose codecs the segments can carry (h264/aac, what phones and browsers produce) is remuxed fast, with **no quality loss**;
+- a source it cannot carry fails with `HlsSourceUnsupportedError`, listing each track's codec and reason. That is definitive for the file: retrying cannot fix it;
+- the package has a **single rendition** at the original resolution. A ladder requires encoding: use the ffmpeg engine.
+- the package carries **one video and one audio track**, the source's primary ones. A second audio language or angle is left out rather than written into files no manifest describes.
+
+mediabunny writes HLS only. For DASH, the library describes the same CMAF segments in an MPD it builds from the HLS playlists (`SegmentList` with a `SegmentTimeline`). The segments are untouched.
+
+The engine also handles a trap the naive implementation falls into. AAC audio with priming (an mp4 edit list) starts at a **negative** timestamp, and a conversion trimmed at t=0 kicks that track off the stream-copy fast path, which is impossible to recover without an encoder. The conversion is trimmed at the source's real first timestamp instead, shifting all tracks equally (A/V sync unchanged) and keeping every track copyable.
 
 ### Injecting WebCodecs
 
-Node has no built-in WebCodecs, but NAPI-based implementations exist (e.g. `@napi-rs/webcodecs`, prebuilt — no system binary). Injecting one enables the engine's **re-encode fallback**: a track that cannot be stream-copied gets re-encoded instead of failing.
+Node has no built-in WebCodecs, but NAPI-based implementations exist (e.g. `@napi-rs/webcodecs`, prebuilt — no system binary). Injecting one enables mediabunny's **re-encode fallback**: a track that cannot be stream-copied gets re-encoded instead of failing.
 
 ```ts
-transformers.hls({ webcodecs: () => import('@napi-rs/webcodecs') })
+transformers.video({ webcodecs: () => import('@napi-rs/webcodecs') })
 ```
 
-The provided classes are installed onto `globalThis` (only the missing ones — a native implementation is never overwritten), because that is where the WebCodecs spec says the API lives. `resolveWebCodecsSupport(provider?)` reports `'native' | 'injected' | 'absent'` if you want to branch. Multi-quality renditions on top of an injected encoder are the documented evolution (mediabunny supports fan-out video options), not something the transformer fakes today — see the [Roadmap](/docs/media/roadmap).
+The provided classes are installed onto `globalThis` (only the missing ones — a native implementation is never overwritten), because that is where the WebCodecs spec says the API lives. `resolveWebCodecsSupport(provider?)` reports `'native' | 'injected' | 'absent'` if you want to branch.
 
 ### The ffmpeg engine (transcoding, ABR ladders)
 
-The default engine is mediabunny because it is pure TypeScript — nothing to install on the host — but in Node it can only **stream-copy**. If the host has `ffmpeg`, swap the engine and get real encoding: any source ffmpeg decodes becomes h264/aac, optionally as an **adaptive-bitrate ladder** listed in one master playlist.
+If the host has `ffmpeg`, swap the engine and get real encoding: any source ffmpeg decodes becomes h264/aac, optionally as an **adaptive-bitrate ladder**.
 
 ```ts title="config/media.ts"
 import { defineConfig, engines, transformers } from '@adonis-agora/media'
@@ -183,7 +201,7 @@ export default defineConfig({
       name: 'videos',
       transformers: [
         // 360p / 720p / 1080p; rungs taller than the source are dropped (never upscales)
-        transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) }),
+        transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) }),
         transformers.probe({ engine: engines.ffprobe() }),
       ],
     },
@@ -191,29 +209,16 @@ export default defineConfig({
 })
 ```
 
-- **No ladder** → remux (`-c copy`), same contract as mediabunny: fast, but the source must already be MPEG-TS compatible.
-- **`ladder`** → one rendition per rung: `{ height, videoBitrate, audioBitrate? }` (`'800k'`, `'5M'`). Keyframes are forced on segment boundaries so players switch renditions cleanly. Ready-made: `engines.ladders.standard` (360/720/1080p) and `engines.ladders.compact` (360/720p).
-- `preset` (x264, default `'veryfast'`), `extraArgs` (inserted before the HLS muxer options), `ffmpegPath` / `ffprobePath` (default: resolved on `PATH`).
+- **No `ladder`:** remux (`-c copy`), same contract as mediabunny. Fast, but TS segments need an h264/aac source; CMAF also carries hevc, vp9 and av1.
+- **`ladder`:** one rendition per rung, each `{ height, videoBitrate, audioBitrate? }` (`'800k'`, `'5M'`). Keyframes are forced on segment boundaries so players switch renditions cleanly. Ready-made ladders: `engines.ladders.standard` (360/720/1080p) and `engines.ladders.compact` (360/720p).
+- **Audio:** with CMAF, the audio is encoded once and shared by every rung, at `audioBitrate` (default: the ladder's highest). With TS, each rendition carries its own audio.
+- **Other options:** `preset` (x264, default `'veryfast'`), `extraArgs` (inserted before the muxer options), `ffmpegPath` / `ffprobePath` (default: resolved on `PATH`).
 
-The package has the same shape the mediabunny engine writes — `index.m3u8` master, `playlist-N.m3u8` per rendition, `segment-N-M.ts` — so [`media.access.streamRoute()`](/docs/media/streaming#the-stream-route) serves it unchanged. The binaries are spawned, never bundled: install ffmpeg in your image (`apk add ffmpeg` on Alpine). A missing binary throws `TransformerRuntimeMissingError`; a failed run throws `FfmpegFailedError` with the exit code and the tail of ffmpeg's stderr.
+CMAF packages go through ffmpeg's DASH muxer, which writes the MPD and the HLS master over the same segments; TS packages go through its HLS muxer. It needs ffmpeg 4.3 or newer. The binaries are spawned, never bundled: install ffmpeg in your image (`apk add ffmpeg` on Alpine). A missing binary throws `TransformerRuntimeMissingError`; a failed run throws `FfmpegFailedError` with the exit code and the tail of ffmpeg's stderr.
 
 <Callout type="warn" title="Transcoding is heavy">
-  A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'hls')` from a job, on a worker sized for it.
+  A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'video')` from background work, on a worker sized for it.
 </Callout>
-
----
-
-## The DASH transformer (CMAF)
-
-`transformers.dash()` packages a video as **CMAF** with the system ffmpeg: fragmented-MP4 segments described by a DASH manifest (`manifest.mpd`, the conversion entry) **and** an HLS master playlist (`index.m3u8`) over the same segments. One encode serves both formats with no extra storage.
-
-```ts
-transformers.dash()                                                             // remux
-transformers.dash({ engine: engines.ffmpegDash({ ladder: engines.ladders.standard }) }) // ABR ladder
-transformers.dash({ hls: false })                                               // DASH only
-```
-
-Options, the engine and how it is served are covered on [Video streaming](/docs/media/streaming#the-dash-transformer).
 
 ---
 
@@ -279,7 +284,7 @@ To render it, [`<MediaImage>`](/docs/media/react/image) from `@adonis-agora/medi
   [`media.access.streamRoute()`](/docs/media/streaming#the-stream-route) serves HLS **and** DASH packages, authorizes every request with the collection's `access.read`, and never hands out a segment URL that expires mid-video. What follows is the lower-level handler, for apps that need their own URL scheme.
 </Callout>
 
-An HLS package cannot be served like a single file: its playlists reference files by paths relative to the storage layout. Served from a URL scheme of your own, they must be rewritten so the player can fetch each reference. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
+An HLS package (the HLS side of a `transformers.video()` package — the handler serves the conversion's entry playlist, so it needs `'hls'` in `formats`) cannot be served like a single file: its playlists reference files by paths relative to the storage layout. Served from a URL scheme of your own, they must be rewritten so the player can fetch each reference. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
 
 ```ts title="start/routes.ts"
 import router from '@adonisjs/core/services/router'
@@ -409,7 +414,7 @@ Rules of thumb, set by the built-ins:
 | Missing optional peer / binary / runtime capability | `TransformerRuntimeMissingError` | `E_MEDIA_TRANSFORMER_RUNTIME_MISSING` |
 | Transformer wrote outside its prefix / bad entry | `TransformerOutputError` | `E_MEDIA_TRANSFORMER_OUTPUT_INVALID` |
 | Delivering a metadata-only conversion | `ConversionArtifactMissingError` | `E_MEDIA_CONVERSION_ARTIFACT_MISSING` |
-| HLS source can't be stream-copied (no encoder) | `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` |
+| Video source can't be stream-copied (no encoder) | `HlsSourceUnsupportedError` | `E_MEDIA_HLS_SOURCE_UNSUPPORTED` |
 | An ffmpeg / ffprobe engine run exited non-zero (stderr tail attached) | `FfmpegFailedError` | `E_MEDIA_FFMPEG_FAILED` |
 
 ## Next steps

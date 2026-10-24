@@ -1,8 +1,7 @@
-import { DashTransformer, type DashTransformerOptions } from './dash.js';
-import { ffmpegDashEngine, ffmpegHlsEngine, ffprobeEngine, ladders } from './ffmpeg.js';
-import { HlsTransformer, type HlsTransformerOptions } from './hls.js';
+import { ffmpegVideoEngine, ffprobeEngine, ladders } from './ffmpeg.js';
 import { PlaceholderTransformer, type PlaceholderTransformerOptions } from './placeholder.js';
 import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from './probe.js';
+import { VideoTransformer, type VideoTransformerOptions } from './video.js';
 
 /**
  * The transformer factory namespace used in `config/media.ts` — the {@link Transformer}
@@ -16,7 +15,7 @@ import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from '
  *     {
  *       name: 'videos',
  *       acceptsMimeTypes: ['video/mp4'],
- *       transformers: [transformers.hls({ targetDuration: 4 }), transformers.probe()],
+ *       transformers: [transformers.video(), transformers.probe()],
  *     },
  *   ],
  * })
@@ -26,16 +25,13 @@ import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from '
  * peers are imported inside the first `transform()` call, so config stays side-effect-free.
  */
 export const transformers = {
-  /** Video → HLS package (MPEG-TS segments + playlists) via mediabunny. Default name `'hls'`. */
-  hls<Name extends string = 'hls'>(options: HlsTransformerOptions<Name> = {}) {
-    return new HlsTransformer(options);
-  },
   /**
-   * Video → CMAF package: a DASH manifest plus (by default) an HLS master over the same
-   * fragmented-MP4 segments, via the system ffmpeg. Default name `'dash'`.
+   * Video → streaming package: CMAF segments described by an HLS master and a DASH manifest
+   * (`formats`), or HLS over TS segments (`segments: 'ts'`). mediabunny by default (pure JS,
+   * remux); `engines.ffmpeg()` to transcode. Default name `'video'`.
    */
-  dash<Name extends string = 'dash'>(options: DashTransformerOptions<Name> = {}) {
-    return new DashTransformer(options);
+  video<Name extends string = 'video'>(options: VideoTransformerOptions<Name> = {}) {
+    return new VideoTransformer(options);
   },
   /** Metadata-only probe (duration/resolution/codecs) via mediabunny. Default name `'probe'`. */
   probe<Name extends string = 'probe'>(options: MetadataProbeTransformerOptions<Name> = {}) {
@@ -59,17 +55,15 @@ export const transformers = {
  * adaptive-bitrate ladder instead of a single stream copy:
  *
  * ```ts
- * transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) })
+ * transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) })
  * transformers.probe({ engine: engines.ffprobe() })
  * ```
  */
 export const engines = {
-  /** HLS via system ffmpeg: remux by default, or encode `ladder` into a multi-rendition package. */
-  ffmpegHls: ffmpegHlsEngine,
-  /** DASH (CMAF, + HLS over the same segments) via system ffmpeg: remux, or encode `ladder`. */
-  ffmpegDash: ffmpegDashEngine,
+  /** Video packaging via system ffmpeg: remux by default, or encode `ladder` into renditions. */
+  ffmpeg: ffmpegVideoEngine,
   /** Metadata probe via system ffprobe. */
   ffprobe: ffprobeEngine,
-  /** Ready-made ladders for {@link ffmpegHlsEngine} / {@link ffmpegDashEngine}: `standard` (360/720/1080p), `compact` (360/720p). */
+  /** Ready-made ladders for {@link ffmpegVideoEngine}: `standard` (360/720/1080p), `compact` (360/720p). */
   ladders,
 };

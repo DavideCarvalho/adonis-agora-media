@@ -23,7 +23,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 - **A management console** — the [dashboard](/docs/media/dashboard) ships embedded in `@adonis-agora/media` itself (SPA + JSON API + a [built-in session login](/docs/media/dashboard/authentication)), with cross-owner [collection listing](/docs/media/dashboard/collections) via `MediaStore.list`.
 - **A Telescope extension** — a "Media" overview dashboard via [`mediaTelescopeExtension`](/docs/media/integrations/telescope).
 - **Transformers + HLS video** — the pluggable [`Transformer` contract](/docs/media/transformers) with a mediabunny-backed HLS transformer (remux to MPEG-TS segments + playlists, WebCodecs injectable), a metadata probe, and the `HlsDeliveryHandler` read path with m3u8 rewriting.
-- **Video streaming, HLS and DASH** — [`transformers.dash()`](/docs/media/streaming) packages CMAF (a DASH manifest and an HLS master over the same fMP4 segments, ABR ladders via ffmpeg), `media.access.streamRoute()` serves packages behind the collection's authorization with package-wide signed URLs, and [`useMediaStream`](/docs/media/react/video) plays them in your own `<video>`.
+- **Video streaming, HLS and DASH** — [`transformers.video()`](/docs/media/transformers#the-video-transformer) packages CMAF segments described by both an HLS master and a DASH manifest (TS for HLS-only on request; pure JS by default, ABR ladders via ffmpeg), `media.access.streamRoute()` serves packages behind the collection's authorization with package-wide signed URLs, and [`useMediaStream`](/docs/media/react/video) plays them in your own `<video>`.
 
 ---
 
@@ -41,9 +41,9 @@ The [`Transformer` contract](/docs/media/transformers) ships with HLS, DASH and 
 - **PlaceholderTransformer** — blurhash/thumbhash from pixel data (metadata-only, like the probe).
 - **WatermarkTransformer** — stamp a configured logo (auxiliary asset read through `context.storage`).
 - **AudioExtractTransformer** — video → `.m4a` by aac remux; `.mp3` via the pure-JS `@mediabunny/mp3-encoder`.
-- **PosterFrameTransformer** — extract a poster frame. Needs a video *decoder*, so it requires an injected WebCodecs implementation (`transformers.hls({ webcodecs })`-style) and throws `TransformerRuntimeMissingError` without one.
+- **PosterFrameTransformer** — extract a poster frame. Needs a video *decoder*, so it requires an injected WebCodecs implementation (`transformers.video({ webcodecs })`-style) and throws `TransformerRuntimeMissingError` without one.
 - **TranscriptionTransformer** — `.vtt` subtitles via an external async provider.
-- **Multi-quality HLS renditions on the WebCodecs engine** — a ladder via mediabunny's fan-out video options. (The ffmpeg engine already ships ladders: `transformers.hls({ engine: engines.ffmpegHls({ ladder: engines.ladders.standard }) })`.)
+- **Multi-quality renditions on the WebCodecs engine** — a ladder via mediabunny's fan-out video options. (The ffmpeg engine already ships ladders: `transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) })`.)
 
 Also still open from the image side: an **antivirus / scanning hook** in the attach pipeline (it would slot into `attach` before the write).
 

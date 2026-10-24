@@ -268,8 +268,7 @@ export class MediaAccess {
   }
 
   /**
-   * A ready AdonisJS route handler for HLS/DASH packages — the read side of `transformers.hls()`
-   * and `transformers.dash()`:
+   * A ready AdonisJS route handler for HLS/DASH packages — the read side of `transformers.video()`:
    *
    * ```ts
    * const serveStream = media.access.streamRoute()

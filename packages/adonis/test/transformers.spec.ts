@@ -348,19 +348,19 @@ describe('config-level typing', () => {
             { name: 'og', width: 1200 },
           ],
         },
-        { name: 'videos', transformers: [transformers.hls(), transformers.probe()] },
-        { name: 'streams', transformers: [transformers.hls({ name: 'stream' })] },
+        { name: 'videos', transformers: [transformers.video(), transformers.probe()] },
+        { name: 'streams', transformers: [transformers.video({ name: 'stream' })] },
       ],
     });
 
-    expectTypeOf<InferTransformers<typeof config>>().toEqualTypeOf<'hls' | 'probe' | 'stream'>();
+    expectTypeOf<InferTransformers<typeof config>>().toEqualTypeOf<'video' | 'probe' | 'stream'>();
     expectTypeOf<InferConversions<typeof config>>().toEqualTypeOf<
-      'thumb' | 'og' | 'hls' | 'probe' | 'stream'
+      'thumb' | 'og' | 'video' | 'probe' | 'stream'
     >();
 
     // and at runtime the factories carry the same names
-    expect(transformers.hls().name).toBe('hls');
+    expect(transformers.video().name).toBe('video');
     expect(transformers.probe().name).toBe('probe');
-    expect(transformers.hls({ name: 'stream' }).name).toBe('stream');
+    expect(transformers.video({ name: 'stream' }).name).toBe('stream');
   });
 });

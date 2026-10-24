@@ -26,7 +26,7 @@ primary_packages:
     dir: packages/adonis
     role: Core library — defineConfig, MediaManager (library/attachments/uploads/
       resumable/direct accessors), MediaStore + ImageProcessor + Disk SPIs, bundled
-      disks.s3()/processors.sharp()/transformers.hls()+probe(), delivery handlers,
+      disks.s3()/processors.sharp()/transformers.video()+probe(), delivery handlers,
       embedded dashboard provider, testing kit.
   - name: '@adonis-agora/media-react'
     dir: packages/react
@@ -141,7 +141,7 @@ domains:
       - "@adonis-agora/media/services/main singleton"
     key_facts:
       - Naming a `store` with no matching factory THROWS StoreNotConfiguredError — never a silent fallback to in-memory.
-      - Every factory (stores.lucid/processors.sharp/disks.s3/uploadSessions.lucid/transformers.hls) is a lazy thunk; the optional peer loads only when selected.
+      - Every factory (stores.lucid/processors.sharp/disks.s3/uploadSessions.lucid/transformers.video) is a lazy thunk; the optional peer loads only when selected.
       - A media call at module scope hits @adonisjs/drive before boot => DriveNotReadyError.
 
   - id: library-collections

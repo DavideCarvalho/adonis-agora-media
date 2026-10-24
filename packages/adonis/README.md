@@ -7,7 +7,7 @@ spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.
 
 Attach files to entities, organize them into collections (MIME whitelist, single-file replace,
 ordering), and generate image conversions (eager or lazy) — plus **content transformers**, the same
-seam driven beyond images: the bundled `transformers.hls()` packages a video into an HLS ladder and
+seam driven beyond images: the bundled `transformers.video()` packages a video for HLS/DASH streaming and
 `transformers.probe()` records duration/codecs as metadata, both persisted into the same
 `record.conversions` map. Storage is delegated entirely to Drive, so you reuse your existing
 `local` / `s3` / `gcs` disks — this package never reimplements disk drivers.
@@ -152,11 +152,11 @@ A `ConversionPreset` is `{ name, width?, height?, fit?, format?, quality?, eager
 generated synchronously on `attach`; the rest are generated lazily on the first `url(id, name)` and
 cached on the record. `fit` and `format` map straight onto sharp.
 
-## Transformers and HLS video
+## Transformers and video streaming
 
 Image conversions answer "same image, different size". **Transformers** answer everything else:
 *transform this content into that*. A transformer takes a stored media's bytes and produces many
-files (an HLS package), one file (an extracted audio track), or none at all (a metadata probe) —
+files (a video package), one file (an extracted audio track), or none at all (a metadata probe) —
 persisted into the same `record.conversions` map, so presets and transformers share one namespace
 per collection.
 
@@ -173,7 +173,7 @@ export default defineConfig({
       name: 'videos',
       acceptsMimeTypes: ['video/mp4'],
       transformers: [
-        transformers.hls({ targetDuration: 4 }), // MPEG-TS segments behind a master playlist
+        transformers.video(),                // CMAF segments + an HLS master + a DASH manifest
         transformers.probe({ eager: true }),     // duration / resolution / codecs, no artifact
       ],
     },
@@ -185,12 +185,13 @@ Transformations are assumed heavy, so nothing runs on attach unless you mark it 
 from your own job — `transform(id, name)` is idempotent, so a retry skips straight through:
 
 ```ts
-await media.library.transform(mediaId, 'hls')
+await media.library.transform(mediaId, 'video')
 ```
 
-`transformers.dash()` packages **CMAF** with the system ffmpeg: a DASH manifest and an HLS master
-over the same fragmented-MP4 segments (`engines.ffmpegDash({ ladder })` for an ABR ladder). Serve
-either kind of package with one route that authorizes every manifest and segment request with the
+`transformers.video()` writes **CMAF** segments by default, which HLS and DASH both play, so one copy
+of the video gets both manifests. `segments: 'ts'` writes HLS over MPEG-TS for old players, and
+`engine: engines.ffmpeg({ ladder })` transcodes an ABR ladder with the system ffmpeg. Serve the
+package with one route that authorizes every manifest and segment request with the
 collection's `access.read`:
 
 ```ts

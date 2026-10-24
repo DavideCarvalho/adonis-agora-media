@@ -47,7 +47,7 @@ export type HlsDeliveryResult =
 export interface HlsDeliveryHandlerOptions {
   /** The {@link MediaLibrary} records are resolved from — or a `MediaManager`, whose `.library` is used. */
   library: MediaLibrary | { library: MediaLibrary };
-  /** Name of the HLS conversion on the record. Default `'hls'` (the {@link HlsTransformer} default). */
+  /** Name of the video conversion on the record. Default `'video'` (the `transformers.video()` default; its HLS master is the entry). */
   conversion?: string | undefined;
   /**
    * URL for a **sub-playlist** reference (master → media playlists, audio renditions). Required,
@@ -123,7 +123,7 @@ export class HlsDeliveryHandler {
   constructor(options: HlsDeliveryHandlerOptions) {
     const source = options.library;
     this.library = 'library' in source ? source.library : source;
-    this.conversion = options.conversion ?? 'hls';
+    this.conversion = options.conversion ?? 'video';
     this.urlForPlaylist = options.urlForPlaylist;
     this.urlForSegment = options.urlForSegment;
     this.segmentTtlSeconds = options.segmentTtlSeconds ?? DEFAULT_DELIVERY_SIGNED_TTL_SECONDS;

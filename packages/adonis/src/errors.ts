@@ -202,7 +202,7 @@ export class ConversionArtifactMissingError extends Error {
  * The HLS transformer could not stream-copy the source: a track's codec cannot be carried by the
  * segment format (MPEG-TS wants h264/aac), and no re-encode path exists in this runtime. Definitive
  * for the file — retrying cannot fix it; re-encode the source, or provide a WebCodecs
- * implementation (see `transformers.hls({ webcodecs })`).
+ * implementation (see `transformers.video({ webcodecs })`).
  */
 export class HlsSourceUnsupportedError extends Error {
   readonly code = 'E_MEDIA_HLS_SOURCE_UNSUPPORTED';
@@ -211,7 +211,7 @@ export class HlsSourceUnsupportedError extends Error {
    */
   constructor(
     details: string,
-    hint = 'Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure `transformers.hls({ webcodecs })` with a WebCodecs implementation to enable the re-encode fallback.',
+    hint = 'Without an encoder (WebCodecs) the tracks can only be stream-copied, so an incompatible codec is definitive — re-encode the source to h264/aac, or configure `transformers.video({ webcodecs })` with a WebCodecs implementation to enable the re-encode fallback.',
   ) {
     super(`HLS remux is impossible for this source: ${details}. ${hint}`);
     this.name = 'HlsSourceUnsupportedError';
@@ -219,7 +219,7 @@ export class HlsSourceUnsupportedError extends Error {
 }
 
 /**
- * An `ffmpeg` / `ffprobe` run (the `engines.ffmpegHls()` / `engines.ffprobe()` engines) exited
+ * An `ffmpeg` / `ffprobe` run (the `engines.ffmpeg()` / `engines.ffprobe()` engines) exited
  * non-zero or produced something unusable. Carries the exit code and the tail of stderr, which is
  * where ffmpeg explains itself (an unsupported codec for a stream copy, a corrupt input).
  */

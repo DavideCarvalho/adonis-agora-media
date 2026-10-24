@@ -50,7 +50,7 @@ function attach(library: MediaLibrary, contents: Buffer) {
   });
 }
 
-const prefix = 'Course/1/videos/vid-1/conversions/hls/';
+const prefix = 'Course/1/videos/vid-1/conversions/video/';
 
 describe('effectiveLadder', () => {
   const ladder = engines.ladders.standard;
@@ -143,28 +143,32 @@ describe('buildHlsArgs', () => {
 
 describe('ffmpeg engine configuration errors', () => {
   it('rejects an unparseable bitrate when the engine is built', () => {
-    expect(() => engines.ffmpegHls({ ladder: [{ height: 360, videoBitrate: 'fast' }] })).toThrow(
+    expect(() => engines.ffmpeg({ ladder: [{ height: 360, videoBitrate: 'fast' }] })).toThrow(
       /Invalid bitrate/,
     );
   });
 
   it('rejects odd, non-positive or fractional rung heights and bad audio bitrates', () => {
     for (const height of [0, -360, 361, 360.5]) {
-      expect(() => engines.ffmpegHls({ ladder: [{ height, videoBitrate: '800k' }] })).toThrow(
+      expect(() => engines.ffmpeg({ ladder: [{ height, videoBitrate: '800k' }] })).toThrow(
         /Invalid rendition height/,
       );
     }
     expect(() =>
-      engines.ffmpegHls({ ladder: [{ height: 360, videoBitrate: '800k', audioBitrate: 'loud' }] }),
+      engines.ffmpeg({ ladder: [{ height: 360, videoBitrate: '800k', audioBitrate: 'loud' }] }),
     ).toThrow(/Invalid bitrate/);
   });
 
   it('reports a missing binary as TransformerRuntimeMissingError', async () => {
     const { library } = makeLibrary(
-      transformers.hls({ engine: engines.ffmpegHls({ ffprobePath: 'definitely-not-ffprobe' }) }),
+      transformers.video({
+        segments: 'ts',
+        formats: ['hls'],
+        engine: engines.ffmpeg({ ffprobePath: 'definitely-not-ffprobe' }),
+      }),
     );
     const record = await attach(library, Buffer.from('x'));
-    await expect(library.transform(record.id, 'hls')).rejects.toBeInstanceOf(
+    await expect(library.transform(record.id, 'video')).rejects.toBeInstanceOf(
       TransformerRuntimeMissingError,
     );
   });
@@ -221,11 +225,15 @@ describe.skipIf(process.platform === 'win32')('ffmpeg engines with a misbehaving
   it('turns unparseable ffprobe output into FfmpegFailedError instead of a raw SyntaxError', async () => {
     const ffprobePath = await fakeBinary('chatty-ffprobe', 'echo "this is not json"');
     const { library } = makeLibrary(
-      transformers.hls({ engine: engines.ffmpegHls({ ffprobePath, ffmpegPath: 'unused' }) }),
+      transformers.video({
+        segments: 'ts',
+        formats: ['hls'],
+        engine: engines.ffmpeg({ ffprobePath, ffmpegPath: 'unused' }),
+      }),
     );
     const record = await attach(library, Buffer.from('x'));
     const error = (await library
-      .transform(record.id, 'hls')
+      .transform(record.id, 'video')
       .catch((e: unknown) => e)) as FfmpegFailedError;
     expect(error).toBeInstanceOf(FfmpegFailedError);
     expect(error.stderr).toContain('unparseable ffprobe output');
@@ -271,11 +279,13 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
   });
 
   it('remuxes into a master + media playlist package the HLS delivery handler serves', async () => {
-    const { library, disks } = makeLibrary(transformers.hls({ engine: engines.ffmpegHls() }));
+    const { library, disks } = makeLibrary(
+      transformers.video({ segments: 'ts', formats: ['hls'], engine: engines.ffmpeg() }),
+    );
     const record = await attach(library, fixture);
 
-    const updated = await library.transform(record.id, 'hls');
-    const conversion = updated.conversions.hls;
+    const updated = await library.transform(record.id, 'video');
+    const conversion = updated.conversions.video;
     expect(conversion?.path).toBe(`${prefix}index.m3u8`);
     expect(conversion?.files).toEqual(expect.arrayContaining(['index.m3u8', 'playlist-0.m3u8']));
     expect(conversion?.files?.some((f) => /^segment-0-\d+\.ts$/.test(f))).toBe(true);
@@ -307,12 +317,12 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
       { height: 480, videoBitrate: '900k' }, // taller than the 240p source: dropped
     ];
     const { library, disks } = makeLibrary(
-      transformers.hls({ engine: engines.ffmpegHls({ ladder }) }),
+      transformers.video({ segments: 'ts', formats: ['hls'], engine: engines.ffmpeg({ ladder }) }),
     );
     const record = await attach(library, wide);
 
-    const updated = await library.transform(record.id, 'hls');
-    const files = updated.conversions.hls?.files ?? [];
+    const updated = await library.transform(record.id, 'video');
+    const files = updated.conversions.video?.files ?? [];
     expect(files.filter((f) => f.startsWith('playlist-')).sort()).toEqual([
       'playlist-0.m3u8',
       'playlist-1.m3u8',
@@ -325,9 +335,11 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
   }, 120_000);
 
   it('surfaces an ffmpeg failure as FfmpegFailedError with stderr', async () => {
-    const { library } = makeLibrary(transformers.hls({ engine: engines.ffmpegHls() }));
+    const { library } = makeLibrary(
+      transformers.video({ segments: 'ts', formats: ['hls'], engine: engines.ffmpeg() }),
+    );
     const record = await attach(library, Buffer.from('not a video at all'));
-    const error = await library.transform(record.id, 'hls').catch((e: unknown) => e);
+    const error = await library.transform(record.id, 'video').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(FfmpegFailedError);
     expect((error as FfmpegFailedError).stderr.length).toBeGreaterThan(0);
   }, 30_000);
@@ -346,9 +358,11 @@ describe.skipIf(!hasFfmpeg)('ffmpeg engines against the real binaries', () => {
       'aac',
       audioPath,
     ]);
-    const { library } = makeLibrary(transformers.hls({ engine: engines.ffmpegHls() }));
+    const { library } = makeLibrary(
+      transformers.video({ segments: 'ts', formats: ['hls'], engine: engines.ffmpeg() }),
+    );
     const record = await attach(library, await readFile(audioPath));
-    await expect(library.transform(record.id, 'hls')).rejects.toBeInstanceOf(
+    await expect(library.transform(record.id, 'video')).rejects.toBeInstanceOf(
       HlsSourceUnsupportedError,
     );
   }, 30_000);
