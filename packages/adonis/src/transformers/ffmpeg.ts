@@ -453,7 +453,7 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
           'video',
         );
         if (!request.dashManifest) await rm(join(request.outputDir, manifestName));
-        if (request.hlsEntry) await stripProgramDateTime(request.outputDir);
+        if (request.hlsEntry) await normalizeVodPlaylists(request.outputDir);
       }
 
       const result: VideoPackageSummary = {};
@@ -469,23 +469,26 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
 }
 
 /**
- * Drop `#EXT-X-PROGRAM-DATE-TIME` from the HLS playlists ffmpeg's DASH muxer writes. It stamps
- * the wall-clock time of the TRANSCODE, which means nothing for a VOD — and a player that maps
- * the timeline to it (mediabunny reports a duration of decades) breaks seeking and duration.
+ * Make the HLS playlists ffmpeg's DASH muxer writes plain VOD playlists. It carries over two
+ * live-stream details that mean nothing for a VOD and that players read differently:
+ *
+ * - `#EXT-X-PROGRAM-DATE-TIME` stamps the wall-clock time of the TRANSCODE — a player mapping
+ *   the timeline to it reports a duration of decades;
+ * - `#EXT-X-MEDIA-SEQUENCE:1` (it numbers segments like the MPD's `startNumber`) — a player
+ *   reading the sequence as elapsed segments (mediabunny) starts the video one segment late.
+ *   Without the tag the sequence is 0 for everyone.
  */
-async function stripProgramDateTime(outputDir: string): Promise<void> {
+async function normalizeVodPlaylists(outputDir: string): Promise<void> {
   for (const file of await readdir(outputDir)) {
     if (!file.toLowerCase().endsWith('.m3u8')) continue;
     const path = join(outputDir, file);
     const content = await readFile(path, 'utf8');
-    if (!content.includes('#EXT-X-PROGRAM-DATE-TIME')) continue;
-    await writeFile(
-      path,
-      content
-        .split(/(?<=\n)/)
-        .filter((line) => !line.startsWith('#EXT-X-PROGRAM-DATE-TIME'))
-        .join(''),
+    const lines = content.split(/(?<=\n)/);
+    const kept = lines.filter(
+      (line) =>
+        !line.startsWith('#EXT-X-PROGRAM-DATE-TIME') && !line.startsWith('#EXT-X-MEDIA-SEQUENCE'),
     );
+    if (kept.length !== lines.length) await writeFile(path, kept.join(''));
   }
 }
 

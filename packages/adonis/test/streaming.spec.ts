@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
+import { FilePathSource, HLS_FORMATS, Input } from 'mediabunny';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authorizers, type MediaIdentityResolver, type MediaSubject } from '../src/access.js';
 import { engines, transformers } from '../src/define_config.js';
@@ -612,7 +613,7 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
     });
 
     async function packageWith(transformer: Transformer) {
-      const { library, access } = setup({ transformer });
+      const { library, access, disks } = setup({ transformer });
       const record = await library.attach({
         ownerType: 'User',
         ownerId: '7',
@@ -621,7 +622,39 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         mimeType: 'video/mp4',
         contents: source,
       });
-      return { library, access, record: await library.transform(record.id, 'video') };
+      return { library, access, disks, record: await library.transform(record.id, 'video') };
+    }
+
+    /** How long a real HLS reader (mediabunny) finds the package, and where it starts. */
+    async function playedThroughHls(
+      disks: ReturnType<typeof setup>['disks'],
+      record: Awaited<ReturnType<typeof packageWith>>['record'],
+    ) {
+      const exported = await mkdtemp(join(tmpdir(), 'agora-hls-read-'));
+      try {
+        const conversion = record.conversions.video!;
+        for (const file of conversion.files!) {
+          await mkdir(dirname(join(exported, file)), { recursive: true });
+          await writeFile(
+            join(exported, file),
+            await disks.fs!.getBytes(`${conversion.prefix}${file}`),
+          );
+        }
+        const input = new Input({
+          source: new FilePathSource(join(exported, 'index.m3u8')),
+          formats: HLS_FORMATS,
+        });
+        try {
+          return {
+            duration: await input.computeDuration(),
+            start: await input.getFirstTimestamp(),
+          };
+        } finally {
+          input.dispose();
+        }
+      } finally {
+        await rm(exported, { recursive: true, force: true });
+      }
     }
 
     it('transcodes a ladder into a CMAF package both formats play', async () => {
@@ -662,8 +695,9 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
       expect(refs.length).toBeGreaterThan(0);
       for (const ref of refs) expect(files).toContain(ref);
 
-      // No wall-clock PROGRAM-DATE-TIME in a VOD: players would map the timeline to the
-      // moment of the transcode.
+      // Plain VOD playlists: no wall-clock PROGRAM-DATE-TIME (players would map the timeline to
+      // the moment of the transcode), no MEDIA-SEQUENCE (mediabunny would start the video one
+      // segment late).
       for (const file of files.filter((f) => f.endsWith('.m3u8'))) {
         const playlist = fakeHttp({
           user: owner,
@@ -671,6 +705,7 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         });
         await serve(playlist.ctx);
         expect(playlist.sent.body).not.toContain('PROGRAM-DATE-TIME');
+        expect(playlist.sent.body).not.toContain('MEDIA-SEQUENCE');
       }
     }, 60_000);
 
@@ -682,6 +717,19 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         expect.arrayContaining(['manifest.mpd', 'index.m3u8']),
       );
       expect(record.conversions.video!.meta).toMatchObject({ width: 640, height: 360 });
+    }, 60_000);
+
+    it('a player reads the ladder package from 0s, for the length of the source', async () => {
+      const { disks, record } = await packageWith(
+        transformers.video({
+          engine: engines.ffmpeg({ ladder: engines.ladders.compact }),
+          targetDuration: 2,
+        }),
+      );
+      const played = await playedThroughHls(disks, record);
+      expect(played.start).toBeCloseTo(0, 1);
+      expect(played.duration).toBeGreaterThan(3.5);
+      expect(played.duration).toBeLessThan(4.5);
     }, 60_000);
   },
 );
