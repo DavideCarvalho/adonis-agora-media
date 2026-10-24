@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.26.1
+
+### Patch Changes
+
+- [#221](https://github.com/DavideCarvalho/adonis-agora-media/pull/221) [`bcf2a18`](https://github.com/DavideCarvalho/adonis-agora-media/commit/bcf2a18920569045be2b3b77258dbaa0f2525dca) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `engines.ffmpeg()` removes `#EXT-X-PROGRAM-DATE-TIME` from the HLS playlists of a CMAF package. ffmpeg's DASH muxer writes the wall-clock time of the transcode there. That means nothing for a VOD, and a player that maps the timeline to it reports a duration of decades and seeks wrong.
+
 ## 0.26.0
 
 ### Minor Changes
