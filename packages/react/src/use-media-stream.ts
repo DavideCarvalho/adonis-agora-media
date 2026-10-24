@@ -129,7 +129,7 @@ const MAX_NETWORK_RETRIES = 2;
  * (or none: `controls` on the element is enough).
  *
  * ```tsx
- * // server: video: await media.access.stream(ctx, lesson.videoId)
+ * // server: video: await media.access.stream(ctx, lesson.videoMediaId)
  * const ref = useRef<HTMLVideoElement>(null)
  * const stream = useMediaStream(ref, video, {
  *   hls: () => import('hls.js'),
