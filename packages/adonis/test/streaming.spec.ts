@@ -661,6 +661,17 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         );
       expect(refs.length).toBeGreaterThan(0);
       for (const ref of refs) expect(files).toContain(ref);
+
+      // No wall-clock PROGRAM-DATE-TIME in a VOD: players would map the timeline to the
+      // moment of the transcode.
+      for (const file of files.filter((f) => f.endsWith('.m3u8'))) {
+        const playlist = fakeHttp({
+          user: owner,
+          params: { id: record.id, conversion: 'video', file },
+        });
+        await serve(playlist.ctx);
+        expect(playlist.sent.body).not.toContain('PROGRAM-DATE-TIME');
+      }
     }, 60_000);
 
     it('remuxes without re-encoding by default', async () => {
