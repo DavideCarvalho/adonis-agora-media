@@ -94,6 +94,7 @@ export default class PublishLessonWorkflow extends BaseWorkflow {
 ```
 
 ```ts title="after the upload (a controller, an upload policy's onComplete)"
+const lesson = await Lesson.create({ title, status: 'processing' })
 const record = await media.library.attach({ /* … */ collection: 'lessons' })
 await PublishLessonWorkflow.dispatch(
   { lessonId: lesson.id, mediaId: record.id },
