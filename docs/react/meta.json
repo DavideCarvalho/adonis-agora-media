@@ -1,5 +1,5 @@
 {
   "title": "React Client",
   "icon": "Atom",
-  "pages": ["index", "client", "image", "console-launcher"]
+  "pages": ["index", "client", "image", "video", "console-launcher"]
 }

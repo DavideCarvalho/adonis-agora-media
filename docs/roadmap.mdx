@@ -23,6 +23,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 - **A management console** — the [dashboard](/docs/media/dashboard) ships embedded in `@adonis-agora/media` itself (SPA + JSON API + a [built-in session login](/docs/media/dashboard/authentication)), with cross-owner [collection listing](/docs/media/dashboard/collections) via `MediaStore.list`.
 - **A Telescope extension** — a "Media" overview dashboard via [`mediaTelescopeExtension`](/docs/media/integrations/telescope).
 - **Transformers + HLS video** — the pluggable [`Transformer` contract](/docs/media/transformers) with a mediabunny-backed HLS transformer (remux to MPEG-TS segments + playlists, WebCodecs injectable), a metadata probe, and the `HlsDeliveryHandler` read path with m3u8 rewriting.
+- **Video streaming, HLS and DASH** — [`transformers.dash()`](/docs/media/streaming) packages CMAF (a DASH manifest and an HLS master over the same fMP4 segments, ABR ladders via ffmpeg), `media.access.streamRoute()` serves packages behind the collection's authorization with package-wide signed URLs, and [`useMediaStream`](/docs/media/react/video) plays them in your own `<video>`.
 
 ---
 
@@ -34,7 +35,7 @@ The package ships the in-memory and Lucid stores. Additional drivers (e.g. a doc
 
 ### More built-in transformers
 
-The [`Transformer` contract](/docs/media/transformers) ships with HLS and a metadata probe; it was validated against this lineup, and each slots in without contract changes — they just aren't built yet:
+The [`Transformer` contract](/docs/media/transformers) ships with HLS, DASH and a metadata probe; it was validated against this lineup, and each slots in without contract changes — they just aren't built yet:
 
 - **ImageOptimizeTransformer** — recompress / WebP / strip EXIF via sharp (single replaceable artifact).
 - **PlaceholderTransformer** — blurhash/thumbhash from pixel data (metadata-only, like the probe).

@@ -188,10 +188,18 @@ from your own job — `transform(id, name)` is idempotent, so a retry skips stra
 await media.library.transform(mediaId, 'hls')
 ```
 
-Serving the result is `HlsDeliveryHandler`: playlists come back with every reference rewritten (each
-sub-playlist hop through your own route, so your auth stays in the path), and segments as presigned
-URLs or streamed bytes. Like every handler here it performs **no authorization** — you mount the
-route and guard it. Writing your own transformer is one interface (`name` + `transform(context)`);
+`transformers.dash()` packages **CMAF** with the system ffmpeg: a DASH manifest and an HLS master
+over the same fragmented-MP4 segments (`engines.ffmpegDash({ ladder })` for an ABR ladder). Serve
+either kind of package with one route that authorizes every manifest and segment request with the
+collection's `access.read`:
+
+```ts
+router.get('/media/:id/stream/:conversion/*', media.access.streamRoute())
+const video = await media.access.stream(ctx, mediaId) // manifest URLs for the player
+```
+
+With `delivery.signing`, the URLs are signed for the whole package, so segment requests carry the
+authorization along, and the signature outlives the video. Writing your own transformer is one interface (`name` + `transform(context)`);
 the context hands you the record, the original's bytes/stream, and a sandboxed `write()` that keys
 every artifact under the conversion's own prefix.
 

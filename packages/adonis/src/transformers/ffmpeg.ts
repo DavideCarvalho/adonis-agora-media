@@ -5,6 +5,7 @@ import {
   HlsSourceUnsupportedError,
   TransformerRuntimeMissingError,
 } from '../errors.js';
+import type { DashPackageEngine, DashPackageRequest } from './dash.js';
 import type { HlsRemuxEngine, HlsRemuxRequest, HlsRemuxSummary } from './hls.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
 
@@ -276,6 +277,22 @@ export function buildHlsArgs(input: {
   return args;
 }
 
+/**
+ * Validate a ladder while the config is in hand — a bad rung would otherwise fail deep inside
+ * libx264 with a cryptic error on the first transcode.
+ */
+function validateLadder(ladder: FfmpegRendition[] | undefined): void {
+  for (const r of ladder ?? []) {
+    if (!Number.isInteger(r.height) || r.height <= 0 || r.height % 2 !== 0) {
+      throw new Error(
+        `Invalid rendition height ${r.height} (expected a positive even integer — h264 needs even dimensions)`,
+      );
+    }
+    parseBitrate(r.videoBitrate);
+    if (r.audioBitrate !== undefined) parseBitrate(r.audioBitrate);
+  }
+}
+
 /** `'2800k'` → 2_800_000. Plain numbers pass through. */
 function parseBitrate(value: string): number {
   const match = /^(\d+(?:\.\d+)?)([kKmM]?)$/.exec(value.trim());
@@ -294,17 +311,7 @@ function parseBitrate(value: string): number {
 export function ffmpegHlsEngine(options: FfmpegHlsEngineOptions = {}): HlsRemuxEngine {
   const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
   const ffprobePath = options.ffprobePath ?? 'ffprobe';
-  // Validate the ladder while the config is in hand — a bad rung would otherwise fail deep inside
-  // libx264 with a cryptic error on the first transcode.
-  for (const r of options.ladder ?? []) {
-    if (!Number.isInteger(r.height) || r.height <= 0 || r.height % 2 !== 0) {
-      throw new Error(
-        `Invalid rendition height ${r.height} (expected a positive even integer — h264 needs even dimensions)`,
-      );
-    }
-    parseBitrate(r.videoBitrate);
-    if (r.audioBitrate !== undefined) parseBitrate(r.audioBitrate);
-  }
+  validateLadder(options.ladder);
 
   return {
     async remux(request: HlsRemuxRequest): Promise<HlsRemuxSummary> {
@@ -332,6 +339,165 @@ export function ffmpegHlsEngine(options: FfmpegHlsEngineOptions = {}): HlsRemuxE
           extraArgs: options.extraArgs ?? [],
         }),
         'hls',
+      );
+
+      const result: HlsRemuxSummary = {};
+      if (summary.durationSeconds !== undefined) result.durationSeconds = summary.durationSeconds;
+      if (summary.width !== undefined) result.width = summary.width;
+      if (summary.height !== undefined) result.height = summary.height;
+      result.videoCodec = renditions.length > 0 ? 'h264' : (summary.videoCodec ?? null);
+      if (summary.hasAudio)
+        result.audioCodec = renditions.length > 0 ? 'aac' : (summary.audioCodec ?? null);
+      return result;
+    },
+  };
+}
+
+export interface FfmpegDashEngineOptions extends FfmpegBinaryOptions {
+  /**
+   * Renditions to encode. Omit to **remux** (stream copy into fragmented MP4 — fast, and fMP4
+   * carries h264, hevc, vp9 or av1 alike). With a ladder, every rung is transcoded to h264 and
+   * listed in the manifest; the audio is encoded once, to AAC, and shared by every rung. Rungs
+   * taller than the source are dropped (never upscale).
+   */
+  ladder?: FfmpegRendition[];
+  /** AAC bitrate of the shared audio track when transcoding. Default: the ladder's highest, else `'128k'`. */
+  audioBitrate?: string;
+  /** x264 preset when transcoding. Default `'veryfast'`. */
+  preset?: string;
+  /** Extra ffmpeg arguments, inserted right before the DASH muxer options. */
+  extraArgs?: string[];
+}
+
+/** Segment names of a CMAF package; `$…$` are DASH template identifiers ffmpeg fills in. */
+const DASH_INIT_PATTERN = 'init-$RepresentationID$.m4s';
+const DASH_SEGMENT_PATTERN = 'chunk-$RepresentationID$-$Number%05d$.m4s';
+
+/**
+ * Build the ffmpeg argument list for one DASH (CMAF) run — one manifest, fragmented-MP4 segments
+ * and, with `hlsEntryName`, an HLS master playlist over the same segments. Exported for tests and
+ * for anyone wrapping the engine; `renditions` empty means remux.
+ */
+export function buildDashArgs(input: {
+  sourcePath: string;
+  outputDir: string;
+  manifestName: string;
+  hlsEntryName?: string | undefined;
+  targetDuration: number;
+  hasAudio: boolean;
+  renditions: FfmpegRendition[];
+  audioBitrate: string;
+  preset: string;
+  extraArgs: string[];
+}): string[] {
+  const { sourcePath, outputDir, targetDuration, hasAudio, renditions } = input;
+  const args = ['-hide_banner', '-y', '-i', sourcePath];
+
+  if (renditions.length === 0) {
+    args.push('-map', '0:v:0');
+    if (hasAudio) args.push('-map', '0:a:0');
+    args.push('-c', 'copy');
+  } else {
+    const n = renditions.length;
+    const splits = renditions.map((_, i) => `[v${i}]`).join('');
+    const scales = renditions.map((r, i) => `[v${i}]scale=-2:${r.height}[v${i}o]`).join(';');
+    args.push('-filter_complex', `[0:v:0]split=${n}${splits};${scales}`);
+    renditions.forEach((r, i) => {
+      const peak = `${Math.round(parseBitrate(r.videoBitrate) * 1.5)}`;
+      args.push(
+        '-map',
+        `[v${i}o]`,
+        `-c:v:${i}`,
+        'libx264',
+        `-b:v:${i}`,
+        r.videoBitrate,
+        `-maxrate:v:${i}`,
+        peak,
+        `-bufsize:v:${i}`,
+        `${Number(peak) * 2}`,
+      );
+    });
+    // DASH shares one audio track across the video rungs (its own adaptation set).
+    if (hasAudio) args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', input.audioBitrate);
+    args.push(
+      '-preset',
+      input.preset,
+      '-pix_fmt',
+      'yuv420p',
+      '-sc_threshold',
+      '0',
+      '-force_key_frames',
+      `expr:gte(t,n_forced*${targetDuration})`,
+    );
+  }
+
+  args.push(
+    ...input.extraArgs,
+    '-f',
+    'dash',
+    '-seg_duration',
+    String(targetDuration),
+    '-use_template',
+    '1',
+    '-use_timeline',
+    '1',
+    '-adaptation_sets',
+    hasAudio ? 'id=0,streams=v id=1,streams=a' : 'id=0,streams=v',
+    '-init_seg_name',
+    DASH_INIT_PATTERN,
+    '-media_seg_name',
+    DASH_SEGMENT_PATTERN,
+  );
+  if (input.hlsEntryName) {
+    args.push('-hls_playlist', '1', '-hls_master_name', input.hlsEntryName);
+  }
+  args.push(join(outputDir, input.manifestName));
+  return args;
+}
+
+/**
+ * {@link DashPackageEngine} backed by the system ffmpeg: remux into a CMAF package by default, or
+ * an adaptive-bitrate ladder when `ladder` is set. Needs ffmpeg ≥ 4.3 (`-hls_master_name`).
+ */
+export function ffmpegDashEngine(options: FfmpegDashEngineOptions = {}): DashPackageEngine {
+  const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
+  const ffprobePath = options.ffprobePath ?? 'ffprobe';
+  validateLadder(options.ladder);
+  if (options.audioBitrate !== undefined) parseBitrate(options.audioBitrate);
+  const audioBitrate =
+    options.audioBitrate ??
+    [...(options.ladder ?? [])]
+      .map((r) => r.audioBitrate)
+      .filter((b): b is string => b !== undefined)
+      .sort((a, b) => parseBitrate(b) - parseBitrate(a))[0] ??
+    '128k';
+
+  return {
+    async package(request: DashPackageRequest): Promise<HlsRemuxSummary> {
+      const summary = await probeSource(ffprobePath, request.sourcePath, 'dash');
+      if (!summary.hasVideo) {
+        throw new HlsSourceUnsupportedError(
+          'the source has no video stream',
+          'DASH packaging needs a video track; this file is audio-only or not a video.',
+        );
+      }
+
+      const renditions = options.ladder ? effectiveLadder(options.ladder, summary.height) : [];
+      await run(
+        ffmpegPath,
+        buildDashArgs({
+          sourcePath: request.sourcePath,
+          outputDir: request.outputDir,
+          manifestName: request.manifestName,
+          hlsEntryName: request.hlsEntryName,
+          targetDuration: request.targetDuration,
+          hasAudio: summary.hasAudio,
+          renditions,
+          audioBitrate,
+          preset: options.preset ?? 'veryfast',
+          extraArgs: options.extraArgs ?? [],
+        }),
+        'dash',
       );
 
       const result: HlsRemuxSummary = {};

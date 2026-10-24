@@ -1,6 +1,6 @@
 ---
 title: React Client
-description: "@adonis-agora/media-react — uploads (useMediaUpload, MediaUploader, a framework-free client over TUS, direct-S3 and proxy) and rendering (MediaImage / MediaPicture: next/image for stored images)."
+description: "@adonis-agora/media-react — uploads (useMediaUpload, MediaUploader, a framework-free client over TUS, direct-S3 and proxy) rendering (MediaImage / MediaPicture: next/image for stored images) and video (useMediaStream: headless HLS/DASH)."
 icon: Atom
 ---
 
@@ -9,6 +9,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 **`@adonis-agora/media-react`** is the first-party browser companion to the server. It covers two jobs:
 
 - **Rendering:** [`<MediaImage>` and `<MediaPicture>`](/docs/media/react/image), `next/image` for stored images. They give you a `srcset`, the intrinsic size, a blur-up preview, lazy loading, `priority`, layouts that compute `sizes`, focal points and art direction. They are fed by `media.library.image(id)`, by a plain `src`, or by a `loader` your delivery route resizes on demand. `placeholderStyle()` paints the preview on other components, such as a Radix `Avatar`.
+- **Video:** [`useMediaStream`](/docs/media/react/video) plays HLS/DASH in your own `<video>`, headless. hls.js and dash.js are loaded on demand, iOS gets native HLS, and you get quality levels for your own controls.
 - **Uploads:** everything below. It speaks the AdonisJS provider's **actual** HTTP contract across all three strategies:
 
 - **TUS resumable** (default) — `POST` / `HEAD` / `PATCH` / `DELETE` against `tusPath` (default `/media/uploads/tus`, matching `uploads.resumable.routes.prefix`), resuming from the server's `Upload-Offset`.

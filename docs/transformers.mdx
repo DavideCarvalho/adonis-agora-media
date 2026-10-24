@@ -1,6 +1,6 @@
 ---
 title: Transformers & HLS
-description: Pluggable content transformations — turn a stored media into derived artifacts (an HLS package, an extracted audio track) or pure metadata (a probe), persisted as named conversions. Ships with a mediabunny-backed HLS transformer and a metadata probe, plus an HLS-aware delivery handler.
+description: Pluggable content transformations — turn a stored media into derived artifacts (an HLS or DASH package, an extracted audio track) or pure metadata (a probe), persisted as named conversions. Ships with HLS and DASH (CMAF) transformers, a metadata probe and an image placeholder.
 icon: Film
 ---
 
@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 A **transformer** turns the content of a stored media into something derived: many files (an HLS package), one file (an extracted audio track, an optimized image), or no file at all (probed duration/codecs, a blurred image placeholder). Whatever it produces is persisted as a **named conversion** on the record — the same `record.conversions` map image presets use — with free-form metadata.
 
-Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships three — [`transformers.hls()`](#the-hls-transformer), [`transformers.probe()`](#the-metadata-probe) and [`transformers.placeholder()`](#image-placeholders-blur-up) — and the contract is deliberately small so you can write your own.
+Image conversions answer "same image, different size/format". Transformers answer everything else: *transform this content into that*. The library ships four — [`transformers.hls()`](#the-hls-transformer), [`transformers.dash()`](#the-dash-transformer-cmaf), [`transformers.probe()`](#the-metadata-probe) and [`transformers.placeholder()`](#image-placeholders-blur-up) — and the contract is deliberately small so you can write your own. For playing videos end to end (packaging, the authorized stream route, the React player), see [Video streaming](/docs/media/streaming).
 
 ---
 
@@ -195,11 +195,25 @@ export default defineConfig({
 - **`ladder`** → one rendition per rung: `{ height, videoBitrate, audioBitrate? }` (`'800k'`, `'5M'`). Keyframes are forced on segment boundaries so players switch renditions cleanly. Ready-made: `engines.ladders.standard` (360/720/1080p) and `engines.ladders.compact` (360/720p).
 - `preset` (x264, default `'veryfast'`), `extraArgs` (inserted before the HLS muxer options), `ffmpegPath` / `ffprobePath` (default: resolved on `PATH`).
 
-The package has the same shape the mediabunny engine writes — `index.m3u8` master, `playlist-N.m3u8` per rendition, `segment-N-M.ts` — so [Serving HLS](#serving-hls) works unchanged. The binaries are spawned, never bundled: install ffmpeg in your image (`apk add ffmpeg` on Alpine). A missing binary throws `TransformerRuntimeMissingError`; a failed run throws `FfmpegFailedError` with the exit code and the tail of ffmpeg's stderr.
+The package has the same shape the mediabunny engine writes — `index.m3u8` master, `playlist-N.m3u8` per rendition, `segment-N-M.ts` — so [`media.access.streamRoute()`](/docs/media/streaming#the-stream-route) serves it unchanged. The binaries are spawned, never bundled: install ffmpeg in your image (`apk add ffmpeg` on Alpine). A missing binary throws `TransformerRuntimeMissingError`; a failed run throws `FfmpegFailedError` with the exit code and the tail of ffmpeg's stderr.
 
 <Callout type="warn" title="Transcoding is heavy">
   A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'hls')` from a job, on a worker sized for it.
 </Callout>
+
+---
+
+## The DASH transformer (CMAF)
+
+`transformers.dash()` packages a video as **CMAF** with the system ffmpeg: fragmented-MP4 segments described by a DASH manifest (`manifest.mpd`, the conversion entry) **and** an HLS master playlist (`index.m3u8`) over the same segments. One encode serves both formats with no extra storage.
+
+```ts
+transformers.dash()                                                             // remux
+transformers.dash({ engine: engines.ffmpegDash({ ladder: engines.ladders.standard }) }) // ABR ladder
+transformers.dash({ hls: false })                                               // DASH only
+```
+
+Options, the engine and how it is served are covered on [Video streaming](/docs/media/streaming#the-dash-transformer).
 
 ---
 
@@ -259,9 +273,13 @@ To render it, [`<MediaImage>`](/docs/media/react/image) from `@adonis-agora/medi
 
 ---
 
-## Serving HLS
+## Serving HLS by hand
 
-An HLS package cannot be served like a single file: playlists are stored with references **relative to the storage layout**, and every player request must receive them rewritten to URLs it can fetch. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
+<Callout type="info" title="Prefer the stream route">
+  [`media.access.streamRoute()`](/docs/media/streaming#the-stream-route) serves HLS **and** DASH packages, authorizes every request with the collection's `access.read`, and never hands out a segment URL that expires mid-video. What follows is the lower-level handler, for apps that need their own URL scheme.
+</Callout>
+
+An HLS package cannot be served like a single file: its playlists reference files by paths relative to the storage layout. Served from a URL scheme of your own, they must be rewritten so the player can fetch each reference. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
 
 ```ts title="start/routes.ts"
 import router from '@adonisjs/core/services/router'
@@ -396,6 +414,7 @@ Rules of thumb, set by the built-ins:
 
 ## Next steps
 
+- [Video streaming](/docs/media/streaming) — serving and playing HLS/DASH packages
 - [Delivery](/docs/media/delivery) — the single-file read path this extends
 - [Resumable / TUS](/docs/media/uploads/resumable-tus) — landing the video the transformer will process
 - [Roadmap](/docs/media/roadmap) — the transformer lineup that isn't built yet, and why

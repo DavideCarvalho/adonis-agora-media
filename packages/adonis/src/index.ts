@@ -195,7 +195,12 @@ export type {
   FocalPoint,
   ImageProcessor,
 } from './image_processor.js';
-export type { DeliveryRouteContext, MediaDeliveryRouteOptions } from './media_access.js';
+export type {
+  DeliveryRouteContext,
+  MediaDeliveryRouteOptions,
+  MediaStreamRouteOptions,
+  StreamRouteContext,
+} from './media_access.js';
 export { MediaAccess } from './media_access.js';
 export type { MediaCollectionConfig } from './media_collection.js';
 export { MediaCollectionRegistry } from './media_collection.js';
@@ -206,6 +211,7 @@ export type {
   MediaLibraryOptions,
   MediaSignedUrlOptions,
   OwnerMediaBinding,
+  StreamFileResult,
 } from './media_library.js';
 export { MediaLibrary } from './media_library.js';
 export type { MediaManagerOptions } from './media_manager.js';
@@ -237,6 +243,19 @@ export { StorageManager } from './storage_manager.js';
 export type { MediaTableNames } from './stores/lucid-schema.js';
 // Schema helpers (ecosystem convention — lib owns its own schema; see `stores/lucid-schema.ts`)
 export { createMediaTables, dropMediaTables } from './stores/lucid-schema.js';
+export type {
+  MediaStream,
+  MediaStreamSource,
+  StreamEntry,
+  StreamFormat,
+} from './streaming.js';
+export {
+  DASH_MIME_TYPE,
+  HLS_MIME_TYPE,
+  rewriteDashManifest,
+  streamArtifactContentType,
+  streamEntries,
+} from './streaming.js';
 // Transformers (pluggable content transformations persisted as conversions)
 export type {
   Transformer,
@@ -245,13 +264,22 @@ export type {
   TransformResult,
 } from './transformer.js';
 export type {
+  DashPackageEngine,
+  DashPackageRequest,
+  DashTransformerOptions,
+} from './transformers/dash.js';
+export { DASH_HLS_ENTRY, DASH_MANIFEST, DashTransformer } from './transformers/dash.js';
+export type {
   FfmpegBinaryOptions,
+  FfmpegDashEngineOptions,
   FfmpegHlsEngineOptions,
   FfmpegRendition,
 } from './transformers/ffmpeg.js';
 export {
+  buildDashArgs,
   buildHlsArgs,
   effectiveLadder,
+  ffmpegDashEngine,
   ffmpegHlsEngine,
   ffprobeEngine,
 } from './transformers/ffmpeg.js';
