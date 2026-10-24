@@ -174,7 +174,7 @@ const video = await media.library.stream(id)      // doesn't: you already did
 // }
 ```
 
-- **Which conversions count:** every conversion whose entry is a manifest. HLS sources come first, because iPhones play HLS natively. `conversions: ['dash', 'hls']` restricts and orders them.
+- **Which conversions count:** every conversion whose entry is a manifest. HLS sources come first, because iPhones play HLS natively. `conversions: ['dash', 'hls']` restricts them and sets their order exactly, conversion by conversion (a CMAF conversion still lists its HLS master before its MPD).
 - **Not packaged yet:** `stream()` throws `TransformNotReadyError` until a package exists. The route answers that error with `404`.
 - **Where the URLs point:** at `delivery.streamPath` (default `/media/:id/stream/:conversion`). Change it if you mount the route elsewhere:
 

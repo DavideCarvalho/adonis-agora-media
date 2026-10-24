@@ -91,6 +91,15 @@ describe('manifest rewriting', () => {
     expect(media).toContain('\nchunk-0-00001.m4s?exp=1&sig=x\n');
   });
 
+  it('never treats a numeric attribute as a URL', async () => {
+    const mpd =
+      '<MPD><AdaptationSet id="0" index="2"><SegmentTemplate media="c.m4s"/></AdaptationSet></MPD>';
+    const out = await rewriteDashManifest(mpd, (uri) => withQuery(uri, 'sig=s'));
+    expect(out).toBe(
+      '<MPD><AdaptationSet id="0" index="2"><SegmentTemplate media="c.m4s?sig=s"/></AdaptationSet></MPD>',
+    );
+  });
+
   it('leaves a manifest untouched without a query', async () => {
     expect(await signManifest('manifest.mpd', MPD, '')).toBe(MPD);
   });
@@ -357,6 +366,24 @@ describe('media.library.stream()', () => {
       height: 720,
       durationSeconds: 7200,
     });
+  });
+
+  it('follows the order of `conversions` exactly when given', async () => {
+    const { library } = setup();
+    const record = await attachVideo(library);
+    const packaged = await library.transform(record.id, 'dash');
+    const withHls = {
+      ...packaged,
+      conversions: {
+        ...packaged.conversions,
+        hls: { path: 'p/hls/index.m3u8', disk: 'fs', prefix: 'p/hls/', files: ['index.m3u8'] },
+      },
+    };
+    const order = (conversions?: string[]) =>
+      streamEntries(withHls, conversions).map((e) => `${e.conversion}:${e.format}`);
+    expect(order()).toEqual(['dash:hls', 'hls:hls', 'dash:dash']);
+    expect(order(['dash', 'hls'])).toEqual(['dash:hls', 'dash:dash', 'hls:hls']);
+    expect(order(['hls'])).toEqual(['hls:hls']);
   });
 
   it('signs the URLs for the whole package, valid at least for the video plus an hour', async () => {

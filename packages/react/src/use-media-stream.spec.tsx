@@ -26,6 +26,7 @@ function fakeHls(supported = true) {
     static isSupported = () => supported;
     static Events = {
       MANIFEST_PARSED: 'hlsManifestParsed',
+      FRAG_LOADED: 'hlsFragLoaded',
       LEVEL_SWITCHED: 'hlsLevelSwitched',
       ERROR: 'hlsError',
     };
@@ -262,6 +263,53 @@ describe('useMediaStream', () => {
     instance.emit('hlsError', { fatal: true, type: 'mediaError', details: 'bufferAppendError' });
     expect(view.result().error?.message).toBe('hls.js: bufferAppendError');
     expect(instance.destroyed).toBe(true);
+  });
+
+  it('gives up after repeated fatal network errors, unless fragments arrive in between', async () => {
+    canPlayHlsNatively(false);
+    const hls = fakeHls();
+    const view = mount(stream, { hls: hls.loader });
+    await waitFor(() => expect(view.result().engine).toBe('hls.js'));
+    const instance = hls.instances[0]!;
+
+    instance.emit('hlsError', { fatal: true, type: 'networkError' });
+    instance.emit('hlsError', { fatal: true, type: 'networkError' });
+    instance.emit('hlsFragLoaded');
+    instance.emit('hlsError', { fatal: true, type: 'networkError' });
+    instance.emit('hlsError', { fatal: true, type: 'networkError' });
+    expect(instance.startLoad).toHaveBeenCalledTimes(4);
+    expect(view.result().error).toBeNull();
+
+    // A third in a row (an expired signature, an outage): reported, not retried forever.
+    instance.emit('hlsError', { fatal: true, type: 'networkError', details: 'manifestLoadError' });
+    expect(instance.startLoad).toHaveBeenCalledTimes(4);
+    expect(view.result().error?.message).toBe('hls.js: manifestLoadError');
+    expect(instance.destroyed).toBe(true);
+  });
+
+  it('reads dash.js v5 representations, bitrate in kbit included', async () => {
+    canPlayHlsNatively(false);
+    const dash = fakeDash();
+    const view = mount('/m/manifest.mpd', { dash: dash.loader });
+    await waitFor(() => expect(view.result().engine).toBe('dash.js'));
+    const player = dash.players[0]! as unknown as Record<string, unknown> & {
+      emit(event: string): void;
+    };
+    player.getRepresentationsByType = () => [
+      { width: 640, height: 360, bitrateInKbit: 800 },
+      { width: 1280, height: 720, bandwidth: 2_800_000 },
+    ];
+    let pinned: number | undefined;
+    player.setRepresentationForTypeByIndex = (_type: string, index: number) => {
+      pinned = index;
+    };
+    player.emit('streamInitialized');
+    expect(view.result().levels).toEqual([
+      { index: 0, width: 640, height: 360, bitrate: 800_000 },
+      { index: 1, width: 1280, height: 720, bitrate: 2_800_000 },
+    ]);
+    act(() => view.result().setLevel(1));
+    expect(pinned).toBe(1);
   });
 
   it('tears the player down when the stream changes and on unmount', async () => {

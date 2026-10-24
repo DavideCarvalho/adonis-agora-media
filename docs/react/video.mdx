@@ -92,7 +92,7 @@ format comes from its extension (`.mpd` means DASH). `null` detaches.
 | `engine` | `'hls.js'`, `'dash.js'`, `'native'`, or `null` before a source is attached. |
 | `source` | The source being played. |
 | `ready` | The manifest is loaded and `levels` is known. |
-| `error` | A fatal playback error, or nothing playable. hls.js retries a network failure and rebuilds the media pipeline once before giving up. |
+| `error` | A fatal playback error, or nothing playable. hls.js retries up to two fatal network errors in a row (the count resets once a segment arrives) and rebuilds the media pipeline once, then gives up: a revoked URL surfaces here instead of retrying forever. |
 | `levels` | `{ index, width?, height?, bitrate? }[]` for a quality selector. Empty with native playback. |
 | `currentLevel` | The quality playing now (`-1` when unknown). |
 | `autoLevel` / `setLevel(i)` | Adaptive bitrate on, or a pinned quality. `setLevel(-1)` goes back to automatic. |

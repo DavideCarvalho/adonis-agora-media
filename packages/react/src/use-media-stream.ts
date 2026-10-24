@@ -120,6 +120,9 @@ const INITIAL: State = {
 
 const HLS_TYPE = 'application/vnd.apple.mpegurl';
 
+/** Consecutive fatal network errors hls.js may retry before the hook reports `error`. */
+const MAX_NETWORK_RETRIES = 2;
+
 /**
  * Plays an HLS or DASH stream in **your** `<video>` — headless: no markup, no controls, no
  * styling. It attaches the right engine and hands back the state to build your own controls on
@@ -296,6 +299,11 @@ async function attachHls(
 
   const hls = new Hls(options.hlsConfig);
   let recovered = false;
+  let networkRetries = 0;
+  // Any fragment that arrives proves the network is back: the retry budget starts over.
+  hls.on(Hls.Events.FRAG_LOADED ?? 'hlsFragLoaded', () => {
+    networkRetries = 0;
+  });
   hls.on(Hls.Events.MANIFEST_PARSED!, () => {
     update({
       ready: true,
@@ -312,8 +320,12 @@ async function attachHls(
   });
   hls.on(Hls.Events.ERROR!, (_event, data) => {
     if (!data.fatal) return;
-    // hls.js's own recovery recipe: retry the network once more, rebuild the media pipeline once.
-    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) return hls.startLoad();
+    // hls.js's own recovery recipe: retry the network, rebuild the media pipeline once. Retries
+    // are capped, so an outage or a revoked URL (403) surfaces instead of looping forever.
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries < MAX_NETWORK_RETRIES) {
+      networkRetries += 1;
+      return hls.startLoad();
+    }
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) {
       recovered = true;
       return hls.recoverMediaError();
@@ -343,7 +355,7 @@ interface DashPlayerLike {
   reset(): void;
   getRepresentationsByType?(
     type: string,
-  ): { width?: number; height?: number; bandwidth?: number }[];
+  ): { width?: number; height?: number; bandwidth?: number; bitrateInKbit?: number }[];
   getBitrateInfoListFor?(type: string): { width?: number; height?: number; bitrate?: number }[];
   setRepresentationForTypeByIndex?(type: string, index: number): void;
   setQualityFor?(type: string, index: number): void;
@@ -372,7 +384,11 @@ async function attachDash(
 
   const levels = (): MediaStreamLevel[] => {
     const list =
-      player.getRepresentationsByType?.('video').map((r) => ({ ...r, bitrate: r.bandwidth })) ??
+      // v5 Representation: `bandwidth` (bps) or `bitrateInKbit`; v4 BitrateInfo: `bitrate` (bps).
+      player.getRepresentationsByType?.('video').map((r) => ({
+        ...r,
+        bitrate: r.bandwidth ?? (r.bitrateInKbit ? r.bitrateInKbit * 1000 : undefined),
+      })) ??
       player.getBitrateInfoListFor?.('video') ??
       [];
     return list.map((level, index) => ({

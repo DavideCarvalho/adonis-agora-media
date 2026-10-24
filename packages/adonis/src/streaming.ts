@@ -65,10 +65,12 @@ export function streamFormatOf(file: string): StreamFormat | undefined {
 }
 
 /**
- * The streaming entry points of a record, HLS before DASH. A conversion counts when its entry
- * artifact is a manifest; a CMAF package (`transformers.dash()`) also lists the HLS master it
- * carries (`meta.hlsEntry`), so one conversion yields both formats. `conversions` restricts — and
- * orders — which conversions are considered.
+ * The streaming entry points of a record. A conversion counts when its entry artifact is a
+ * manifest; a CMAF package (`transformers.dash()`) also lists the HLS master it carries
+ * (`meta.hlsEntry`), HLS first, so one conversion yields both formats.
+ *
+ * Without `conversions`, every HLS entry comes before every DASH one (iOS plays only HLS). With
+ * `conversions`, they restrict the entries and set their order exactly, conversion by conversion.
  */
 export function streamEntries(record: MediaRecord, conversions?: readonly string[]): StreamEntry[] {
   const names = conversions ?? Object.keys(record.conversions);
@@ -78,13 +80,14 @@ export function streamEntries(record: MediaRecord, conversions?: readonly string
     if (!variant?.path || !variant.files) continue;
     const prefix = variant.prefix ?? variant.path.slice(0, variant.path.lastIndexOf('/') + 1);
     const entry = variant.path.slice(prefix.length);
-    const format = streamFormatOf(entry);
-    if (format) entries.push({ conversion, format, file: entry });
     const hlsEntry = variant.meta?.hlsEntry;
     if (typeof hlsEntry === 'string' && hlsEntry !== entry && variant.files.includes(hlsEntry)) {
       entries.push({ conversion, format: 'hls', file: hlsEntry });
     }
+    const format = streamFormatOf(entry);
+    if (format) entries.push({ conversion, format, file: entry });
   }
+  if (conversions) return entries;
   // Stable: HLS first, keeping the conversions' order within a format.
   return [
     ...entries.filter((e) => e.format === 'hls'),
@@ -116,14 +119,14 @@ export function withQuery(uri: string, query: string): string {
 }
 
 /** DASH attributes holding a URL or URL template. */
-const DASH_URL_ATTRIBUTE = /\b(initialization|media|sourceURL|index)="([^"]*)"/g;
+const DASH_URL_ATTRIBUTE = /\b(initialization|media|sourceURL)="([^"]*)"/g;
 const DASH_BASE_URL = /<BaseURL([^>]*)>([^<]*)<\/BaseURL>/g;
 
 /**
  * Rewrite every **relative** URL of a DASH manifest through `rewrite`: `SegmentTemplate`
  * `initialization`/`media` (templates such as `chunk-$Number%05d$.m4s` included — whatever is
  * appended stays outside the `$…$` identifiers), `SegmentURL`/`Initialization` `sourceURL` and
- * `media`, `index`, and `<BaseURL>` text. `rewrite` gets and returns raw URLs; XML escaping is
+ * `media`, and `<BaseURL>` text. `rewrite` gets and returns raw URLs; XML escaping is
  * handled here. Absolute references and everything else stay byte for byte.
  */
 export async function rewriteDashManifest(
