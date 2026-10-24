@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.26.2
+
+### Patch Changes
+
+- [#222](https://github.com/DavideCarvalho/adonis-agora-media/pull/222) [`8a9f335`](https://github.com/DavideCarvalho/adonis-agora-media/commit/8a9f33593037af3d145a476b71ef27b1ccc8c3cc) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `engines.ffmpeg()` also removes `#EXT-X-MEDIA-SEQUENCE` from the HLS playlists of a CMAF package. ffmpeg numbers them from 1, like the MPD's `startNumber`, and a player that reads the sequence as elapsed segments (mediabunny) started the video one segment late, reporting a 10s video as 14s. Without the tag, the sequence is 0 for every player.
+
 ## 0.26.1
 
 ### Patch Changes
