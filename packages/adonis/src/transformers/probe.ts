@@ -1,7 +1,7 @@
 import type { Transformer, TransformerContext, TransformResult } from '../transformer.js';
-import { compactMeta } from './hls.js';
 import { loadMediabunny } from './mediabunny_loader.js';
 import { withSourceFile } from './source_file.js';
+import { compactMeta } from './video.js';
 
 /** What probing a media file yields — persisted verbatim as the conversion's `meta`. */
 export interface MediaProbeSummary {

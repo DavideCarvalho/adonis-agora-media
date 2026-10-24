@@ -21,7 +21,7 @@ The library ships all three.
 ### Package it
 
 ```ts title="config/media.ts"
-import { authorizers, defineConfig, engines, transformers } from '@adonis-agora/media'
+import { authorizers, defineConfig, transformers } from '@adonis-agora/media'
 
 export default defineConfig({
   collections: [
@@ -29,9 +29,7 @@ export default defineConfig({
       name: 'lessons',
       acceptsMimeTypes: ['video/*'],
       access: { read: authorizers.authenticated() },
-      transformers: [
-        transformers.dash({ engine: engines.ffmpegDash({ ladder: engines.ladders.standard }) }),
-      ],
+      transformers: [transformers.video()],
     },
   ],
 })
@@ -82,35 +80,27 @@ See [Video player](/docs/media/react/video) for the hook.
 
 ## HLS, DASH, or both
 
-| | `transformers.hls()` | `transformers.dash()` |
-|---|---|---|
-| Segments | MPEG-TS (`.ts`) | fragmented MP4 (CMAF, `.m4s`) |
-| Manifests | `index.m3u8` | `manifest.mpd` **and** `index.m3u8` over the same segments |
-| Default engine | mediabunny (pure JS, remux only) | system ffmpeg (remux) |
-| Ladder (ABR) | `engines.ffmpegHls({ ladder })` | `engines.ffmpegDash({ ladder })` |
-| Plays on | everything (iOS natively, elsewhere hls.js) | everything (iOS through HLS, elsewhere hls.js or dash.js) |
+`transformers.video()` writes both by default, for the price of one. Its segments are **CMAF**
+(fragmented MP4), the format HLS and DASH share, so one copy of the video is described by an HLS
+master playlist (`index.m3u8`) and by a DASH manifest (`manifest.mpd`).
 
-`transformers.dash()` is the one to pick when ffmpeg is on the host. It writes **CMAF**: one set of fragmented-MP4 segments, described by a DASH manifest and an HLS master playlist at once. That gives both formats from one encode with no extra storage. Safari and iPhones get HLS, which they play natively, and the rest get whichever player you load. Pass `hls: false` for a DASH-only package.
+You don't choose a format per browser on the server. The player does, on the client
+([`useMediaStream`](/docs/media/react/video)): Safari and iPhones play HLS natively, everything else
+uses hls.js, and DASH is there for dash.js and for DRM setups that need it.
 
-`transformers.hls()` is still the way to go without ffmpeg: its default engine is pure TypeScript.
+| You need | Configure |
+|---|---|
+| Both formats (default) | `transformers.video()` |
+| Only one | `transformers.video({ formats: ['hls'] })` or `['dash']` |
+| Players older than fMP4 HLS (iOS 9, some TVs) | `transformers.video({ segments: 'ts', formats: ['hls'] })` |
+| An adaptive-bitrate ladder | `transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) })` |
 
-### The DASH transformer
+Without ffmpeg, the default engine (mediabunny, pure JS) remuxes the source as is: one rendition,
+no re-encode. See [The video transformer](/docs/media/transformers#the-video-transformer) for every
+option, the engines and the CMAF/TS trade-off.
 
-| Option | Default | |
-|---|---|---|
-| `name` | `'dash'` | Conversion name on the record. |
-| `targetDuration` | `4` | Segment duration, seconds. |
-| `hls` | `true` | Also write `index.m3u8` over the same segments (recorded as `meta.hlsEntry`). |
-| `eager` | `false` | Run inside attach. Leave it off for video. |
-| `engine` | `engines.ffmpegDash()` | Replace the packaging engine. |
-
-`engines.ffmpegDash(options)` takes the same `ladder` as the HLS engine:
-
-- **No `ladder`:** the source is stream-copied into fMP4, with no re-encode. fMP4 carries h264, hevc, vp9 and av1 alike, so any source plays as long as the browser decodes its codec.
-- **With `ladder`:** each rung is encoded to h264, rungs taller than the source are dropped, and the audio is encoded **once**, to AAC, and shared by every rung. Its bitrate is `audioBitrate`, or the ladder's highest by default.
-- **Other options:** `preset` (x264, default `'veryfast'`), `extraArgs`, `ffmpegPath` / `ffprobePath`.
-
-It needs ffmpeg 4.3 or newer. The conversion's `meta` carries `durationSeconds`, `width`, `height`, `videoCodec`, `audioCodec`, `segmentCount` and `hlsEntry`.
+The conversion's `meta` records what was written: `hlsEntry` and `dashManifest` (the manifests),
+`segments`, `durationSeconds`, `width`, `height`, `videoCodec`, `audioCodec` and `segmentCount`.
 
 ## The stream route
 
@@ -164,17 +154,17 @@ const video = await media.access.stream(ctx, id) // authorizes, like media.acces
 const video = await media.library.stream(id)      // doesn't: you already did
 
 // {
-//   src: '/media/<id>/stream/dash/index.m3u8?exp=…&sig=…',
+//   src: '/media/<id>/stream/video/index.m3u8?exp=…&sig=…',
 //   format: 'hls',
 //   sources: [
-//     { src: '…/index.m3u8?…', format: 'hls', type: 'application/vnd.apple.mpegurl', conversion: 'dash' },
-//     { src: '…/manifest.mpd?…', format: 'dash', type: 'application/dash+xml', conversion: 'dash' },
+//     { src: '…/index.m3u8?…', format: 'hls', type: 'application/vnd.apple.mpegurl', conversion: 'video' },
+//     { src: '…/manifest.mpd?…', format: 'dash', type: 'application/dash+xml', conversion: 'video' },
 //   ],
 //   width: 1920, height: 1080, durationSeconds: 754.2,
 // }
 ```
 
-- **Which conversions count:** every conversion whose entry is a manifest. HLS sources come first, because iPhones play HLS natively. `conversions: ['dash', 'hls']` restricts them and sets their order exactly, conversion by conversion (a CMAF conversion still lists its HLS master before its MPD).
+- **Which conversions count:** every conversion that carries a manifest. HLS sources come first, because iPhones play HLS natively. With several video conversions (say `lesson` and `lesson_ts`), `conversions: ['lesson_ts', 'lesson']` restricts them and sets their order exactly, conversion by conversion; within one conversion, its HLS master still comes before its MPD.
 - **Not packaged yet:** `stream()` throws `TransformNotReadyError` until a package exists. The route answers that error with `404`.
 - **Where the URLs point:** at `delivery.streamPath` (default `/media/:id/stream/:conversion`). Change it if you mount the route elsewhere:
 
@@ -185,8 +175,8 @@ defineConfig({ delivery: { streamPath: '/videos/:id/:conversion' } })
 
 ## Lower level: `HlsDeliveryHandler`
 
-`HlsDeliveryHandler` is the earlier, framework-agnostic read path for `transformers.hls()`
-packages. It rewrites every playlist reference to URLs you build, with segments presigned inline,
+`HlsDeliveryHandler` is the earlier, framework-agnostic read path for the HLS side of a
+package. It rewrites every playlist reference to URLs you build, with segments presigned inline,
 and leaves authorization to your route. It is still exported for apps that need a custom URL
 scheme. See [Serving HLS by hand](/docs/media/transformers#serving-hls-by-hand). For anything
 new, prefer `streamRoute()`: it covers DASH, authorizes for you, and never hands out a segment URL

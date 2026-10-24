@@ -316,9 +316,9 @@ type CollectionOf<T extends MediaConfig> = T['collections'] extends readonly (in
  *
  * ```ts
  * const config = defineConfig({
- *   collections: [{ name: 'videos', transformers: [transformers.hls(), transformers.probe()] }],
+ *   collections: [{ name: 'videos', transformers: [transformers.video(), transformers.probe()] }],
  * })
- * type AppTransformer = InferTransformers<typeof config> // 'hls' | 'probe'
+ * type AppTransformer = InferTransformers<typeof config> // 'video' | 'probe'
  * ```
  */
 export type InferTransformers<T extends MediaConfig> = NonNullable<
@@ -330,7 +330,7 @@ export type InferTransformers<T extends MediaConfig> = NonNullable<
  * both persist under `record.conversions`:
  *
  * ```ts
- * type AppConversion = InferConversions<typeof config> // 'thumb' | 'og' | 'hls' | 'probe'
+ * type AppConversion = InferConversions<typeof config> // 'thumb' | 'og' | 'video' | 'probe'
  * ```
  */
 export type InferConversions<T extends MediaConfig> =

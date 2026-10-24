@@ -84,7 +84,7 @@ export interface TransformResult {
  * artifacts on the disk and/or metadata on the record, persisted as a named conversion
  * (`record.conversions[transformer.name]`).
  *
- * This is the seam the library's own {@link HlsTransformer} and {@link MetadataProbeTransformer}
+ * This is the seam the library's own {@link VideoTransformer} and {@link MetadataProbeTransformer}
  * implement, and the one you implement for your own derivations — extract an audio track,
  * stamp a watermark, generate a poster frame, request a transcription. The shapes it supports:
  *

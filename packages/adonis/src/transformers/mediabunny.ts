@@ -1,6 +1,8 @@
-import { join } from 'node:path';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   ALL_FORMATS,
+  CmafOutputFormat,
   Conversion,
   FilePathSource,
   FilePathTarget,
@@ -11,8 +13,19 @@ import {
   PathedTarget,
 } from 'mediabunny';
 import { HlsSourceUnsupportedError } from '../errors.js';
-import type { HlsRemuxEngine, HlsRemuxRequest, HlsRemuxSummary, WebCodecsProvider } from './hls.js';
+import {
+  buildDashManifest,
+  type DashRepresentationInput,
+  parseMasterPlaylist,
+  parseMediaPlaylist,
+} from '../hls/to_dash.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
+import type {
+  VideoPackageRequest,
+  VideoPackageSummary,
+  VideoPackagingEngine,
+  WebCodecsProvider,
+} from './video.js';
 
 /**
  * The mediabunny-backed engines — the ONLY module in the package that imports the optional
@@ -21,7 +34,7 @@ import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
  * Why mediabunny: pure TypeScript, no ffmpeg binary — a production container without system
  * ffmpeg (the usual case) remuxes fine. The trade-off is that *encoding* rides on WebCodecs,
  * which Node lacks, hence the remux-only default and the {@link WebCodecsProvider} injection
- * seam documented on `HlsTransformer`.
+ * seam documented on `transformers.video()`.
  */
 
 /** The WebCodecs API surface mediabunny reads from `globalThis`. */
@@ -55,8 +68,8 @@ async function installWebCodecs(provider: WebCodecsProvider | undefined): Promis
 }
 
 /** Best-effort technical summary of an input — never fails the transform over metadata. */
-async function summarize(input: Input): Promise<HlsRemuxSummary> {
-  const summary: HlsRemuxSummary = {};
+async function summarize(input: Input): Promise<VideoPackageSummary> {
+  const summary: VideoPackageSummary = {};
   try {
     summary.durationSeconds = await input.computeDuration();
     const video = await input.getPrimaryVideoTrack();
@@ -75,68 +88,194 @@ async function summarize(input: Input): Promise<HlsRemuxSummary> {
   return summary;
 }
 
-export function createHlsEngine(): HlsRemuxEngine {
+export function createVideoEngine(): VideoPackagingEngine {
   return {
-    async remux(request: HlsRemuxRequest): Promise<HlsRemuxSummary> {
+    async package(request: VideoPackageRequest): Promise<VideoPackageSummary> {
       await installWebCodecs(request.webcodecs);
-
       const input = new Input({
         source: new FilePathSource(request.sourcePath),
         formats: ALL_FORMATS,
       });
-
       try {
-        const output = new Output({
-          format: new HlsOutputFormat({
-            segmentFormat: new MpegTsOutputFormat(),
-            targetDuration: request.targetDuration,
-          }),
-          // The HLS output is many files; each one lands in the local output directory.
-          target: new PathedTarget(
-            join(request.outputDir, request.entryName),
-            (target) => new FilePathTarget(target.path),
-          ),
-        });
-
         // THE gotcha: AAC audio with priming (an mp4 edit list) starts at a NEGATIVE timestamp.
         // Mediabunny's default trims the conversion at t=0, which would throw that audio track off
         // the packet-copy fast path — and re-encoding it needs an encoder we may not have.
         // Trimming at the source's real first timestamp keeps every track a pure stream copy; all
-        // tracks shift equally, so A/V sync is untouched.
+        // tracks shift equally (in every pass), so A/V sync is untouched.
         const firstTimestamp = await input.getFirstTimestamp();
+        const summary = await summarize(input);
+        if (!(await input.getPrimaryVideoTrack())) {
+          throw new HlsSourceUnsupportedError(
+            'the source has no video stream',
+            'Video packaging needs a video track; this file is audio-only or not a video.',
+          );
+        }
+        const hasAudio = Boolean(await input.getPrimaryAudioTrack());
 
-        const conversion = await Conversion.init({
-          input,
-          output,
-          trim: { start: firstTimestamp },
-        });
+        if (request.segments === 'ts') {
+          // One muxed pass: TS segments carry audio and video together, as HLS players expect.
+          await muxHls(request.sourcePath, join(request.outputDir, request.hlsEntry!), {
+            segmentFormat: new MpegTsOutputFormat(),
+            targetDuration: request.targetDuration,
+            firstTimestamp,
+          });
+          return summary;
+        }
 
-        // With no video/audio options, mediabunny copies compatible tracks and re-encodes the
-        // rest — but re-encoding needs an encoder, so without WebCodecs an incompatible track is
-        // DISCARDED instead. Silently shipping a video without its audio (or vice versa) is not a
-        // conversion, it is data loss: fail loudly, with the codec and the reason per track.
-        if (conversion.discardedTracks.length > 0) {
-          const reasons = await Promise.all(
-            conversion.discardedTracks.map(async (discarded) => {
-              const codec = await discarded.track.getCodec().catch(() => null);
-              return `${discarded.track.type}/${codec ?? 'unknown'}: ${discarded.reason}`;
+        // CMAF: one track per playlist — DASH players (dash.js) do not play muxed audio/video,
+        // and HLS plays separate renditions just as well. So video and audio are muxed in two
+        // passes into their own directories, and the manifests are written over both.
+        const tracks: { type: 'video' | 'audio'; base: string }[] = [
+          { type: 'video', base: 'video/' },
+          ...(hasAudio ? [{ type: 'audio' as const, base: 'audio/' }] : []),
+        ];
+        const parsed: MuxedTrack[] = [];
+        for (const track of tracks) {
+          const master = join(request.outputDir, track.base, 'index.m3u8');
+          await muxHls(request.sourcePath, master, {
+            segmentFormat: new CmafOutputFormat(),
+            targetDuration: request.targetDuration,
+            firstTimestamp,
+            only: track.type,
+          });
+          const variant = parseMasterPlaylist(await readFile(master, 'utf8'))[0];
+          if (!variant) throw new Error(`mediabunny wrote no ${track.type} playlist`);
+          const playlist = parseMediaPlaylist(
+            await readFile(join(request.outputDir, track.base, variant.uri), 'utf8'),
+          );
+          // Each pass wrote its own master; the package gets one, written below.
+          await rm(master);
+          parsed.push({
+            type: track.type,
+            base: `${track.base}${variant.uri.slice(0, variant.uri.lastIndexOf('/') + 1)}`,
+            playlist,
+            codecs: variant.codecs,
+            bandwidth: variant.bandwidth,
+            width: variant.width,
+            height: variant.height,
+            playlistPath: `${track.base}${variant.uri}`,
+          });
+        }
+
+        if (request.hlsEntry) {
+          await writeFile(join(request.outputDir, request.hlsEntry), hlsMaster(parsed));
+        }
+        if (request.dashManifest) {
+          await writeFile(
+            join(request.outputDir, request.dashManifest),
+            buildDashManifest({
+              durationSeconds:
+                summary.durationSeconds ??
+                Math.max(
+                  ...parsed.map((p) => p.playlist.segments.reduce((t, s) => t + s.duration, 0)),
+                ),
+              targetDuration: request.targetDuration,
+              representations: parsed,
             }),
           );
-          throw new HlsSourceUnsupportedError(reasons.join('; '));
         }
-
-        if (!conversion.isValid) {
-          throw new HlsSourceUnsupportedError('the file contains no usable track');
+        if (!request.hlsEntry) {
+          // DASH only: the media playlists were scaffolding.
+          for (const p of parsed) {
+            await rm(join(request.outputDir, p.playlistPath));
+          }
         }
-
-        const summary = await summarize(input);
-        await conversion.execute();
         return summary;
       } finally {
         input.dispose();
       }
     },
   };
+}
+
+/** One single-track CMAF playlist of the package, as the manifests need it. */
+type MuxedTrack = DashRepresentationInput & {
+  /** Package-relative path of its media playlist. */
+  playlistPath: string;
+};
+
+/**
+ * One mediabunny HLS mux of the source into `masterPath` (its directory receives every file).
+ * `only` keeps a single track type, discarding the other.
+ */
+async function muxHls(
+  sourcePath: string,
+  masterPath: string,
+  options: {
+    segmentFormat: MpegTsOutputFormat | CmafOutputFormat;
+    targetDuration: number;
+    firstTimestamp: number;
+    only?: 'video' | 'audio';
+  },
+): Promise<void> {
+  // mediabunny's file targets do not create directories.
+  await mkdir(dirname(masterPath), { recursive: true });
+  const input = new Input({ source: new FilePathSource(sourcePath), formats: ALL_FORMATS });
+  try {
+    const output = new Output({
+      format: new HlsOutputFormat({
+        segmentFormat: options.segmentFormat,
+        targetDuration: options.targetDuration,
+      }),
+      // The HLS output is many files; each one lands next to the master.
+      target: new PathedTarget(masterPath, (target) => new FilePathTarget(target.path)),
+    });
+    const conversion = await Conversion.init({
+      input,
+      output,
+      trim: { start: options.firstTimestamp },
+      ...(options.only === 'video' ? { audio: { discard: true } } : {}),
+      ...(options.only === 'audio' ? { video: { discard: true } } : {}),
+    });
+
+    // With no video/audio options, mediabunny copies compatible tracks and re-encodes the rest —
+    // but re-encoding needs an encoder, so without WebCodecs an incompatible track is DISCARDED
+    // instead. Silently shipping a video without its audio (or vice versa) is not a conversion,
+    // it is data loss: fail loudly, with the codec and the reason per track.
+    const lost = conversion.discardedTracks.filter((d) => d.reason !== 'discarded_by_user');
+    if (lost.length > 0) {
+      const reasons = await Promise.all(
+        lost.map(async (discarded) => {
+          const codec = await discarded.track.getCodec().catch(() => null);
+          return `${discarded.track.type}/${codec ?? 'unknown'}: ${discarded.reason}`;
+        }),
+      );
+      throw new HlsSourceUnsupportedError(reasons.join('; '));
+    }
+    if (!conversion.isValid) {
+      throw new HlsSourceUnsupportedError('the file contains no usable track');
+    }
+    await conversion.execute();
+  } finally {
+    input.dispose();
+  }
+}
+
+/** The package's HLS master: the video rendition, with the audio as its `#EXT-X-MEDIA` group. */
+function hlsMaster(tracks: MuxedTrack[]): string {
+  const video = tracks.find((t) => t.type === 'video')!;
+  const audio = tracks.find((t) => t.type === 'audio');
+  const codecs = [video.codecs, audio?.codecs].filter(Boolean).join(',');
+  const bandwidth = (video.bandwidth ?? 0) + (audio?.bandwidth ?? 0);
+  const inf = [
+    `BANDWIDTH=${Math.max(1, bandwidth)}`,
+    ...(codecs ? [`CODECS="${codecs}"`] : []),
+    ...(video.width && video.height ? [`RESOLUTION=${video.width}x${video.height}`] : []),
+    ...(audio ? ['AUDIO="audio"'] : []),
+  ].join(',');
+  return [
+    '#EXTM3U',
+    '#EXT-X-VERSION:7',
+    '#EXT-X-INDEPENDENT-SEGMENTS',
+    ...(audio
+      ? [
+          `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="audio",DEFAULT=YES,AUTOSELECT=YES,URI="${audio.playlistPath}"`,
+        ]
+      : []),
+    `#EXT-X-STREAM-INF:${inf}`,
+    video.playlistPath,
+    '',
+  ].join('\n');
 }
 
 export function createProbeEngine(): MediaProbeEngine {

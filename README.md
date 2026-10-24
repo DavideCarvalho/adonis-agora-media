@@ -7,7 +7,7 @@ spatie/laravel-media-library feel, on top of [`@adonisjs/drive`](https://github.
 
 Attach files to entities, organize them into collections (MIME whitelist, single-file replace,
 ordering), and generate image conversions (eager or lazy) — plus **content transformers**, the same
-seam driven beyond images: the bundled `transformers.hls()` packages a video into HLS (mediabunny by default, or `engines.ffmpegHls({ ladder })` to transcode an adaptive-bitrate ladder with the system ffmpeg),
+seam driven beyond images: the bundled `transformers.video()` packages a video for streaming, as CMAF segments with both an HLS and a DASH manifest, or HLS over TS (mediabunny by default, or `engines.ffmpeg({ ladder })` to transcode an adaptive-bitrate ladder with the system ffmpeg),
 `transformers.probe()` records duration/codecs as metadata, and `transformers.placeholder()` stores an
 inline blur-up preview + dimensions + dominant colour for images — all persisted into the same
 `record.conversions` map. Storage is delegated entirely to Drive, so you reuse your existing

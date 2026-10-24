@@ -28,7 +28,7 @@ export interface MediaCollectionConfig {
   /** Image conversion presets available for this collection. */
   conversions?: ConversionPreset[];
   /**
-   * Content transformers available for this collection (e.g. `transformers.hls()`). Each produces
+   * Content transformers available for this collection (e.g. `transformers.video()`). Each produces
    * a named entry in `record.conversions`, so transformer names and preset names share one
    * namespace — a collision throws {@link TransformerConflictError} at construction.
    */

@@ -246,17 +246,17 @@ Source: `docs/configuration.mdx` (`imageProcessor`), `docs/errors.mdx`.
 Wrong:
 
 ```ts
-// 'videos' collection declares transformers.hls()
-const url = await media.library.url(videoId, 'hls') // throws before any transform ran
+// 'videos' collection declares transformers.video()
+const url = await media.library.url(videoId, 'video') // throws before any transform ran
 ```
 
 Correct:
 
 ```ts
 // run the transform explicitly (usually from a job), then read
-await media.library.transform(videoId, 'hls') // idempotent — retries skip through
+await media.library.transform(videoId, 'video') // idempotent — retries skip through
 const record = await media.library.find(videoId)
-record!.conversions.hls // { path, prefix, files, meta }
+record!.conversions.video // { path, prefix, files, meta }
 ```
 
 Mechanism: image presets generate lazily on first read, but reads NEVER generate transforms —

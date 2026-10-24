@@ -1,10 +1,10 @@
 import { TransformerRuntimeMissingError } from '../errors.js';
-import type { HlsRemuxEngine } from './hls.js';
 import type { MediaProbeEngine } from './probe.js';
+import type { VideoPackagingEngine } from './video.js';
 
 /** The engine factories `./mediabunny.js` exports (the only module that imports the peer). */
 export interface MediabunnyEngineModule {
-  createHlsEngine(): HlsRemuxEngine;
+  createVideoEngine(): VideoPackagingEngine;
   createProbeEngine(): MediaProbeEngine;
 }
 

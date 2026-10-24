@@ -22,12 +22,8 @@ import {
 import { inMemoryDiskResolver } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
 import type { Transformer } from '../src/transformer.js';
-import {
-  DASH_HLS_ENTRY,
-  type DashPackageEngine,
-  type DashPackageRequest,
-} from '../src/transformers/dash.js';
 import { buildDashArgs } from '../src/transformers/ffmpeg.js';
+import type { VideoPackageRequest, VideoPackagingEngine } from '../src/transformers/video.js';
 
 const MPD = `<?xml version="1.0" encoding="utf-8"?>
 <MPD type="static">
@@ -119,13 +115,13 @@ describe('manifest rewriting', () => {
 });
 
 /** A fake engine writing a CMAF package shaped like ffmpeg's. */
-function fakeDashEngine(requests: DashPackageRequest[] = []): DashPackageEngine {
+function fakeEngine(requests: VideoPackageRequest[] = []): VideoPackagingEngine {
   return {
     async package(request) {
       requests.push(request);
-      await writeFile(join(request.outputDir, request.manifestName), MPD);
-      if (request.hlsEntryName) {
-        await writeFile(join(request.outputDir, request.hlsEntryName), MASTER);
+      if (request.dashManifest) await writeFile(join(request.outputDir, request.dashManifest), MPD);
+      if (request.hlsEntry) {
+        await writeFile(join(request.outputDir, request.hlsEntry), MASTER);
         await writeFile(join(request.outputDir, 'media_0.m3u8'), MEDIA_PLAYLIST);
         await writeFile(join(request.outputDir, 'media_2.m3u8'), MEDIA_PLAYLIST);
       }
@@ -156,7 +152,7 @@ function setup(
     collections: [
       {
         name: 'lessons',
-        transformers: [options.transformer ?? transformers.dash({ engine: fakeDashEngine() })],
+        transformers: [options.transformer ?? transformers.video({ engine: fakeEngine() })],
         access: { read: authorizers.owner() },
       },
     ],
@@ -235,23 +231,24 @@ async function readAll(stream: Readable): Promise<string> {
 const owner: MediaSubject = { id: '7' };
 const SECRET = 'test-secret';
 
-describe('transformers.dash()', () => {
-  it('uploads the CMAF package and records the HLS master it carries', async () => {
-    const requests: DashPackageRequest[] = [];
+describe('transformers.video() with a CMAF package', () => {
+  it('uploads the package and records both manifests', async () => {
+    const requests: VideoPackageRequest[] = [];
     const { library, disks } = setup({
-      transformer: transformers.dash({ engine: fakeDashEngine(requests), targetDuration: 6 }),
+      transformer: transformers.video({ engine: fakeEngine(requests), targetDuration: 6 }),
     });
     const record = await attachVideo(library);
-    const updated = await library.transform(record.id, 'dash');
+    const updated = await library.transform(record.id, 'video');
 
     expect(requests[0]).toMatchObject({
-      manifestName: 'manifest.mpd',
-      hlsEntryName: DASH_HLS_ENTRY,
+      segments: 'cmaf',
+      hlsEntry: 'index.m3u8',
+      dashManifest: 'manifest.mpd',
       targetDuration: 6,
     });
-    const conversion = updated.conversions.dash!;
-    const prefix = 'User/7/lessons/vid-1/conversions/dash/';
-    expect(conversion.path).toBe(`${prefix}manifest.mpd`);
+    const conversion = updated.conversions.video!;
+    const prefix = 'User/7/lessons/vid-1/conversions/video/';
+    expect(conversion.path).toBe(`${prefix}index.m3u8`);
     expect(conversion.files).toEqual([
       'chunk-0-00001.m4s',
       'index.m3u8',
@@ -265,9 +262,11 @@ describe('transformers.dash()', () => {
       width: 1280,
       height: 720,
       videoCodec: 'h264',
-      segmentCount: 2,
+      segments: 'cmaf',
+      segmentCount: 1,
       targetDuration: 6,
       hlsEntry: 'index.m3u8',
+      dashManifest: 'manifest.mpd',
     });
     const disk = disks.fs!;
     expect((await disk.getMetaData(`${prefix}manifest.mpd`)).contentType).toBe(
@@ -276,15 +275,15 @@ describe('transformers.dash()', () => {
     expect((await disk.getMetaData(`${prefix}chunk-0-00001.m4s`)).contentType).toBe('video/mp4');
   });
 
-  it('with hls: false, writes a DASH-only package', async () => {
-    const requests: DashPackageRequest[] = [];
+  it("with formats: ['dash'], writes a DASH-only package", async () => {
+    const requests: VideoPackageRequest[] = [];
     const { library } = setup({
-      transformer: transformers.dash({ engine: fakeDashEngine(requests), hls: false }),
+      transformer: transformers.video({ engine: fakeEngine(requests), formats: ['dash'] }),
     });
     const record = await attachVideo(library);
-    const updated = await library.transform(record.id, 'dash');
-    expect(requests[0]?.hlsEntryName).toBeUndefined();
-    expect(updated.conversions.dash?.meta?.hlsEntry).toBeUndefined();
+    const updated = await library.transform(record.id, 'video');
+    expect(requests[0]?.hlsEntry).toBeUndefined();
+    expect(updated.conversions.video?.meta?.hlsEntry).toBeUndefined();
     expect(streamEntries(updated).map((e) => e.format)).toEqual(['dash']);
   });
 });
@@ -333,7 +332,7 @@ describe('buildDashArgs', () => {
   });
 
   it('rejects an odd rendition height up front', () => {
-    expect(() => engines.ffmpegDash({ ladder: [{ height: 361, videoBitrate: '1M' }] })).toThrow(
+    expect(() => engines.ffmpeg({ ladder: [{ height: 361, videoBitrate: '1M' }] })).toThrow(
       /even integer/,
     );
   });
@@ -343,23 +342,23 @@ describe('media.library.stream()', () => {
   it('lists HLS first, then DASH, as stream-route URLs', async () => {
     const { library } = setup();
     const record = await attachVideo(library);
-    await library.transform(record.id, 'dash');
+    await library.transform(record.id, 'video');
 
     expect(await library.stream(record.id)).toEqual({
-      src: '/media/vid-1/stream/dash/index.m3u8',
+      src: '/media/vid-1/stream/video/index.m3u8',
       format: 'hls',
       sources: [
         {
-          src: '/media/vid-1/stream/dash/index.m3u8',
+          src: '/media/vid-1/stream/video/index.m3u8',
           format: 'hls',
           type: 'application/vnd.apple.mpegurl',
-          conversion: 'dash',
+          conversion: 'video',
         },
         {
-          src: '/media/vid-1/stream/dash/manifest.mpd',
+          src: '/media/vid-1/stream/video/manifest.mpd',
           format: 'dash',
           type: 'application/dash+xml',
-          conversion: 'dash',
+          conversion: 'video',
         },
       ],
       width: 1280,
@@ -371,7 +370,7 @@ describe('media.library.stream()', () => {
   it('follows the order of `conversions` exactly when given', async () => {
     const { library } = setup();
     const record = await attachVideo(library);
-    const packaged = await library.transform(record.id, 'dash');
+    const packaged = await library.transform(record.id, 'video');
     const withHls = {
       ...packaged,
       conversions: {
@@ -381,8 +380,8 @@ describe('media.library.stream()', () => {
     };
     const order = (conversions?: string[]) =>
       streamEntries(withHls, conversions).map((e) => `${e.conversion}:${e.format}`);
-    expect(order()).toEqual(['dash:hls', 'hls:hls', 'dash:dash']);
-    expect(order(['dash', 'hls'])).toEqual(['dash:hls', 'dash:dash', 'hls:hls']);
+    expect(order()).toEqual(['video:hls', 'hls:hls', 'video:dash']);
+    expect(order(['video', 'hls'])).toEqual(['video:hls', 'video:dash', 'hls:hls']);
     expect(order(['hls'])).toEqual(['hls:hls']);
   });
 
@@ -393,11 +392,11 @@ describe('media.library.stream()', () => {
       clock: () => now,
     });
     const record = await attachVideo(library);
-    await library.transform(record.id, 'dash');
+    await library.transform(record.id, 'video');
 
     const { src } = await library.stream(record.id);
     const url = new URL(src, 'http://app');
-    expect(url.pathname).toBe('/media/vid-1/stream/dash/index.m3u8');
+    expect(url.pathname).toBe('/media/vid-1/stream/video/index.m3u8');
     // 7200s of video + 3600s: well beyond the 600s signing default.
     expect(Number(url.searchParams.get('exp')) - now.getTime() / 1000).toBeGreaterThanOrEqual(
       10_800,
@@ -416,7 +415,7 @@ describe('media.access.stream()', () => {
   it('refuses who may not read, and hands the sources to who may', async () => {
     const { library, access } = setup();
     const record = await attachVideo(library);
-    await library.transform(record.id, 'dash');
+    await library.transform(record.id, 'video');
 
     await expect(access.stream({ user: { id: '8' } }, record.id)).rejects.toMatchObject({
       code: 'E_MEDIA_ACCESS_DENIED',
@@ -430,7 +429,7 @@ describe('media.access.streamRoute()', () => {
   async function ready(options: Parameters<typeof setup>[0] = {}) {
     const env = setup(options);
     const record = await attachVideo(env.library);
-    await env.library.transform(record.id, 'dash');
+    await env.library.transform(record.id, 'video');
     return { ...env, record, serve: env.access.streamRoute() };
   }
 
@@ -438,7 +437,7 @@ describe('media.access.streamRoute()', () => {
     const { serve } = await ready();
     const { ctx, sent } = fakeHttp({
       user: owner,
-      params: { id: 'vid-1', conversion: 'dash', '*': ['manifest.mpd'] },
+      params: { id: 'vid-1', conversion: 'video', '*': ['manifest.mpd'] },
     });
     await serve(ctx);
     expect(sent.headers['content-type']).toBe('application/dash+xml');
@@ -448,12 +447,14 @@ describe('media.access.streamRoute()', () => {
 
   it('refuses an anonymous request (401) and a stranger (403)', async () => {
     const { serve } = await ready();
-    const anonymous = fakeHttp({ params: { id: 'vid-1', conversion: 'dash', file: 'index.m3u8' } });
+    const anonymous = fakeHttp({
+      params: { id: 'vid-1', conversion: 'video', file: 'index.m3u8' },
+    });
     await serve(anonymous.ctx);
     expect(anonymous.sent.status).toBe(401);
     const stranger = fakeHttp({
       user: { id: '8' },
-      params: { id: 'vid-1', conversion: 'dash', file: 'index.m3u8' },
+      params: { id: 'vid-1', conversion: 'video', file: 'index.m3u8' },
     });
     await serve(stranger.ctx);
     expect(stranger.sent.status).toBe(403);
@@ -463,7 +464,7 @@ describe('media.access.streamRoute()', () => {
     const { serve } = await ready();
     const { ctx, sent } = fakeHttp({
       user: owner,
-      params: { id: 'vid-1', conversion: 'dash', file: 'chunk-0-00001.m4s' },
+      params: { id: 'vid-1', conversion: 'video', file: 'chunk-0-00001.m4s' },
     });
     await serve(ctx);
     expect(sent.headers['content-type']).toBe('video/mp4');
@@ -475,7 +476,7 @@ describe('media.access.streamRoute()', () => {
     const { serve } = await ready({ mode: 'signed' });
     const { ctx, sent } = fakeHttp({
       user: owner,
-      params: { id: 'vid-1', conversion: 'dash', file: 'init-0.m4s' },
+      params: { id: 'vid-1', conversion: 'video', file: 'init-0.m4s' },
     });
     await serve(ctx);
     expect(sent.redirect).toContain('init-0.m4s');
@@ -486,7 +487,7 @@ describe('media.access.streamRoute()', () => {
     for (const file of ['nope.m4s', '../../aula.mp4', '']) {
       const { ctx, sent } = fakeHttp({
         user: owner,
-        params: { id: 'vid-1', conversion: 'dash', file },
+        params: { id: 'vid-1', conversion: 'video', file },
       });
       await serve(ctx);
       expect(sent.status).toBe(404);
@@ -506,7 +507,7 @@ describe('media.access.streamRoute()', () => {
       const { serve } = await ready({ signing });
       const { ctx, sent } = fakeHttp({
         user: owner,
-        params: { id: 'vid-1', conversion: 'dash', file: 'index.m3u8' },
+        params: { id: 'vid-1', conversion: 'video', file: 'index.m3u8' },
       });
       await serve(ctx);
       const ref = /\nmedia_0\.m3u8\?(exp=\d+&sig=[\w-]+)\n/.exec(sent.body ?? '');
@@ -515,7 +516,7 @@ describe('media.access.streamRoute()', () => {
       // That signature alone opens the media playlist — and the segments it leads to.
       const query = Object.fromEntries(new URLSearchParams(ref![1]));
       const anonymous = fakeHttp({
-        params: { id: 'vid-1', conversion: 'dash', file: 'media_0.m3u8' },
+        params: { id: 'vid-1', conversion: 'video', file: 'media_0.m3u8' },
         query,
       });
       await serve(anonymous.ctx);
@@ -523,7 +524,7 @@ describe('media.access.streamRoute()', () => {
       expect(anonymous.sent.body).toContain(`chunk-0-00001.m4s?${ref![1]}`);
 
       const segment = fakeHttp({
-        params: { id: 'vid-1', conversion: 'dash', file: 'chunk-0-00001.m4s' },
+        params: { id: 'vid-1', conversion: 'video', file: 'chunk-0-00001.m4s' },
         query,
       });
       await serve(segment.ctx);
@@ -535,7 +536,7 @@ describe('media.access.streamRoute()', () => {
       const { sources } = await library.stream('vid-1');
       const dash = new URL(sources.find((s) => s.format === 'dash')!.src, 'http://app');
       const { ctx, sent } = fakeHttp({
-        params: { id: 'vid-1', conversion: 'dash', file: 'manifest.mpd' },
+        params: { id: 'vid-1', conversion: 'video', file: 'manifest.mpd' },
         query: Object.fromEntries(dash.searchParams),
       });
       await serve(ctx);
@@ -547,17 +548,17 @@ describe('media.access.streamRoute()', () => {
     it('refuses a tampered signature and one made for another conversion', async () => {
       const { serve, library } = await ready({ signing });
       const record = (await library.find('vid-1'))!;
-      const valid = Object.fromEntries(new URLSearchParams(library.streamQuery(record, 'dash')));
+      const valid = Object.fromEntries(new URLSearchParams(library.streamQuery(record, 'video')));
 
       const tampered = fakeHttp({
-        params: { id: 'vid-1', conversion: 'dash', file: 'manifest.mpd' },
+        params: { id: 'vid-1', conversion: 'video', file: 'manifest.mpd' },
         query: { ...valid, sig: `${valid.sig}x` },
       });
       await serve(tampered.ctx);
       expect(tampered.sent.status).toBe(403);
 
       const other = fakeHttp({
-        params: { id: 'vid-1', conversion: 'dash', file: 'manifest.mpd' },
+        params: { id: 'vid-1', conversion: 'video', file: 'manifest.mpd' },
         query: Object.fromEntries(new URLSearchParams(library.streamQuery(record, 'hls'))),
       });
       await serve(other.ctx);
@@ -576,7 +577,7 @@ function hasBinary(name: string): boolean {
 }
 
 describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
-  'engines.ffmpegDash against the real binaries',
+  'engines.ffmpeg (CMAF) against the real binaries',
   () => {
     let dir: string;
     let source: Buffer;
@@ -620,22 +621,22 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         mimeType: 'video/mp4',
         contents: source,
       });
-      return { library, access, record: await library.transform(record.id, 'dash') };
+      return { library, access, record: await library.transform(record.id, 'video') };
     }
 
     it('transcodes a ladder into a CMAF package both formats play', async () => {
       const { access, record } = await packageWith(
-        transformers.dash({
-          engine: engines.ffmpegDash({ ladder: engines.ladders.compact }),
+        transformers.video({
+          engine: engines.ffmpeg({ ladder: engines.ladders.compact }),
           targetDuration: 2,
         }),
       );
-      const files = record.conversions.dash!.files!;
+      const files = record.conversions.video!.files!;
       expect(files).toEqual(
         expect.arrayContaining(['manifest.mpd', 'index.m3u8', 'init-0.m4s', 'init-1.m4s']),
       );
       expect(files.some((f) => /^chunk-0-\d{5}\.m4s$/.test(f))).toBe(true);
-      expect(record.conversions.dash!.meta).toMatchObject({
+      expect(record.conversions.video!.meta).toMatchObject({
         videoCodec: 'h264',
         audioCodec: 'aac',
         height: 360,
@@ -646,7 +647,7 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
       const serve = access.streamRoute();
       const { ctx, sent } = fakeHttp({
         user: owner,
-        params: { id: record.id, conversion: 'dash', file: 'index.m3u8' },
+        params: { id: record.id, conversion: 'video', file: 'index.m3u8' },
       });
       await serve(ctx);
       const refs = (sent.body ?? '')
@@ -663,11 +664,13 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
     }, 60_000);
 
     it('remuxes without re-encoding by default', async () => {
-      const { record } = await packageWith(transformers.dash({ targetDuration: 2 }));
-      expect(record.conversions.dash!.files).toEqual(
+      const { record } = await packageWith(
+        transformers.video({ engine: engines.ffmpeg(), targetDuration: 2 }),
+      );
+      expect(record.conversions.video!.files).toEqual(
         expect.arrayContaining(['manifest.mpd', 'index.m3u8']),
       );
-      expect(record.conversions.dash!.meta).toMatchObject({ width: 640, height: 360 });
+      expect(record.conversions.video!.meta).toMatchObject({ width: 640, height: 360 });
     }, 60_000);
   },
 );

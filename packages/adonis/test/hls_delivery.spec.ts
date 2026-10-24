@@ -33,7 +33,7 @@ async function makeDeliverable() {
   const storage = new StorageManager({ default: 'fs', resolve });
   const store = new InMemoryMediaStore();
   const hls = new FakeTransformer({
-    name: 'hls',
+    name: 'video',
     artifacts: {
       'index.m3u8': MASTER,
       'playlist-1.m3u8': MEDIA_PLAYLIST,
@@ -60,7 +60,7 @@ async function makeDeliverable() {
     mimeType: 'video/mp4',
     contents: Buffer.from('fake-mp4'),
   });
-  await library.transform(record.id, 'hls');
+  await library.transform(record.id, 'video');
   return { library, record, disks };
 }
 
@@ -88,7 +88,7 @@ describe('HlsDeliveryHandler: playlists', () => {
 
     const result = await handler.handle({ mediaId: record.id, file: 'playlist-1.m3u8' });
     if (result.kind !== 'playlist') throw new Error(`expected playlist, got ${result.kind}`);
-    const prefix = `Course/1/videos/${record.id}/conversions/hls/`;
+    const prefix = `Course/1/videos/${record.id}/conversions/video/`;
     // the in-memory disk renders signed URLs as <base>/<key>?signature=fake&expires=<ttl>
     expect(result.content).toContain(
       `memory://fs/${prefix}segment-1-0.ts?signature=fake&expires=120`,

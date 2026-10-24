@@ -187,6 +187,7 @@ export {
   resolvePackagePath,
   rewriteHlsPlaylist,
 } from './hls/playlist.js';
+export { buildDashManifest, parseMasterPlaylist, parseMediaPlaylist } from './hls/to_dash.js';
 export type {
   ConversionPreset,
   ConversionResult,
@@ -264,34 +265,17 @@ export type {
   TransformResult,
 } from './transformer.js';
 export type {
-  DashPackageEngine,
-  DashPackageRequest,
-  DashTransformerOptions,
-} from './transformers/dash.js';
-export { DASH_HLS_ENTRY, DASH_MANIFEST, DashTransformer } from './transformers/dash.js';
-export type {
   FfmpegBinaryOptions,
-  FfmpegDashEngineOptions,
-  FfmpegHlsEngineOptions,
   FfmpegRendition,
+  FfmpegVideoEngineOptions,
 } from './transformers/ffmpeg.js';
 export {
   buildDashArgs,
   buildHlsArgs,
   effectiveLadder,
-  ffmpegDashEngine,
-  ffmpegHlsEngine,
+  ffmpegVideoEngine,
   ffprobeEngine,
 } from './transformers/ffmpeg.js';
-export type {
-  HlsRemuxEngine,
-  HlsRemuxRequest,
-  HlsRemuxSummary,
-  HlsTransformerOptions,
-  WebCodecsProvider,
-  WebCodecsSupport,
-} from './transformers/hls.js';
-export { HLS_ENTRY_PLAYLIST, HlsTransformer, resolveWebCodecsSupport } from './transformers/hls.js';
 export type {
   ImagePlaceholder,
   PlaceholderEngine,
@@ -305,6 +289,22 @@ export type {
   MetadataProbeTransformerOptions,
 } from './transformers/probe.js';
 export { MetadataProbeTransformer } from './transformers/probe.js';
+export type {
+  VideoFormat,
+  VideoPackageRequest,
+  VideoPackageSummary,
+  VideoPackagingEngine,
+  VideoSegmentFormat,
+  VideoTransformerOptions,
+  WebCodecsProvider,
+  WebCodecsSupport,
+} from './transformers/video.js';
+export {
+  resolveWebCodecsSupport,
+  VIDEO_DASH_MANIFEST,
+  VIDEO_HLS_ENTRY,
+  VideoTransformer,
+} from './transformers/video.js';
 export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js';
 export { parseTusMetadata, TUS_VERSION, TusUploadHandler } from './tus.js';
 export type {

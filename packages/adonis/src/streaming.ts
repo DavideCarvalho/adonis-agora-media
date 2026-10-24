@@ -65,9 +65,9 @@ export function streamFormatOf(file: string): StreamFormat | undefined {
 }
 
 /**
- * The streaming entry points of a record. A conversion counts when its entry artifact is a
- * manifest; a CMAF package (`transformers.dash()`) also lists the HLS master it carries
- * (`meta.hlsEntry`), HLS first, so one conversion yields both formats.
+ * The streaming entry points of a record. A conversion counts when it carries a manifest: the
+ * ones `transformers.video()` records (`meta.hlsEntry`, `meta.dashManifest` — both for a CMAF
+ * package, HLS first), or an entry artifact that is one.
  *
  * Without `conversions`, every HLS entry comes before every DASH one (iOS plays only HLS). With
  * `conversions`, they restrict the entries and set their order exactly, conversion by conversion.
@@ -80,12 +80,15 @@ export function streamEntries(record: MediaRecord, conversions?: readonly string
     if (!variant?.path || !variant.files) continue;
     const prefix = variant.prefix ?? variant.path.slice(0, variant.path.lastIndexOf('/') + 1);
     const entry = variant.path.slice(prefix.length);
-    const hlsEntry = variant.meta?.hlsEntry;
-    if (typeof hlsEntry === 'string' && hlsEntry !== entry && variant.files.includes(hlsEntry)) {
-      entries.push({ conversion, format: 'hls', file: hlsEntry });
+    const manifests = [variant.meta?.hlsEntry, variant.meta?.dashManifest, entry].filter(
+      (file): file is string => typeof file === 'string' && variant.files!.includes(file),
+    );
+    const own: StreamEntry[] = [];
+    for (const file of new Set(manifests)) {
+      const format = streamFormatOf(file);
+      if (format && !own.some((e) => e.format === format)) own.push({ conversion, format, file });
     }
-    const format = streamFormatOf(entry);
-    if (format) entries.push({ conversion, format, file: entry });
+    entries.push(...own.sort((a, b) => (a.format === b.format ? 0 : a.format === 'hls' ? -1 : 1)));
   }
   if (conversions) return entries;
   // Stable: HLS first, keeping the conversions' order within a format.

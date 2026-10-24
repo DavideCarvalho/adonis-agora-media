@@ -68,7 +68,7 @@ npm i hls.js          # HLS outside Safari/iOS
 npm i dashjs          # DASH (hls.js alone plays the HLS side of a CMAF package)
 ```
 
-With `transformers.dash()` (CMAF, HLS included), **hls.js alone is enough**: every browser gets HLS.
+With the default `transformers.video()` package (CMAF, both manifests), **hls.js alone is enough**: every browser gets HLS.
 Load dash.js only if you serve DASH-only packages or want DASH by preference: order the sources
 `conversions` server-side, or pass a `sources` list of your own.
 
