@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   FfmpegFailedError,
@@ -453,6 +453,7 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
           'video',
         );
         if (!request.dashManifest) await rm(join(request.outputDir, manifestName));
+        if (request.hlsEntry) await stripProgramDateTime(request.outputDir);
       }
 
       const result: VideoPackageSummary = {};
@@ -465,6 +466,27 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
       return result;
     },
   };
+}
+
+/**
+ * Drop `#EXT-X-PROGRAM-DATE-TIME` from the HLS playlists ffmpeg's DASH muxer writes. It stamps
+ * the wall-clock time of the TRANSCODE, which means nothing for a VOD — and a player that maps
+ * the timeline to it (mediabunny reports a duration of decades) breaks seeking and duration.
+ */
+async function stripProgramDateTime(outputDir: string): Promise<void> {
+  for (const file of await readdir(outputDir)) {
+    if (!file.toLowerCase().endsWith('.m3u8')) continue;
+    const path = join(outputDir, file);
+    const content = await readFile(path, 'utf8');
+    if (!content.includes('#EXT-X-PROGRAM-DATE-TIME')) continue;
+    await writeFile(
+      path,
+      content
+        .split(/(?<=\n)/)
+        .filter((line) => !line.startsWith('#EXT-X-PROGRAM-DATE-TIME'))
+        .join(''),
+    );
+  }
 }
 
 /**
