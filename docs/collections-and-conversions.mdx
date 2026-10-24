@@ -331,7 +331,7 @@ interface MediaConversion {
 }
 ```
 
-- An **image conversion** (a `ConversionPreset`) fills `path` + `disk`: one file, one key. Since 0.22 its `meta` also records the output size, `{ width, height }` — what [`media.library.image()`](/docs/media/react/image) builds a `srcset` from.
+- An **image conversion** (a `ConversionPreset`) fills `path` + `disk`: one file, one key. Its `meta` also records the output size, `{ width, height }` — what [`media.library.image()`](/docs/media/react/image) builds a `srcset` from.
 - A **multi-file transformer output** — an HLS package — fills `path` (the master playlist), `prefix` (the folder every artifact lives under) and `files` (all of them). `files` is the authority both for serving individual artifacts and for deleting the package whole.
 - A **metadata-only transform** — a probe, a blurhash — writes no artifact at all: `path`, `disk`, `prefix` and `files` are all absent and only `meta` carries the result.
 
