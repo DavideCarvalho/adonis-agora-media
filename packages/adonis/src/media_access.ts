@@ -185,7 +185,7 @@ export class MediaAccess {
    * `useMediaStream` from `@adonis-agora/media-react`.
    *
    * ```ts
-   * return inertia.render('lessons/show', { video: await media.access.stream(ctx, lesson.videoId) })
+   * return inertia.render('lessons/show', { video: await media.access.stream(ctx, lesson.videoMediaId) })
    * ```
    */
   async stream(
