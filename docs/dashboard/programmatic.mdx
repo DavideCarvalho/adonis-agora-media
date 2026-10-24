@@ -23,7 +23,6 @@ import type { MediaManagerLike, DashboardServiceOptions } from '@adonis-agora/me
 import media from '@adonis-agora/media/services/main'
 import { DashboardService } from '@adonis-agora/media/dashboard'
 
-
 const dashboard = new DashboardService(
   media,                                    // any MediaManagerLike
   { diskNames: ['s3', 'backups'], actions: true },
