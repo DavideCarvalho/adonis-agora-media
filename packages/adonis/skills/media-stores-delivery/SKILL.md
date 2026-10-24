@@ -162,11 +162,16 @@ router.get('/media/:id', async ({ params, request, response, auth }) => {
 ```
 
 The handler's own `mode` / `signedTtlSeconds` override the configured ones per call. For
-transformer-generated HLS packages use `HlsDeliveryHandler` — playlists are rewritten per
-request, segment files are validated against the persisted artifact list (no caller input
-ever reaches the disk as a path).
+transformer-generated HLS/DASH packages use `media.access.streamRoute()` — it serves every
+file of the package under `/media/:id/stream/:conversion/*`, authorizes each request with
+the collection's `access.read` (or `authorize`), validates the file against the persisted
+artifact list (no caller input ever reaches the disk as a path), answers manifests as text
+with the package signature carried onto their references, and redirects or streams segments
+per `mode`. `media.access.serveStream()` is the same for a controller that finds the record
+its own way. `HlsDeliveryHandler` remains only as the lower-level HLS-only read path for
+custom URL schemes.
 
-Source: `docs/delivery.mdx`, `docs/transformers.mdx` (Serving HLS).
+Source: `docs/delivery.mdx`, `docs/streaming.mdx` (The stream route), `docs/transformers.mdx` (Serving HLS).
 
 ## Common mistakes
 
