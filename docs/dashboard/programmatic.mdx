@@ -20,10 +20,8 @@ import type { MediaManagerLike, DashboardServiceOptions } from '@adonis-agora/me
 ## Constructing one
 
 ```ts title="start/routes.ts"
-import { MediaManager } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
 import { DashboardService } from '@adonis-agora/media/dashboard'
-
-const media = await app.container.make(MediaManager)
 
 const dashboard = new DashboardService(
   media,                                    // any MediaManagerLike

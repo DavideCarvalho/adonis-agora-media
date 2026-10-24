@@ -252,11 +252,3 @@ import { placeholderStyle } from '@adonis-agora/media-react'
 
 Pass `{ width, height }` (the intrinsic size) to keep the picture's proportions in the blur, and
 `objectFit` to mirror the element's (`cover` by default).
-
-## Conversions generated before 0.22
-
-Since 0.22 every generated image conversion records its output size in
-`record.conversions[name].meta` (`{ width, height }`). For conversions generated earlier, `image()`
-derives the width from the preset when the preset pins it down (a lone `width`, or
-`cover`/`fill`/`contain` with both sides). Presets it cannot size (`inside`/`outside` with both sides,
-a lone `height`) are left out of `srcSet` until regenerated.

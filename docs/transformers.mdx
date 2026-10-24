@@ -56,9 +56,13 @@ Use them to type job payloads and route params against the config instead of res
 
 ## Running a transform
 
-Transformations are assumed **heavy** (the flagship case is a video remux), so by default nothing runs on attach. The app triggers generation explicitly — from a job, on whatever queue system it already has:
+Transformations are assumed **heavy** (the flagship case is a video transcode), so **the library does not run them by itself**. It ships no queue and depends on none. You have two options:
+
+- **`eager: true`**: it runs inside `attach`, in the same request ([below](#eager-transformers)). This is only for cheap transforms.
+- **Your own background work** calls `media.library.transform(id, name)`. With [`@adonisjs/queue`](https://docs.adonisjs.com/guides/digging-deeper/queues), that's a job you dispatch after the upload:
 
 ```ts title="app/jobs/transcode_video_job.ts"
+import { Job } from '@adonisjs/queue'
 import media from '@adonis-agora/media/services/main'
 
 export default class TranscodeVideo extends Job<{ mediaId: string }> {
@@ -66,6 +70,11 @@ export default class TranscodeVideo extends Job<{ mediaId: string }> {
     await media.library.transform(this.payload.mediaId, 'hls')
   }
 }
+```
+
+```ts title="after the upload (a controller, an upload policy's onComplete)"
+const record = await media.library.attach({ /* … */ collection: 'lessons' })
+await TranscodeVideo.dispatch({ mediaId: record.id })
 ```
 
 `transform(id, name)` is **idempotent**: if the conversion already exists it returns the record untouched, so a retried job skips straight through. A mid-flight failure sweeps whatever artifacts were already written and re-throws — no conversion entry is ever persisted for a half-written package, and the retry starts clean. Two concurrent calls both run and produce identical output (the artifact keys are deterministic); serialize with your own lock if the double work matters.
@@ -228,9 +237,11 @@ To render it, [`<MediaImage>`](/docs/media/react/image) from `@adonis-agora/medi
 An HLS package cannot be served like a single file: playlists are stored with references **relative to the storage layout**, and every player request must receive them rewritten to URLs it can fetch. `HlsDeliveryHandler` is the framework-agnostic read path, following the same philosophy as [`MediaDeliveryHandler`](/docs/media/delivery) — **you** mount the route, your middleware authorizes, the handler answers "how":
 
 ```ts title="start/routes.ts"
-import { HlsDeliveryHandler, MediaManager } from '@adonis-agora/media'
+import router from '@adonisjs/core/services/router'
+import { HlsDeliveryHandler } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import { middleware } from '#start/kernel'
 
-const media = await app.container.make(MediaManager)
 const hls = new HlsDeliveryHandler({
   library: media,
   urlForPlaylist: ({ mediaId, file }) =>

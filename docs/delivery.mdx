@@ -50,9 +50,11 @@ A disk that can't answer leaves visibility genuinely unknown, and `auto` then re
 `MediaDeliveryHandler` is framework-agnostic, exactly like [`TusUploadHandler`](/docs/media/uploads/resumable-tus): **you** mount the route, with your own middleware, and delegate the "how do these bytes reach the client" question to it.
 
 ```ts title="start/routes.ts"
-import { MediaDeliveryHandler, MediaManager } from '@adonis-agora/media'
+import router from '@adonisjs/core/services/router'
+import { MediaDeliveryHandler } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import { middleware } from '#start/kernel'
 
-const media = await app.container.make(MediaManager)
 const delivery = new MediaDeliveryHandler({ library: media })
 
 router
