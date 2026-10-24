@@ -213,6 +213,12 @@ export interface MediaDeliveryConfig {
    * URLs for. Default `/media/:id`.
    */
   path?: string;
+  /**
+   * The route the app mounts `media.access.streamRoute()` on, with `:id` and `:conversion` and
+   * without the file part — what `media.library.stream()` builds manifest URLs for. Default
+   * `/media/:id/stream/:conversion` (mounted as `/media/:id/stream/:conversion/*`).
+   */
+  streamPath?: string;
 }
 
 /**

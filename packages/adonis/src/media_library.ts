@@ -57,6 +57,16 @@ import {
   type ResponsiveImageOptions,
 } from './responsive_image.js';
 import type { StorageManager } from './storage_manager.js';
+import {
+  DASH_MIME_TYPE,
+  HLS_MIME_TYPE,
+  type MediaStream,
+  type MediaStreamSource,
+  signManifest,
+  streamArtifactContentType,
+  streamEntries,
+  streamFormatOf,
+} from './streaming.js';
 import type {
   Transformer,
   TransformerContext,
@@ -88,7 +98,17 @@ export interface MediaLibraryOptions {
   deliverySigning?: DeliverySigningConfig;
   /** Route the app mounts `MediaDeliveryHandler` on, with `:id` (`delivery.path`). Default `/media/:id`. */
   deliveryPath?: string;
+  /**
+   * Route the app mounts `media.access.streamRoute()` on, with `:id` and `:conversion`, WITHOUT
+   * the trailing file part (`delivery.streamPath`). Default `/media/:id/stream/:conversion`.
+   */
+  deliveryStreamPath?: string;
 }
+
+/** What serving one file of a streaming package yields: a manifest's text, or the usual delivery. */
+export type StreamFileResult =
+  | { kind: 'manifest'; content: string; contentType: string; fileName: string }
+  | DeliveryResult;
 
 export interface AttachInput {
   ownerType: string;
@@ -245,6 +265,7 @@ export class MediaLibrary {
   private readonly deliveryImages: Required<OnDemandImageConfig>;
   private readonly deliverySigning: DeliverySigningConfig | undefined;
   private readonly deliveryPath: string;
+  private readonly deliveryStreamPath: string;
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -264,6 +285,7 @@ export class MediaLibrary {
     };
     this.deliverySigning = options.deliverySigning;
     this.deliveryPath = options.deliveryPath ?? '/media/:id';
+    this.deliveryStreamPath = options.deliveryStreamPath ?? '/media/:id/stream/:conversion';
   }
 
   private emit<E extends 'attach' | 'delete' | 'conversion'>(
@@ -1175,6 +1197,164 @@ export class MediaLibrary {
       expires,
     });
     return path + deliveryQueryString({ conversion, width, quality, expires, signature });
+  }
+
+  /**
+   * What a player needs to stream a video: the URLs of every HLS/DASH manifest the record's
+   * conversions provide (`transformers.hls()`, `transformers.dash()`), HLS first, through the
+   * stream route (`delivery.streamPath`, served by `media.access.streamRoute()`). Pass the result
+   * to `useMediaStream` from `@adonis-agora/media-react` as is.
+   *
+   * With `delivery.signing`, the URLs are signed for the whole package: the route then serves the
+   * manifest and every segment it leads to without asking the app again, until they expire. The
+   * lifetime is `expiresIn`, else `delivery.signing.expiresIn` — but never shorter than the video
+   * plus an hour, so a player does not lose access mid-video.
+   *
+   * Like {@link image}, this answers "how", not "who": authorize the caller first — or use
+   * `media.access.stream(ctx, id)`, which does.
+   *
+   * Throws {@link TransformNotReadyError} when no streamable conversion exists yet.
+   */
+  async stream(
+    id: string,
+    options: {
+      /** Which conversions to offer, in order. Default: every streamable one. */
+      conversions?: readonly string[];
+      /** Signed-URL lifetime in seconds (with `delivery.signing`). */
+      expiresIn?: number;
+    } = {},
+  ): Promise<MediaStream> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    const entries = streamEntries(record, options.conversions);
+    const first = entries[0];
+    if (!first) throw new TransformNotReadyError(id, options.conversions?.join(', ') ?? 'hls/dash');
+
+    const sources: MediaStreamSource[] = entries.map((entry) => ({
+      src: this.streamUrl(record, entry.conversion, entry.file, options),
+      format: entry.format,
+      type: entry.format === 'hls' ? HLS_MIME_TYPE : DASH_MIME_TYPE,
+      conversion: entry.conversion,
+    }));
+    const meta = record.conversions[first.conversion]?.meta ?? {};
+    const numeric = (key: string) =>
+      typeof meta[key] === 'number' ? { [key]: meta[key] as number } : {};
+    return {
+      src: sources[0]!.src,
+      format: sources[0]!.format,
+      sources,
+      ...numeric('width'),
+      ...numeric('height'),
+      ...numeric('durationSeconds'),
+    };
+  }
+
+  /**
+   * URL of one file of a streaming package on the stream route — signed for the whole package
+   * with `delivery.signing`. {@link stream} builds the entry URLs with it.
+   */
+  streamUrl(
+    record: MediaRecord,
+    conversion: string,
+    file: string,
+    options: { expiresIn?: number } = {},
+  ): string {
+    const path = this.deliveryStreamPath
+      .replace(':id', encodeURIComponent(record.id))
+      .replace(':conversion', encodeURIComponent(conversion));
+    const url = `${path.replace(/\/+$/, '')}/${file.split('/').map(encodeURIComponent).join('/')}`;
+    const query = this.streamQuery(record, conversion, options.expiresIn);
+    return query ? `${url}?${query}` : url;
+  }
+
+  /**
+   * The `exp=…&sig=…` that authorizes every file of one streaming package (no `?`), or `''`
+   * without `delivery.signing`. The signature covers the record and the conversion — not a file —
+   * so it can ride along on every reference a manifest makes.
+   */
+  streamQuery(record: MediaRecord, conversion: string, expiresIn?: number): string {
+    if (!this.deliverySigning) return '';
+    const duration = record.conversions[conversion]?.meta?.durationSeconds;
+    const ttl = Math.max(
+      expiresIn ?? this.deliverySigning.expiresIn ?? DEFAULT_DELIVERY_SIGNING_TTL_SECONDS,
+      typeof duration === 'number' ? Math.ceil(duration) + 3600 : 0,
+    );
+    const expires = deliveryExpiry(this.now().getTime(), ttl);
+    const signature = signDelivery(this.deliverySigning.secret, {
+      mediaId: record.id,
+      conversion,
+      expires,
+    });
+    return deliveryQueryString({ expires, signature }).slice(1);
+  }
+
+  /**
+   * Serve one file of a record's streaming package — the "how" of `media.access.streamRoute()`
+   * (authorize first). `file` is checked against the package's persisted artifact list, so a
+   * request can never reach outside it.
+   *
+   * - A **manifest** (`.m3u8`/`.mpd`) comes back as text. Its references are relative and resolve
+   *   to the same route, so it is served as stored — plus `query` (a package signature) on every
+   *   relative reference when given, which is how segment requests inherit the authorization.
+   * - Anything else (segments, init sections) is delivered per `mode` (default `delivery.mode`):
+   *   a redirect to the object (signed URLs stay short-lived — they are minted per segment
+   *   request), or a stream through the app.
+   */
+  async streamFile(
+    record: MediaRecord,
+    conversion: string,
+    file: string,
+    options: {
+      query?: string | undefined;
+      mode?: DeliveryMode | undefined;
+      signedTtlSeconds?: number | undefined;
+    } = {},
+  ): Promise<StreamFileResult> {
+    const variant = record.conversions[conversion];
+    if (!variant) throw new TransformNotReadyError(record.id, conversion);
+    if (variant.path === undefined || variant.disk === undefined || !variant.files) {
+      throw new ConversionArtifactMissingError(record.id, conversion);
+    }
+    // Membership in the persisted artifact list is the whole path check: caller input never
+    // reaches a disk key by arithmetic, so traversal is structurally impossible.
+    if (!variant.files.includes(file)) {
+      throw new MediaNotFoundError(`${record.id}#${conversion}:${file}`);
+    }
+    const prefix = variant.prefix ?? variant.path.slice(0, variant.path.lastIndexOf('/') + 1);
+    const disk = this.storage.disk(variant.disk);
+    const key = `${prefix}${file}`;
+    const fileName = file.slice(file.lastIndexOf('/') + 1);
+
+    const format = streamFormatOf(file);
+    if (format) {
+      const stored = Buffer.from(await disk.getBytes(key)).toString('utf8');
+      return {
+        kind: 'manifest',
+        content: await signManifest(file, stored, options.query ?? ''),
+        contentType: format === 'hls' ? HLS_MIME_TYPE : DASH_MIME_TYPE,
+        fileName,
+      };
+    }
+
+    const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, key);
+    if (mode === 'public') return { kind: 'redirect', url: await disk.getUrl(key) };
+    if (mode === 'signed') {
+      const expiresIn = options.signedTtlSeconds ?? this.deliverySignedTtlSeconds;
+      return { kind: 'redirect', url: await disk.getSignedUrl(key, { expiresIn }) };
+    }
+    const metadata = await disk.getMetaData(key);
+    return {
+      kind: 'stream',
+      stream: await disk.getStream(key),
+      // A disk that stores everything as a generic type (S3 multipart) would make a player
+      // refuse the segment; the extension knows better.
+      mimeType:
+        metadata.contentType && metadata.contentType !== 'application/octet-stream'
+          ? metadata.contentType
+          : (streamArtifactContentType(file) ?? 'application/octet-stream'),
+      size: metadata.contentLength,
+      fileName,
+    };
   }
 
   /**

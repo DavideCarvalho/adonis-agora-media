@@ -171,6 +171,19 @@ async show(ctx: HttpContext) {
 `target` is the record, its id, or nothing found (`null`/`undefined`, answered `404`). The
 options are the route's, except `param`.
 
+## Videos: the stream route
+
+HLS and DASH packages have their own route, `media.access.streamRoute()`, which authorizes every
+manifest and segment request with the same rules:
+
+```ts title="start/routes.ts"
+const serveStream = media.access.streamRoute()
+router.get('/media/:id/stream/:conversion/*', serveStream)
+```
+
+`media.access.stream(ctx, id)` returns the manifest URLs for the player, after checking that the
+current user may read the video. See [Video streaming](/docs/media/streaming).
+
 ## In your own code
 
 ```ts

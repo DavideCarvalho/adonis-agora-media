@@ -1,0 +1,193 @@
+---
+title: Video streaming
+description: "HLS and DASH end to end — package a video once as CMAF, serve the package behind your authorization with media.access.streamRoute(), and play it with useMediaStream."
+icon: Clapperboard
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+Streaming a video takes three pieces:
+
+1. a **transformer** that packages the upload into segments and manifests;
+2. a **route** that serves the package to whoever may watch it;
+3. a **player** in the browser.
+
+The library ships all three.
+
+<Steps>
+<Step>
+
+### Package it
+
+```ts title="config/media.ts"
+import { authorizers, defineConfig, engines, transformers } from '@adonis-agora/media'
+
+export default defineConfig({
+  collections: [
+    {
+      name: 'lessons',
+      acceptsMimeTypes: ['video/*'],
+      access: { read: authorizers.authenticated() },
+      transformers: [
+        transformers.dash({ engine: engines.ffmpegDash({ ladder: engines.ladders.standard }) }),
+      ],
+    },
+  ],
+})
+```
+
+Run it after the upload. The library never runs a heavy transform on its own: see [Running a transform](/docs/media/transformers#running-a-transform).
+
+</Step>
+<Step>
+
+### Serve it
+
+```ts title="start/routes.ts"
+import media from '@adonis-agora/media/services/main'
+
+const serveStream = media.access.streamRoute()
+router.get('/media/:id/stream/:conversion/*', serveStream)
+```
+
+</Step>
+<Step>
+
+### Play it
+
+```ts title="app/controllers/lessons_controller.ts"
+async show(ctx: HttpContext) {
+  const lesson = await Lesson.findOrFail(ctx.params.id)
+  return ctx.inertia.render('lessons/show', {
+    lesson,
+    video: await media.access.stream(ctx, lesson.videoMediaId),
+  })
+}
+```
+
+```tsx title="inertia/pages/lessons/show.tsx"
+import { useMediaStream } from '@adonis-agora/media-react'
+
+const ref = useRef<HTMLVideoElement>(null)
+useMediaStream(ref, video, { hls: () => import('hls.js'), dash: () => import('dashjs') })
+
+return <video ref={ref} controls playsInline />
+```
+
+See [Video player](/docs/media/react/video) for the hook.
+
+</Step>
+</Steps>
+
+## HLS, DASH, or both
+
+| | `transformers.hls()` | `transformers.dash()` |
+|---|---|---|
+| Segments | MPEG-TS (`.ts`) | fragmented MP4 (CMAF, `.m4s`) |
+| Manifests | `index.m3u8` | `manifest.mpd` **and** `index.m3u8` over the same segments |
+| Default engine | mediabunny (pure JS, remux only) | system ffmpeg (remux) |
+| Ladder (ABR) | `engines.ffmpegHls({ ladder })` | `engines.ffmpegDash({ ladder })` |
+| Plays on | everything (iOS natively, elsewhere hls.js) | everything (iOS through HLS, elsewhere hls.js or dash.js) |
+
+`transformers.dash()` is the one to pick when ffmpeg is on the host. It writes **CMAF**: one set of fragmented-MP4 segments, described by a DASH manifest and an HLS master playlist at once. That gives both formats from one encode with no extra storage. Safari and iPhones get HLS, which they play natively, and the rest get whichever player you load. Pass `hls: false` for a DASH-only package.
+
+`transformers.hls()` is still the way to go without ffmpeg: its default engine is pure TypeScript.
+
+### The DASH transformer
+
+| Option | Default | |
+|---|---|---|
+| `name` | `'dash'` | Conversion name on the record. |
+| `targetDuration` | `4` | Segment duration, seconds. |
+| `hls` | `true` | Also write `index.m3u8` over the same segments (recorded as `meta.hlsEntry`). |
+| `eager` | `false` | Run inside attach. Leave it off for video. |
+| `engine` | `engines.ffmpegDash()` | Replace the packaging engine. |
+
+`engines.ffmpegDash(options)` takes the same `ladder` as the HLS engine:
+
+- **No `ladder`:** the source is stream-copied into fMP4, with no re-encode. fMP4 carries h264, hevc, vp9 and av1 alike, so any source plays as long as the browser decodes its codec.
+- **With `ladder`:** each rung is encoded to h264, rungs taller than the source are dropped, and the audio is encoded **once**, to AAC, and shared by every rung. Its bitrate is `audioBitrate`, or the ladder's highest by default.
+- **Other options:** `preset` (x264, default `'veryfast'`), `extraArgs`, `ffmpegPath` / `ffprobePath`.
+
+It needs ffmpeg 4.3 or newer. The conversion's `meta` carries `durationSeconds`, `width`, `height`, `videoCodec`, `audioCodec`, `segmentCount` and `hlsEntry`.
+
+## The stream route
+
+`media.access.streamRoute(options?)` returns an AdonisJS handler for
+`/media/:id/stream/:conversion/*`. The URL mirrors the package, so a manifest's relative
+references (`media_0.m3u8`, `chunk-0-00001.m4s`) resolve back to the same route. Nothing has to be
+rewritten to point at your app.
+
+For every request, it:
+
+1. **Loads the record and checks the file.** The file must be one the transformer wrote (the conversion's persisted file list). Anything else, `../` included, gets `404`, so no caller input reaches the disk as a path.
+2. **Authorizes the read** with `options.authorize` or, failing that, the collection's `access.read`, exactly like the [delivery route](/docs/media/access#the-delivery-route): `401` for an anonymous request, `403` for a stranger. A valid package signature skips this (next section).
+3. **Answers a manifest** (`.m3u8`, `.mpd`) as text, with its content type.
+4. **Answers a segment** per `delivery.mode`, or the route's `mode`:
+   - `signed`: a redirect to a short-lived URL on the storage, minted for that request, so a long video never outlives it;
+   - `public`: a redirect to the object;
+   - `proxy`: the bytes, streamed through the app.
+
+| Option | Default | |
+|---|---|---|
+| `authorize` | the collection's `access.read` | Who may watch. |
+| `mode` | `delivery.mode` | How segments reach the player. |
+| `signedTtlSeconds` | `delivery.signedTtlSeconds` | Lifetime of a segment's redirect URL. |
+| `cacheControl` | `'private, max-age=60'` | For manifests and redirects. |
+| `segmentCacheControl` | `'private, max-age=86400'` | For segments streamed in `proxy` mode. A segment never changes. |
+| `expiresIn` | see below | Lifetime of the package signature. |
+
+`media.access.serveStream(ctx, record, conversion, file, options)` is the same, for a controller
+that finds the record its own way.
+
+### Session or signature
+
+A player fetches a manifest, then dozens of segments. Each of those requests must be authorized,
+and there are two ways to do it:
+
+- **By session (no `delivery.signing`).** The browser sends its cookies with every request, so each segment goes through `authorize`. hls.js and dash.js send same-origin cookies by default. This is the simplest setup.
+- **By signature (`delivery.signing` configured).** `media.library.stream()` signs the manifest URLs for the **whole package**: the HMAC covers the record and the conversion, not a single file. The route serves a signed request without asking the app, and adds the same `?exp=&sig=` to every reference in the manifests it answers. Segment requests then carry the authorization along, with no session and no database check per segment, and keep working even from another origin. A manifest requested by session gets a fresh signature in the same way.
+
+A signature lives for `expiresIn`, which defaults to `delivery.signing.expiresIn`. It is **never shorter than the video plus an hour**, so a viewer doesn't lose access halfway through a long lesson.
+
+<Callout type="warn" title="Redirects to storage and CORS">
+  hls.js and dash.js fetch segments with XHR/fetch. When the route redirects a segment to a
+  storage host (`signed`/`public` mode), that host must allow your app's origin
+  (`Access-Control-Allow-Origin` on the bucket). In `proxy` mode, everything stays same-origin.
+</Callout>
+
+## `media.library.stream()` and `media.access.stream()`
+
+```ts
+const video = await media.access.stream(ctx, id) // authorizes, like media.access.image()
+const video = await media.library.stream(id)      // doesn't: you already did
+
+// {
+//   src: '/media/<id>/stream/dash/index.m3u8?exp=…&sig=…',
+//   format: 'hls',
+//   sources: [
+//     { src: '…/index.m3u8?…', format: 'hls', type: 'application/vnd.apple.mpegurl', conversion: 'dash' },
+//     { src: '…/manifest.mpd?…', format: 'dash', type: 'application/dash+xml', conversion: 'dash' },
+//   ],
+//   width: 1920, height: 1080, durationSeconds: 754.2,
+// }
+```
+
+- **Which conversions count:** every conversion whose entry is a manifest. HLS sources come first, because iPhones play HLS natively. `conversions: ['dash', 'hls']` restricts them and sets their order exactly, conversion by conversion (a CMAF conversion still lists its HLS master before its MPD).
+- **Not packaged yet:** `stream()` throws `TransformNotReadyError` until a package exists. The route answers that error with `404`.
+- **Where the URLs point:** at `delivery.streamPath` (default `/media/:id/stream/:conversion`). Change it if you mount the route elsewhere:
+
+```ts title="config/media.ts"
+defineConfig({ delivery: { streamPath: '/videos/:id/:conversion' } })
+// router.get('/videos/:id/:conversion/*', media.access.streamRoute())
+```
+
+## Lower level: `HlsDeliveryHandler`
+
+`HlsDeliveryHandler` is the earlier, framework-agnostic read path for `transformers.hls()`
+packages. It rewrites every playlist reference to URLs you build, with segments presigned inline,
+and leaves authorization to your route. It is still exported for apps that need a custom URL
+scheme. See [Serving HLS by hand](/docs/media/transformers#serving-hls-by-hand). For anything
+new, prefer `streamRoute()`: it covers DASH, authorizes for you, and never hands out a segment URL
+that expires mid-video.

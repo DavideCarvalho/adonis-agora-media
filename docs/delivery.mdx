@@ -195,4 +195,4 @@ In `proxy` mode the `mimeType` and `size` come from the **disk's** metadata rath
 
 ## HLS packages
 
-A transformer-generated HLS conversion is not one file but a package of playlists and segments, and its playlists must be **rewritten** per request — `deliver(id, { conversion: 'hls' })` would hand you the raw master playlist with storage-relative references. Serve those through the dedicated [`HlsDeliveryHandler`](/docs/media/transformers#serving-hls), which follows this page's philosophy exactly: you mount one route, your auth guards it, the handler answers "how".
+A transformer-generated HLS or DASH conversion is not one file but a package of manifests and segments, so `deliver(id, { conversion: 'hls' })` would only hand you the entry manifest. Serve packages through the [stream route](/docs/media/streaming#the-stream-route), `media.access.streamRoute()`. It serves every file of the package under one URL directory and authorizes each request the way this page's route does.

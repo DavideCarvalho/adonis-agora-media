@@ -74,6 +74,8 @@ export interface MediaManagerOptions {
   deliverySigning?: DeliverySigningConfig;
   /** Route of the delivery handler, with `:id` (`delivery.path`). */
   deliveryPath?: string;
+  /** Route of the stream handler, with `:id` and `:conversion` (`delivery.streamPath`). */
+  deliveryStreamPath?: string;
 }
 
 /**
@@ -125,6 +127,9 @@ export class MediaManager {
         ? { deliverySigning: options.deliverySigning }
         : {}),
       ...(options.deliveryPath !== undefined ? { deliveryPath: options.deliveryPath } : {}),
+      ...(options.deliveryStreamPath !== undefined
+        ? { deliveryStreamPath: options.deliveryStreamPath }
+        : {}),
     });
     this.access = new MediaAccess({
       library: this.library,

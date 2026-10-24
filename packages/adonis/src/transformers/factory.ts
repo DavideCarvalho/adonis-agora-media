@@ -1,4 +1,5 @@
-import { ffmpegHlsEngine, ffprobeEngine, ladders } from './ffmpeg.js';
+import { DashTransformer, type DashTransformerOptions } from './dash.js';
+import { ffmpegDashEngine, ffmpegHlsEngine, ffprobeEngine, ladders } from './ffmpeg.js';
 import { HlsTransformer, type HlsTransformerOptions } from './hls.js';
 import { PlaceholderTransformer, type PlaceholderTransformerOptions } from './placeholder.js';
 import { MetadataProbeTransformer, type MetadataProbeTransformerOptions } from './probe.js';
@@ -29,6 +30,13 @@ export const transformers = {
   hls<Name extends string = 'hls'>(options: HlsTransformerOptions<Name> = {}) {
     return new HlsTransformer(options);
   },
+  /**
+   * Video → CMAF package: a DASH manifest plus (by default) an HLS master over the same
+   * fragmented-MP4 segments, via the system ffmpeg. Default name `'dash'`.
+   */
+  dash<Name extends string = 'dash'>(options: DashTransformerOptions<Name> = {}) {
+    return new DashTransformer(options);
+  },
   /** Metadata-only probe (duration/resolution/codecs) via mediabunny. Default name `'probe'`. */
   probe<Name extends string = 'probe'>(options: MetadataProbeTransformerOptions<Name> = {}) {
     return new MetadataProbeTransformer(options);
@@ -58,8 +66,10 @@ export const transformers = {
 export const engines = {
   /** HLS via system ffmpeg: remux by default, or encode `ladder` into a multi-rendition package. */
   ffmpegHls: ffmpegHlsEngine,
+  /** DASH (CMAF, + HLS over the same segments) via system ffmpeg: remux, or encode `ladder`. */
+  ffmpegDash: ffmpegDashEngine,
   /** Metadata probe via system ffprobe. */
   ffprobe: ffprobeEngine,
-  /** Ready-made ladders for {@link ffmpegHlsEngine}: `standard` (360/720/1080p), `compact` (360/720p). */
+  /** Ready-made ladders for {@link ffmpegHlsEngine} / {@link ffmpegDashEngine}: `standard` (360/720/1080p), `compact` (360/720p). */
   ladders,
 };

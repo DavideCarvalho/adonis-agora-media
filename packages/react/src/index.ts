@@ -52,6 +52,19 @@ export {
   MEDIA_UPLOADER_STYLE_ID,
   mediaUploaderCss,
 } from './styles.js';
+// Headless HLS/DASH playback in your own <video>: hls.js / dash.js loaded on demand, native HLS on iOS.
+export {
+  type MediaStreamData,
+  type MediaStreamEngine,
+  type MediaStreamFormat,
+  type MediaStreamInput,
+  type MediaStreamLevel,
+  type MediaStreamSourceData,
+  type PlayerLoader,
+  type UseMediaStreamOptions,
+  type UseMediaStreamResult,
+  useMediaStream,
+} from './use-media-stream.js';
 export * from './use-media-upload.js';
 export {
   openMediaDashboardMutationOptions,

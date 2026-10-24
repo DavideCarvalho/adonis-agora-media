@@ -1,0 +1,107 @@
+---
+title: Video player
+description: "useMediaStream — headless HLS/DASH playback in your own <video>: hls.js and dash.js loaded on demand, native HLS on iOS, quality levels for your own controls."
+icon: Clapperboard
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`useMediaStream` plays an HLS or DASH stream in **your** `<video>`. It renders nothing: no
+markup, no controls, no styling. The video element is yours, and so are the controls. The hook
+attaches the right engine and hands back the state to build on.
+
+```tsx title="inertia/pages/lessons/show.tsx"
+import { useMediaStream, type MediaStreamData } from '@adonis-agora/media-react'
+import { useRef } from 'react'
+
+export default function Lesson({ video }: { video: MediaStreamData }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  const stream = useMediaStream(ref, video, {
+    hls: () => import('hls.js'),
+    dash: () => import('dashjs'),
+  })
+
+  return (
+    <>
+      <video ref={ref} controls playsInline className="aspect-video w-full" />
+      {stream.levels.length > 1 && (
+        <select
+          value={stream.autoLevel ? -1 : stream.currentLevel}
+          onChange={(e) => stream.setLevel(Number(e.target.value))}
+        >
+          <option value={-1}>Auto</option>
+          {stream.levels.map((l) => (
+            <option key={l.index} value={l.index}>{l.height}p</option>
+          ))}
+        </select>
+      )}
+      {stream.error && <p role="alert">This video can't be played.</p>}
+    </>
+  )
+}
+```
+
+`video` comes from the server: `media.access.stream(ctx, id)` or `media.library.stream(id)`. See
+[Video streaming](/docs/media/streaming).
+
+## How it picks an engine
+
+The sources are tried in the order the server lists them, HLS first. The first one this browser can play wins:
+
+| Source | Plays with |
+|---|---|
+| HLS | **hls.js** wherever it is supported (Media Source Extensions), otherwise **natively** (iPhone, Safari). |
+| DASH | **dash.js**. |
+
+- **`preferNative: true`:** native HLS wins whenever the browser has it, and hls.js isn't even downloaded there. The browser then picks the quality itself, so `levels` stays empty.
+- **No source playable:** `error` explains why, and names the loader that's missing.
+
+## Why loaders and not dependencies
+
+hls.js and dash.js are big, and an app usually needs one of them at most. So the hook imports
+nothing: you pass `() => import('hls.js')` and `() => import('dashjs')`. Your bundler then
+splits them into chunks that are downloaded only when a video needs them. Install the ones you
+use:
+
+```bash
+npm i hls.js          # HLS outside Safari/iOS
+npm i dashjs          # DASH (hls.js alone plays the HLS side of a CMAF package)
+```
+
+With `transformers.dash()` (CMAF, HLS included), **hls.js alone is enough**: every browser gets HLS.
+Load dash.js only if you serve DASH-only packages or want DASH by preference: order the sources
+`conversions` server-side, or pass a `sources` list of your own.
+
+## Options
+
+| Option | |
+|---|---|
+| `hls` | `() => import('hls.js')`. Without it, HLS plays only natively. |
+| `dash` | `() => import('dashjs')`. Needed for DASH sources. |
+| `hlsConfig` | Passed to `new Hls(config)`: `{ xhrSetup }` for credentials across origins, buffer sizes, … |
+| `dashSettings` | Passed to `player.updateSettings(settings)`. |
+| `preferNative` | Use native HLS whenever the browser has it. Default `false`. |
+
+The stream can also be a single source (`{ src, format }`) or a bare manifest URL. A bare URL's
+format comes from its extension (`.mpd` means DASH). `null` detaches.
+
+## What it returns
+
+| | |
+|---|---|
+| `engine` | `'hls.js'`, `'dash.js'`, `'native'`, or `null` before a source is attached. |
+| `source` | The source being played. |
+| `ready` | The manifest is loaded and `levels` is known. |
+| `error` | A fatal playback error, or nothing playable. hls.js retries up to two fatal network errors in a row (the count resets once a segment arrives) and rebuilds the media pipeline once, then gives up: a revoked URL surfaces here instead of retrying forever. |
+| `levels` | `{ index, width?, height?, bitrate? }[]` for a quality selector. Empty with native playback. |
+| `currentLevel` | The quality playing now (`-1` when unknown). |
+| `autoLevel` / `setLevel(i)` | Adaptive bitrate on, or a pinned quality. `setLevel(-1)` goes back to automatic. |
+| `instance` | The `Hls` instance or dash.js `MediaPlayer`, for anything the hook doesn't cover (subtitles, audio tracks, stats). |
+
+Changing the stream tears the old player down before attaching the new one, and so does
+unmounting.
+
+<Callout type="info" title="Using Vidstack, Plyr or video.js?">
+  Those bring their own controls and their own HLS/DASH handling, so you don't need this hook.
+  Give them the URLs from `video.sources` directly.
+</Callout>

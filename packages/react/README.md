@@ -28,6 +28,22 @@ import { MediaImage, MediaPicture, mediaImageLoader } from '@adonis-agora/media-
 
 See the [Responsive images docs](https://github.com/DavideCarvalho/adonis-agora-media/blob/master/docs/react/image.mdx).
 
+## `useMediaStream`
+
+Headless HLS/DASH playback in your own `<video>`: hls.js and dash.js loaded on demand, native HLS
+on iOS, quality levels for your own controls.
+
+```tsx
+const ref = useRef<HTMLVideoElement>(null)
+// video = await media.access.stream(ctx, id) on the server
+const stream = useMediaStream(ref, video, { hls: () => import('hls.js'), dash: () => import('dashjs') })
+
+<video ref={ref} controls playsInline />
+{stream.levels.map((l) => <button onClick={() => stream.setLevel(l.index)}>{l.height}p</button>)}
+```
+
+See the [Video player docs](https://github.com/DavideCarvalho/adonis-agora-media/blob/master/docs/react/video.mdx).
+
 ## Uploads
 
 It speaks the AdonisJS provider's **actual** upload contract across all three server strategies:

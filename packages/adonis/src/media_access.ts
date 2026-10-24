@@ -8,7 +8,9 @@ import {
   toAuthorizer,
 } from './access.js';
 import type { DeliveryMode } from './delivery.js';
+import { deliveryQueryString } from './delivery_signing.js';
 import {
+  ConversionArtifactMissingError,
   ConversionNotDefinedError,
   DeliverySignatureError,
   ImageSizeNotAllowedError,
@@ -20,6 +22,7 @@ import {
 import type { MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
+import { type MediaStream, streamFormatOf } from './streaming.js';
 
 /**
  * The slice of an AdonisJS `HttpContext` the delivery route uses — typed structurally so the
@@ -56,6 +59,32 @@ export interface MediaDeliveryRouteOptions {
   mode?: DeliveryMode;
   /** Signed-URL lifetime when the resolved mode is `signed`. */
   signedTtlSeconds?: number;
+}
+
+/** {@link DeliveryRouteContext}, plus the `response.send` a manifest is answered with. */
+export interface StreamRouteContext extends DeliveryRouteContext {
+  response: DeliveryRouteContext['response'] & { send(body: unknown): unknown };
+}
+
+export interface MediaStreamRouteOptions {
+  /** Who may watch. Default: the record's collection `access.read`; neither ⇒ refused. */
+  authorize?: MediaAuthorizer;
+  /** `Cache-Control` for manifests and redirects. Default `'private, max-age=60'`. */
+  cacheControl?: string;
+  /**
+   * `Cache-Control` for segments streamed through the app (`mode: 'proxy'`). Default
+   * `'private, max-age=86400'`: a segment never changes once written.
+   */
+  segmentCacheControl?: string;
+  /** How segments reach the player. Default `delivery.mode`. */
+  mode?: DeliveryMode;
+  /** Lifetime of the signed URL a segment request is redirected to, in `signed` mode. */
+  signedTtlSeconds?: number;
+  /**
+   * Lifetime of the package signature handed to the player with `delivery.signing`, in seconds.
+   * Default `delivery.signing.expiresIn`, never shorter than the video plus an hour.
+   */
+  expiresIn?: number;
 }
 
 /**
@@ -151,6 +180,124 @@ export class MediaAccess {
   }
 
   /**
+   * `media.library.stream(id)` for the current user: checks read access first (the collection's
+   * `access.read`, or `authorize`), then returns the HLS/DASH manifest URLs a player needs — for
+   * `useMediaStream` from `@adonis-agora/media-react`.
+   *
+   * ```ts
+   * return inertia.render('lessons/show', { video: await media.access.stream(ctx, lesson.videoId) })
+   * ```
+   */
+  async stream(
+    ctx: unknown,
+    id: string,
+    options: {
+      conversions?: readonly string[];
+      expiresIn?: number;
+      authorize?: MediaAuthorizer;
+    } = {},
+  ): Promise<MediaStream> {
+    const { authorize, ...streamOptions } = options;
+    const record = await this.#library.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    await this.authorize(ctx, 'read', record, authorize);
+    return this.#library.stream(id, streamOptions);
+  }
+
+  /**
+   * Authorize and answer one request for a file of a streaming package (HLS or DASH) — the core
+   * of {@link streamRoute}, for a controller that finds the record its own way.
+   *
+   * A request carrying a valid package signature (`?exp=&sig=`, from `media.library.stream()`
+   * with `delivery.signing`) is served without asking the app again; anything else is authorized
+   * like a read. A manifest is answered as text, with the signature carried onto its references
+   * (a fresh one when the request was authorized by session), so the player's segment requests
+   * stay authorized. Segments are redirected to storage or streamed, per `mode`.
+   */
+  async serveStream(
+    ctx: StreamRouteContext,
+    target: MediaRecord | string | null | undefined,
+    conversion: string,
+    file: string,
+    options: MediaStreamRouteOptions = {},
+  ): Promise<unknown> {
+    const { request, response } = ctx;
+    const cacheControl = options.cacheControl ?? 'private, max-age=60';
+    try {
+      const record =
+        typeof target === 'string' ? await this.#library.find(target) : (target ?? null);
+      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
+
+      const qs = request.qs();
+      const expires = stringParam(qs.exp);
+      const signature = stringParam(qs.sig);
+      const trusted = this.#library.checkDeliverySignature(
+        { mediaId: record.id, conversion, expires, signature },
+        { required: false },
+      );
+      if (!trusted) await this.authorize(ctx, 'read', record, options.authorize);
+
+      // Only a manifest needs the signature its references will carry.
+      const query = !streamFormatOf(file)
+        ? ''
+        : trusted
+          ? deliveryQueryString({ expires: Number(expires), signature }).slice(1)
+          : this.#library.streamQuery(record, conversion, options.expiresIn);
+      const result = await this.#library.streamFile(record, conversion, file, {
+        query,
+        mode: options.mode,
+        signedTtlSeconds: options.signedTtlSeconds,
+      });
+
+      if (result.kind === 'manifest') {
+        response.header('cache-control', cacheControl);
+        response.header('content-type', result.contentType);
+        return response.send(result.content);
+      }
+      if (result.kind === 'redirect') {
+        response.header('cache-control', cacheControl);
+        return response.redirect(result.url);
+      }
+      response.header('cache-control', options.segmentCacheControl ?? 'private, max-age=86400');
+      response.header('content-type', result.mimeType);
+      if (result.size !== undefined) response.header('content-length', String(result.size));
+      return response.stream(result.stream);
+    } catch (error) {
+      return answerError(error, response);
+    }
+  }
+
+  /**
+   * A ready AdonisJS route handler for HLS/DASH packages — the read side of `transformers.hls()`
+   * and `transformers.dash()`:
+   *
+   * ```ts
+   * const serveStream = media.access.streamRoute()
+   * router.get('/media/:id/stream/:conversion/*', serveStream)
+   * ```
+   *
+   * The URL mirrors the package: `/media/<id>/stream/<conversion>/<file>`, so the relative
+   * references a manifest stores resolve back to this same route. See {@link serveStream}.
+   */
+  streamRoute(
+    options: MediaStreamRouteOptions = {},
+  ): (ctx: StreamRouteContext) => Promise<unknown> {
+    return (ctx) => {
+      const wildcard = ctx.params['*'];
+      const file = Array.isArray(wildcard)
+        ? wildcard.map(String).join('/')
+        : String(ctx.params.file ?? wildcard ?? '');
+      return this.serveStream(
+        ctx,
+        String(ctx.params.id ?? ''),
+        String(ctx.params.conversion ?? ''),
+        file,
+        options,
+      );
+    };
+  }
+
+  /**
    * Authorize and answer one media read — the core of {@link deliveryRoute}, for a controller that
    * finds the record its own way (a stable `/profiles/:id/photo` URL, a record looked up by its
    * owner):
@@ -221,11 +368,7 @@ export class MediaAccess {
       }
       return response.stream(result.stream);
     } catch (error) {
-      const status = httpStatusOf(error);
-      if (status === undefined) throw error;
-      const { code, message } = error as { code: string; message: string };
-      const replied = response.status(status) as { json?: (body: unknown) => unknown };
-      return replied.json?.({ code, message });
+      return answerError(error, response);
     }
   }
 
@@ -256,6 +399,15 @@ export class MediaAccess {
   }
 }
 
+/** Answer a library error as `{ code, message }` with its HTTP status; rethrow anything else. */
+function answerError(error: unknown, response: DeliveryRouteContext['response']): unknown {
+  const status = httpStatusOf(error);
+  if (status === undefined) throw error;
+  const { code, message } = error as { code: string; message: string };
+  const replied = response.status(status) as { json?: (body: unknown) => unknown };
+  return replied.json?.({ code, message });
+}
+
 /** The HTTP status for an error the delivery route answers itself; `undefined` ⇒ rethrow. */
 function httpStatusOf(error: unknown): number | undefined {
   if (error instanceof MediaAccessDeniedError) return error.status;
@@ -263,6 +415,7 @@ function httpStatusOf(error: unknown): number | undefined {
   if (error instanceof MediaNotFoundError) return 404;
   if (error instanceof ConversionNotDefinedError) return 404;
   if (error instanceof TransformNotReadyError) return 404;
+  if (error instanceof ConversionArtifactMissingError) return 404;
   if (error instanceof ImageSizeNotAllowedError) return 400;
   if (error instanceof NotAnImageError) return 400;
   return undefined;
