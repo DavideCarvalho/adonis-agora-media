@@ -59,25 +59,52 @@ Use them to type job payloads and route params against the config instead of res
 Transformations are assumed **heavy** (the flagship case is a video transcode), so **the library does not run them by itself**. It ships no queue and depends on none. You have two options:
 
 - **`eager: true`**: it runs inside `attach`, in the same request ([below](#eager-transformers)). This is only for cheap transforms.
-- **Your own background work** calls `media.library.transform(id, name)`. With [`@adonisjs/queue`](https://docs.adonisjs.com/guides/digging-deeper/queues), that's a job you dispatch after the upload:
+- **Your own background work** calls `media.library.transform(id, name)`. With [`@adonis-agora/durable`](/docs/durable), that's a step inside a workflow you dispatch after the upload. The step retries on its own, and it survives a deploy or a crashed worker:
 
-```ts title="app/jobs/transcode_video_job.ts"
-import { Job } from '@adonisjs/queue'
+```ts title="app/steps/media_steps.ts"
+import { defineStep } from '@adonis-agora/durable'
 import media from '@adonis-agora/media/services/main'
 
-export default class TranscodeVideo extends Job<{ mediaId: string }> {
-  async execute() {
-    await media.library.transform(this.payload.mediaId, 'hls')
+export const transcodeVideo = defineStep(
+  'media:transcode-hls',
+  async (input: { mediaId: string }) => {
+    await media.library.transform(input.mediaId, 'hls')
+  },
+  // A transcode takes minutes: give it room before it counts as stuck.
+  { retries: 3, timeoutMs: 30 * 60_000 },
+)
+```
+
+```ts title="app/workflows/publish_lesson_workflow.ts"
+import { BaseWorkflow } from '@adonis-agora/durable'
+import type { WorkflowCtx } from '@adonis-agora/durable'
+import { transcodeVideo } from '#steps/media_steps'
+import Lesson from '#models/lesson'
+
+export default class PublishLessonWorkflow extends BaseWorkflow {
+  static workflow = { name: 'publish-lesson', version: '1' }
+
+  async run(ctx: WorkflowCtx, input: { lessonId: string; mediaId: string }) {
+    await ctx.step(transcodeVideo, { mediaId: input.mediaId })
+    await ctx.localStep('publish', async () => {
+      await Lesson.query().where('id', input.lessonId).update({ status: 'published' })
+    })
   }
 }
 ```
 
 ```ts title="after the upload (a controller, an upload policy's onComplete)"
+const lesson = await Lesson.create({ title, status: 'processing' })
 const record = await media.library.attach({ /* … */ collection: 'lessons' })
-await TranscodeVideo.dispatch({ mediaId: record.id })
+await PublishLessonWorkflow.dispatch(
+  { lessonId: lesson.id, mediaId: record.id },
+  { runId: `publish-lesson:${record.id}` }, // dispatching the same upload twice is a no-op
+)
 ```
 
-`transform(id, name)` is **idempotent**: if the conversion already exists it returns the record untouched, so a retried job skips straight through. A mid-flight failure sweeps whatever artifacts were already written and re-throws — no conversion entry is ever persisted for a half-written package, and the retry starts clean. Two concurrent calls both run and produce identical output (the artifact keys are deterministic); serialize with your own lock if the double work matters.
+Any other background runner works the same way: an `@adonisjs/queue` job, a cron, an ace command. The only call is `transform`.
+
+`transform(id, name)` is **idempotent**: if the conversion already exists it returns the record untouched, so a retried step skips straight through. A mid-flight failure sweeps whatever artifacts were already written and re-throws — no conversion entry is ever persisted for a half-written package, and the retry starts clean. Two concurrent calls both run and produce identical output (the artifact keys are deterministic); serialize with your own lock if the double work matters.
 
 <Callout type="info" title="Reads never generate a transform">
   `url()` / `deliver()` on a transformer conversion that hasn't been generated throw `TransformNotReadyError` instead of stalling a request behind a remux. Image presets keep their lazy-on-first-read behaviour; the split is deliberate.
