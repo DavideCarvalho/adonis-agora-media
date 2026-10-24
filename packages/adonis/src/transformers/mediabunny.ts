@@ -113,8 +113,11 @@ export function createVideoEngine(): VideoPackagingEngine {
         const hasAudio = Boolean(await input.getPrimaryAudioTrack());
 
         if (request.segments === 'ts') {
+          if (!request.hlsEntry) {
+            throw new Error('TS segments only play over HLS: the request needs an `hlsEntry`.');
+          }
           // One muxed pass: TS segments carry audio and video together, as HLS players expect.
-          await muxHls(request.sourcePath, join(request.outputDir, request.hlsEntry!), {
+          await muxHls(request.sourcePath, join(request.outputDir, request.hlsEntry), {
             segmentFormat: new MpegTsOutputFormat(),
             targetDuration: request.targetDuration,
             firstTimestamp,
@@ -220,12 +223,17 @@ async function muxHls(
       // The HLS output is many files; each one lands next to the master.
       target: new PathedTarget(masterPath, (target) => new FilePathTarget(target.path)),
     });
+    // The package carries ONE video and ONE audio track — the source's primary ones. A second
+    // audio language (or a second angle) would otherwise be muxed into files no manifest
+    // describes.
+    const primaryVideo = (await input.getPrimaryVideoTrack())?.id;
+    const primaryAudio = (await input.getPrimaryAudioTrack())?.id;
     const conversion = await Conversion.init({
       input,
       output,
       trim: { start: options.firstTimestamp },
-      ...(options.only === 'video' ? { audio: { discard: true } } : {}),
-      ...(options.only === 'audio' ? { video: { discard: true } } : {}),
+      video: (track) => ({ discard: options.only === 'audio' || track.id !== primaryVideo }),
+      audio: (track) => ({ discard: options.only === 'video' || track.id !== primaryAudio }),
     });
 
     // With no video/audio options, mediabunny copies compatible tracks and re-encodes the rest —

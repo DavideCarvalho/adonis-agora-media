@@ -153,6 +153,18 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
     if (this.formats.length === 0) {
       throw new Error(`transformers.video({ name: '${this.name}' }): \`formats\` is empty.`);
     }
+    for (const format of this.formats) {
+      if (format !== 'hls' && format !== 'dash') {
+        throw new Error(
+          `transformers.video({ name: '${this.name}' }): unknown format '${format}' — use 'hls' and/or 'dash'.`,
+        );
+      }
+    }
+    if (this.segments !== 'cmaf' && this.segments !== 'ts') {
+      throw new Error(
+        `transformers.video({ name: '${this.name}' }): unknown segments '${this.segments}' — use 'cmaf' or 'ts'.`,
+      );
+    }
     if (this.segments === 'ts' && this.formats.includes('dash')) {
       throw new Error(
         `transformers.video({ name: '${this.name}' }): DASH cannot use TS segments — players ` +

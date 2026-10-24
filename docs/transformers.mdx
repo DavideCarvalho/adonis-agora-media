@@ -172,6 +172,7 @@ The default engine is [mediabunny](https://mediabunny.dev): pure TypeScript, **n
 - a source whose codecs the segments can carry (h264/aac, what phones and browsers produce) is remuxed fast, with **no quality loss**;
 - a source it cannot carry fails with `HlsSourceUnsupportedError`, listing each track's codec and reason. That is definitive for the file: retrying cannot fix it;
 - the package has a **single rendition** at the original resolution. A ladder requires encoding: use the ffmpeg engine.
+- the package carries **one video and one audio track**, the source's primary ones. A second audio language or angle is left out rather than written into files no manifest describes.
 
 mediabunny writes HLS only. For DASH, the library describes the same CMAF segments in an MPD it builds from the HLS playlists (`SegmentList` with a `SegmentTimeline`). The segments are untouched.
 

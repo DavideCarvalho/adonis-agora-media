@@ -156,6 +156,12 @@ describe('transformers.video() orchestration (fake engine)', () => {
   it('refuses DASH over TS, and no format at all, when configured', () => {
     expect(() => new VideoTransformer({ segments: 'ts' })).toThrow(/DASH cannot use TS segments/);
     expect(() => new VideoTransformer({ formats: [] })).toThrow(/`formats` is empty/);
+    expect(() => new VideoTransformer({ formats: ['hls', 'dahs' as unknown as 'dash'] })).toThrow(
+      /unknown format 'dahs'/,
+    );
+    expect(() => new VideoTransformer({ segments: 'mp4' as unknown as 'cmaf' })).toThrow(
+      /unknown segments 'mp4'/,
+    );
   });
 
   it('fails when the engine did not write a manifest it was asked for', async () => {
@@ -350,6 +356,70 @@ describe('transformers.video() with the real mediabunny engine', () => {
           expect(master).not.toContain('AUDIO=');
           expect(decode(join(exported, 'manifest.mpd'))).toEqual(['video']);
           expect(decode(join(exported, 'index.m3u8'))).toEqual(['video']);
+        } finally {
+          await rm(exported, { recursive: true, force: true });
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasFfmpeg)(
+    'keeps only the primary audio of a dual-audio source: every file is referenced',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'agora-dual-'));
+      try {
+        const source = join(dir, 'dual.mp4');
+        execFileSync('ffmpeg', [
+          '-hide_banner',
+          '-v',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          'testsrc=size=128x72:rate=25:duration=2',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=440:duration=2',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=880:duration=2',
+          '-map',
+          '0:v',
+          '-map',
+          '1:a',
+          '-map',
+          '2:a',
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          source,
+        ]);
+        const { library, disks } = makeLibrary(new VideoTransformer());
+        const record = await attachFixture(library, await readFile(source), 'dual.mp4');
+        const updated = await library.transform(record.id, 'video');
+        const files = updated.conversions.video!.files!;
+        expect(files.filter((f) => f.endsWith('.m3u8'))).toEqual([
+          'audio/playlist-1.m3u8',
+          'index.m3u8',
+          'video/playlist-1.m3u8',
+        ]);
+        const exported = await exportPackage(disks, updated);
+        try {
+          const mpd = await readFile(join(exported, 'manifest.mpd'), 'utf8');
+          const referenced = new Set(
+            [...mpd.matchAll(/(?:media|sourceURL)="([^"]+)"/g)].map((m) => m[1]),
+          );
+          for (const file of files.filter((f) => f.endsWith('.m4s'))) {
+            expect(referenced.has(file)).toBe(true);
+          }
         } finally {
           await rm(exported, { recursive: true, force: true });
         }

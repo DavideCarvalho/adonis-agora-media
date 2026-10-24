@@ -38,7 +38,9 @@ export function parseMediaPlaylist(content: string): ParsedMediaPlaylist {
       const uri = attribute(line, 'URI');
       if (uri) result.init = uri;
     } else if (line.startsWith('#EXTINF:')) {
-      duration = Number.parseFloat(line.slice('#EXTINF:'.length));
+      const parsed = Number.parseFloat(line.slice('#EXTINF:'.length));
+      // An unreadable duration is no duration: its segment is skipped, never timed as NaN.
+      duration = Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
     } else if (!line.startsWith('#') && duration !== undefined) {
       result.segments.push({ uri: line, duration });
       duration = undefined;

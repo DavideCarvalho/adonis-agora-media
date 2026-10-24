@@ -24,6 +24,12 @@ describe('HLS → DASH', () => {
     });
   });
 
+  it('skips a segment whose duration cannot be read, instead of timing it as NaN', () => {
+    expect(
+      parseMediaPlaylist('#EXTM3U\n#EXTINF:abc,\nbroken.m4s\n#EXTINF:2,\nok.m4s\n').segments,
+    ).toEqual([{ uri: 'ok.m4s', duration: 2 }]);
+  });
+
   it('reads a master playlist: bandwidth, codecs and resolution per variant', () => {
     expect(
       parseMasterPlaylist(

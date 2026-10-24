@@ -440,7 +440,10 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
       };
 
       if (request.segments === 'ts') {
-        await run(ffmpegPath, buildHlsArgs({ ...common, entryName: request.hlsEntry! }), 'video');
+        if (!request.hlsEntry) {
+          throw new Error('TS segments only play over HLS: the request needs an `hlsEntry`.');
+        }
+        await run(ffmpegPath, buildHlsArgs({ ...common, entryName: request.hlsEntry }), 'video');
       } else {
         // The DASH muxer always writes an MPD; an HLS-only package drops it afterwards.
         const manifestName = request.dashManifest ?? 'manifest.mpd';
