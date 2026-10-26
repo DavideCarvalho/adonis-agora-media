@@ -3,6 +3,7 @@ import {
   clampMediaListLimit,
   decodeMediaCursor,
   encodeMediaCursor,
+  type MediaCollectionTotals,
   type MediaListOptions,
   type MediaListPage,
   type MediaStore,
@@ -81,6 +82,25 @@ export class InMemoryMediaStore implements MediaStore {
 
   async delete(id: string): Promise<void> {
     this.records.delete(id);
+  }
+
+  async collectionTotals(): Promise<MediaCollectionTotals[]> {
+    const totals = new Map<string, MediaCollectionTotals & { newest: number }>();
+    for (const record of this.records.values()) {
+      const entry = totals.get(record.collection) ?? {
+        collection: record.collection,
+        count: 0,
+        sumSize: 0,
+        newest: Number.NEGATIVE_INFINITY,
+      };
+      entry.count += 1;
+      entry.sumSize += record.size;
+      entry.newest = Math.max(entry.newest, record.createdAt.getTime());
+      totals.set(record.collection, entry);
+    }
+    return [...totals.values()]
+      .sort((a, b) => b.newest - a.newest)
+      .map(({ collection, count, sumSize }) => ({ collection, count, sumSize }));
   }
 
   async nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number> {

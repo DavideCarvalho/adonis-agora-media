@@ -79,12 +79,11 @@ Note what is *not* there: nothing about attaching, converting or transforming. T
 | `collectionsSummary()` | `CollectionsSummaryResponse` | Per-collection count + total bytes. |
 | `mediaRecord(id)` | `MediaDetailResponse` | The record plus a signed URL per conversion. |
 
-<Callout type="info" title="Why the summary is bounded">
-  `MediaStore` has no aggregate query — a store SPI that demanded `GROUP BY` would rule out the
-  in-memory driver and any non-SQL backend. So `collectionsSummary` walks `list()` in pages of 200
-  and sums client-side, stopping at 5,000 records. Past that the rollup is **partial rather than
-  unbounded**: a very large library degrades to an approximate-but-instant summary instead of a
-  full-table scan behind a spinner.
+<Callout type="info" title="How the summary is computed">
+  When the store implements the optional `MediaStore.collectionTotals()` — both bundled stores do;
+  the Lucid one runs a single `GROUP BY` — the summary is that aggregate, exact at any size. A
+  custom store without it is walked through `list()` in pages of 200 and summed client-side,
+  stopping at 5,000 records: past that its rollup is **partial rather than unbounded**.
 </Callout>
 
 ### Cursor pagination

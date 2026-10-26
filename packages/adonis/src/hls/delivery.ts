@@ -144,13 +144,13 @@ export class HlsDeliveryHandler {
     // The package's shape comes from what the transformer persisted; a hand-registered
     // single-file conversion degrades to a one-file package.
     const prefix = variant.prefix ?? variant.path.slice(0, variant.path.lastIndexOf('/') + 1);
-    const files = variant.files ?? [variant.path.slice(prefix.length)];
+    const files = new Set(variant.files ?? [variant.path.slice(prefix.length)]);
     const entry = variant.path.slice(prefix.length);
 
     const requested = request.file === undefined || request.file === '' ? entry : request.file;
     // Membership in the persisted artifact list is the whole access check: no path arithmetic on
     // caller input ever reaches the disk, so traversal is structurally impossible.
-    if (!files.includes(requested)) {
+    if (!files.has(requested)) {
       throw new MediaNotFoundError(`${mediaId}#${this.conversion}:${requested}`);
     }
 
@@ -163,7 +163,7 @@ export class HlsDeliveryHandler {
         const target = resolvePackagePath(requested, ref.uri);
         // A relative reference that escapes the package or names a file the transformer never
         // wrote is not ours to rewrite — leave it exactly as it was.
-        if (target === null || !files.includes(target)) return ref.uri;
+        if (target === null || !files.has(target)) return ref.uri;
         if (ref.kind === 'playlist') return this.urlForPlaylist({ mediaId, file: target });
         if (this.urlForSegment) return this.urlForSegment({ mediaId, file: target });
         return disk.getSignedUrl(`${prefix}${target}`, { expiresIn: this.segmentTtlSeconds });

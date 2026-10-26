@@ -28,8 +28,9 @@ export default class extends BaseSchema {
       table.text('conversions')
       table.bigInteger('created_at').notNullable()
       table.bigInteger('updated_at').notNullable()
-      table.index(['owner_type', 'owner_id'], 'media_owner_idx')
       table.index(['owner_type', 'owner_id', 'collection'], 'media_owner_collection_idx')
+      table.index(['created_at', 'id'], 'media_created_idx')
+      table.index(['collection', 'created_at', 'id'], 'media_collection_created_idx')
     })
   }
 

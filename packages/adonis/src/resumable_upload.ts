@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { publishMedia } from './diagnostics.js';
 import {
   UploadNotSupportedError,
@@ -8,7 +9,7 @@ import {
 } from './errors.js';
 import { isMultipartCapable } from './multipart.js';
 import type { StorageManager } from './storage_manager.js';
-import type { MultipartPart } from './types.js';
+import type { Disk, MultipartPart } from './types.js';
 
 /**
  * One in-flight resumable upload. Persisted through an {@link UploadSessionStore} so a dropped
@@ -227,15 +228,23 @@ export class ResumableUploadManager {
       );
       await disk.completeMultipartUpload(session.key, session.multipartUploadId, parts);
     } else {
-      const chunks: Buffer[] = [];
-      for (let part = 0; part < session.parts; part += 1) {
-        chunks.push(Buffer.from(await disk.getBytes(this.partKey(session, part))));
+      const writeOptions = session.contentType ? { contentType: session.contentType } : {};
+      if (typeof disk.putStream === 'function') {
+        await disk.putStream(
+          session.key,
+          Readable.from(this.streamParts(disk, session), { highWaterMark: 1 }),
+          {
+            ...writeOptions,
+            contentLength: session.offset,
+          },
+        );
+      } else {
+        const chunks: Uint8Array[] = [];
+        for (let part = 0; part < session.parts; part += 1) {
+          chunks.push(await disk.getBytes(this.partKey(session, part)));
+        }
+        await disk.put(session.key, Buffer.concat(chunks), writeOptions);
       }
-      await disk.put(
-        session.key,
-        new Uint8Array(Buffer.concat(chunks)),
-        session.contentType ? { contentType: session.contentType } : {},
-      );
     }
 
     await this.cleanup(session);
@@ -274,6 +283,15 @@ export class ResumableUploadManager {
     payload: Parameters<typeof publishMedia<E>>[1],
   ): void {
     if (this.emitDiagnostics) publishMedia(event, payload);
+  }
+
+  /** Yields the buffered parts in order, opening each one only once the previous is drained. */
+  private async *streamParts(disk: Disk, session: UploadSession): AsyncGenerator<Uint8Array> {
+    for (let part = 0; part < session.parts; part += 1) {
+      for await (const chunk of await disk.getStream(this.partKey(session, part))) {
+        yield chunk as Uint8Array;
+      }
+    }
   }
 
   private async cleanup(session: UploadSession): Promise<void> {

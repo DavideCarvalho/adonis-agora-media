@@ -1,7 +1,7 @@
 import type { Readable } from 'node:stream';
 import { isExtendedDisk } from '../extended_disk.js';
 import type { MediaConversion, MediaRecord } from '../media_record.js';
-import type { MediaListOptions, MediaListPage } from '../media_store.js';
+import type { MediaCollectionTotals, MediaListOptions, MediaListPage } from '../media_store.js';
 import type { UploadSession } from '../resumable_upload.js';
 import type { Disk, ExtendedDisk, MultipartPart } from '../types.js';
 import type { ObjectInsightProvider } from './object_insights.js';
@@ -71,6 +71,7 @@ export interface MediaManagerLike {
     list(options?: MediaListOptions): Promise<MediaListPage>;
     find(id: string): Promise<MediaRecord | null>;
     delete(id: string): Promise<void>;
+    collectionTotals?(): Promise<MediaCollectionTotals[]>;
   };
 }
 
@@ -311,12 +312,24 @@ export class DashboardService {
   }
 
   /**
-   * Per-collection rollup (record count + total bytes) for the console's collection chips.
-   * `MediaStore` has no aggregate query, so this walks `list()` in batches and sums client-side —
+   * Per-collection rollup (record count + total bytes) for the console's collection chips. One
+   * aggregate query when the store implements {@link MediaStore.collectionTotals} (both bundled
+   * stores do). A store without it is walked through `list()` in batches and summed client-side —
    * bounded at {@link COLLECTIONS_SUMMARY_SCAN_LIMIT} records so a very large library degrades to a
    * partial (still useful) summary instead of an unbounded scan.
    */
   async collectionsSummary(): Promise<CollectionsSummaryResponse> {
+    const store = this.manager.store;
+    if (typeof store.collectionTotals === 'function') {
+      const rows = await store.collectionTotals();
+      return {
+        collections: rows.map(({ collection, count, sumSize }) => ({
+          key: collection,
+          count,
+          sumSize,
+        })),
+      };
+    }
     const totals = new Map<string, { count: number; sumSize: number }>();
     let cursor: string | undefined;
     let scanned = 0;

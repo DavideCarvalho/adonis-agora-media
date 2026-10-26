@@ -73,6 +73,32 @@ function sha256Hex(data: string): string {
   return createHash('sha256').update(data, 'utf8').digest('hex');
 }
 
+/** Bound on {@link signingKeys}: a handful of (credential, day, region, service) scopes are live at once. */
+const SIGNING_KEY_CACHE_SIZE = 16;
+
+/**
+ * Derived SigV4 signing keys, most recently used last. A key depends only on the secret and the
+ * scope (day, region, service), so every URL signed in the same scope reuses one derivation instead
+ * of chaining four HMACs per URL.
+ */
+const signingKeys = new Map<string, Buffer>();
+
+function deriveSigningKey(secret: string, dateStamp: string, region: string, service: string) {
+  const cacheKey = `${secret}\n${dateStamp}\n${region}\n${service}`;
+  const cached = signingKeys.get(cacheKey);
+  if (cached) {
+    signingKeys.delete(cacheKey);
+    signingKeys.set(cacheKey, cached);
+    return cached;
+  }
+  const key = hmac(hmac(hmac(hmac(`AWS4${secret}`, dateStamp), region), service), 'aws4_request');
+  signingKeys.set(cacheKey, key);
+  if (signingKeys.size > SIGNING_KEY_CACHE_SIZE) {
+    signingKeys.delete(signingKeys.keys().next().value as string);
+  }
+  return key;
+}
+
 /**
  * Presign an S3 request with AWS Signature Version 4 **query-string authentication** — the
  * credential, timestamp, TTL and signature all travel as `X-Amz-*` query parameters, so the URL is
@@ -132,9 +158,11 @@ export function presignS3Url(input: PresignS3UrlInput): string {
 
   const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
 
-  const signingKey = hmac(
-    hmac(hmac(hmac(`AWS4${input.credentials.secretAccessKey}`, dateStamp), input.region), service),
-    'aws4_request',
+  const signingKey = deriveSigningKey(
+    input.credentials.secretAccessKey,
+    dateStamp,
+    input.region,
+    service,
   );
   const signature = createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
 

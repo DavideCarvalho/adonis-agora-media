@@ -27,6 +27,13 @@ export interface MediaListPage {
   nextCursor: string | null;
 }
 
+/** Record count and total bytes of one collection, as {@link MediaStore.collectionTotals} reports it. */
+export interface MediaCollectionTotals {
+  collection: string;
+  count: number;
+  sumSize: number;
+}
+
 /**
  * Persistence SPI for media records. Implemented per backend as a POJO that receives
  * its connection in the constructor. Ships with an in-memory driver (`@adonis-agora/media/testing`)
@@ -45,6 +52,11 @@ export interface MediaStore {
   delete(id: string): Promise<void>;
   /** Next `order` value for appending to a collection (0-based). */
   nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number>;
+  /**
+   * Count and total size of every collection, in one aggregate over the whole store, ordered by
+   * each collection's newest record first. Optional: without it, callers page through {@link list}.
+   */
+  collectionTotals?(): Promise<MediaCollectionTotals[]>;
 }
 
 /** The keyset a {@link MediaListPage} cursor carries: the last row's `createdAt` (epoch-ms) and `id`. */
