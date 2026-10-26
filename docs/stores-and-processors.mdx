@@ -35,7 +35,7 @@ type DiskResolver = (name?: string) => Disk
 
 Ten methods, of which **eight are required**. The two optional ones are what a real Drive disk adds on top of the minimum, and each unlocks a specific behaviour rather than being decorative:
 
-- **`putStream`** writes a stream straight to the backend without buffering it in memory. The library uses it for a large upload that needs no conversions and whose size is known up front; when the method is absent it falls back to `put`, buffering the whole payload. On S3 the size matters: a stream has no knowable length and the API needs `ContentLength` up front, which is why `DiskWriteOptions.contentLength` exists.
+- **`putStream`** writes a stream straight to the backend without buffering it in memory. The library uses it for a large upload that needs no conversions and whose size is known up front, and to assemble a [resumable upload](/docs/media/uploads/resumable-tus) on a disk without native multipart; when the method is absent it falls back to `put`, buffering the whole payload. On S3 the size matters: a stream has no knowable length and the API needs `ContentLength` up front, which is why `DiskWriteOptions.contentLength` exists.
 - **`getVisibility`** answers whether an object is readable without credentials. This is the method `delivery.mode: 'auto'` asks: public ⇒ hand out the stable public URL, otherwise ⇒ sign one. A disk that cannot answer is treated as private, so `auto` degrades to `signed` rather than leaking a URL that would 403. See [Delivery](/docs/media/delivery).
 
 A couple more deliberate choices:
@@ -158,7 +158,7 @@ defineConfig({
 node ace migration:run
 ```
 
-The indexes back the library's hot paths: the owner one serves `listByOwner` (owner, optionally + collection) and the single-file replacement check; the two `created_at` ones serve the newest-first `list()` pages the console reads, unfiltered and per collection. `connection` defaults to Lucid's default; `table` defaults to `media`.
+The indexes back the library's hot paths: the owner one serves `listByOwner` (owner, optionally + collection) and the single-file replacement check; the two `created_at` ones serve the newest-first `list()` pages the console reads, unfiltered and per collection. An owner-only index `(owner_type, owner_id)` would be redundant: those columns are the leftmost prefix of `media_owner_collection_idx`. A database that already has one (`media_owner_idx`) can keep it; nothing drops it. `connection` defaults to Lucid's default; `table` defaults to `media`.
 
 With the default `autoCreateSchema`, the store adds any missing index on boot (`CREATE INDEX IF NOT EXISTS`). A schema managed by migrations (`autoCreateSchema: false`) created before the `created_at` indexes existed gets them from a migration of its own:
 

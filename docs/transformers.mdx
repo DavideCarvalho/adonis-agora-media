@@ -152,6 +152,8 @@ Deleting the media deletes every listed artifact (batched via `deleteMany` on ca
 | `webcodecs` | — | Inject a WebCodecs implementation into the mediabunny engine (see below). |
 | `eager` | `false` | Run inside attach (think twice — see above). |
 
+The package files upload to the disk 6 at a time. On the first failed upload no new one starts; the error is rethrown once the uploads already running have settled, and the failure sweep then deletes everything written, including files whose upload had started. The persisted `files` list is sorted.
+
 ### CMAF or TS
 
 The segments decide which formats can play the package:
