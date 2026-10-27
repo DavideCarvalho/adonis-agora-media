@@ -416,4 +416,112 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
     await plain.spa(fakeCtx(b, { nonce: 'n0nce' }), async () => {});
     expect(b.body).toContain('<style nonce="n0nce">');
   });
+
+  describe('the shared dashboard-gate contract (boolean | AuthorizeDecision)', () => {
+    async function run(authorize: unknown, mode: 'api' | 'spa', extra?: Record<string, unknown>) {
+      const g = await gates({ authorize });
+      const recorded: Recorded = { headers: {} };
+      const next = vi.fn(async () => {});
+      await g[mode](fakeCtx(recorded, extra), next);
+      return { recorded, next };
+    }
+
+    it.each([
+      ['true', () => true],
+      ['{ allowed: true }', () => ({ allowed: true })],
+      ['async { allowed: true }', async () => ({ allowed: true })],
+      [
+        '{ allowed: true, reason } (reason ignored)',
+        () => ({ allowed: true, reason: 'forbidden' }),
+      ],
+    ])('%s lets API and page requests through', async (_label, authorize) => {
+      for (const mode of ['api', 'spa'] as const) {
+        const { recorded, next } = await run(authorize, mode);
+        expect(next).toHaveBeenCalledOnce();
+        expect(recorded.status).toBeUndefined();
+        expect(recorded.body).toBeUndefined();
+      }
+    });
+
+    it.each([
+      ['false', () => false],
+      ['{ allowed: false } (a truthy object!)', () => ({ allowed: false })],
+      ['async { allowed: false }', async () => ({ allowed: false })],
+      ["{ allowed: false, reason: 'forbidden' }", () => ({ allowed: false, reason: 'forbidden' })],
+      [
+        'a throwing hook',
+        () => {
+          throw new Error('boom');
+        },
+      ],
+      [
+        'a rejecting hook',
+        async () => {
+          throw new Error('boom');
+        },
+      ],
+    ])(
+      '%s denies with 403 — JSON on the API, the page on a navigation',
+      async (_label, authorize) => {
+        const api = await run(authorize, 'api');
+        expect(api.next).not.toHaveBeenCalled();
+        expect(api.recorded.status).toBe(403);
+        expect(api.recorded.body).toEqual({ error: 'Forbidden' });
+
+        const spa = await run(authorize, 'spa');
+        expect(spa.next).not.toHaveBeenCalled();
+        expect(spa.recorded.status).toBe(403);
+        expect(spa.recorded.headers['content-type']).toBe('text/html; charset=utf-8');
+        expect(spa.recorded.body).toContain('<h1>Access denied</h1>');
+      },
+    );
+
+    it("{ allowed: false, reason: 'unauthenticated' } denies with 401 — and not the login-screen 401", async () => {
+      const authorize = () => ({ allowed: false, reason: 'unauthenticated' });
+      const api = await run(authorize, 'api');
+      expect(api.next).not.toHaveBeenCalled();
+      expect(api.recorded.status).toBe(401);
+      // NOT `{ auth: { modes } }`: that body is the console session guard's "show the login screen".
+      expect(api.recorded.body).toEqual({ error: 'Unauthorized' });
+
+      const spa = await run(authorize, 'spa');
+      expect(spa.next).not.toHaveBeenCalled();
+      expect(spa.recorded.status).toBe(401);
+      expect(spa.recorded.body).toContain('<h1>Sign in required</h1>');
+    });
+
+    it('hands the matching status/reason to a custom accessDenied renderer', async () => {
+      const g = await gates({
+        authorize: () => ({ allowed: false, reason: 'unauthenticated' }),
+        accessDenied: (info: { status: number; reason: string }) => `${info.status} ${info.reason}`,
+      });
+      const recorded: Recorded = { headers: {} };
+      await g.spa(fakeCtx(recorded), async () => {});
+      expect(recorded.status).toBe(401);
+      expect(recorded.body).toBe('401 unauthenticated');
+    });
+
+    it('a redirect the hook wrote still wins over a decision, on the API and the page', async () => {
+      const authorize = (ctx: { response: { header(n: string, v: string): void } }) => {
+        ctx.response.header('location', '/login');
+        return { allowed: false, reason: 'unauthenticated' };
+      };
+      for (const mode of ['api', 'spa'] as const) {
+        const { recorded, next } = await run(authorize, mode);
+        expect(next).not.toHaveBeenCalled();
+        expect(recorded.headers.location).toBe('/login');
+        expect(recorded.status).toBeUndefined();
+        expect(recorded.body).toBeUndefined();
+      }
+    });
+
+    it('a body the hook queued is kept on the API too (nothing is written over it)', async () => {
+      const { recorded, next } = await run(() => ({ allowed: false }), 'api', {
+        hasLazyBody: true,
+      });
+      expect(next).not.toHaveBeenCalled();
+      expect(recorded.status).toBeUndefined();
+      expect(recorded.body).toBeUndefined();
+    });
+  });
 });

@@ -9,10 +9,10 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 The console is served at a literal path (`/media/dashboard` by default), which means a plain browser navigation to it carries none of your app's identity. You have three ways to close that gap.
 
-The first is `authorize` — an access-decision hook, same shape as the other `@adonis-agora`
-dashboards (telescope, durable, agent). Return `true` to allow, `false` to deny; it runs
-**before** `middleware` and composes with the built-in `auth` session guard (all must pass).
-Use it to gate the whole console on your app's session/roles in one line:
+The first is `authorize` — an access-decision hook with the same contract as the other
+`@adonis-agora` dashboards (telescope, durable, payments, agent). It runs **before** `middleware`
+and composes with the built-in `auth` session guard (all must pass). Use it to gate the whole
+console on your app's session/roles in one line:
 
 ```ts title="config/media_dashboard.ts"
 import { defineConfig } from '@adonis-agora/media/dashboard'
@@ -24,16 +24,39 @@ export default defineConfig({
 ```
 
 The hook receives the real `HttpContext`, so it can read the session, a bearer
-token, an IP allow-list — anything your app already trusts. A denied request is a `403` — the
-hook knew who was asking and said no, the same status every other `@adonis-agora` console
-answers with: `{ error: 'Forbidden' }` JSON for an **API** request, the
-[access-denied page](#the-access-denied-page) for a **page** navigation (the SPA shell or its
-assets). The `401` with `{ auth: { modes } }` belongs to the session guard alone — it is what
-tells the SPA to show its login screen. Two refinements are shared with the other dashboards:
+token, an IP allow-list — anything your app already trusts. It returns an `AuthorizeResult`
+(both types are exported from `@adonis-agora/media/dashboard`):
 
-- **A redirect the hook writes wins.** If `authorize` sets a `location` header
-  (typically `ctx.response.redirect(...)`) before returning `false`, the guard
-  leaves that redirect alone instead of overwriting it with the `403` — the
+```ts
+export interface AuthorizeDecision {
+  allowed: boolean
+  reason?: 'unauthenticated' | 'forbidden'
+}
+export type AuthorizeResult = boolean | AuthorizeDecision
+// authorize: (ctx) => AuthorizeResult | Promise<AuthorizeResult>
+```
+
+| The hook returns | API request | Page navigation |
+| --- | --- | --- |
+| `true` / `{ allowed: true }` | passes | passes |
+| `{ allowed: false, reason: 'unauthenticated' }` | `401 { error: 'Unauthorized' }` | the [access-denied page](#the-access-denied-page), `401` "Sign in required" |
+| `{ allowed: false, reason: 'forbidden' }` | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
+| `false` / `{ allowed: false }` (no reason) | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
+| throws | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
+
+A refusal without a reason is a `403` — the hook knew who was asking and said no — and a
+decision object is read by its `allowed` field, so `{ allowed: false }` denies even though the
+object itself is truthy. The `401` with `{ auth: { modes } }` belongs to the session guard
+alone — it is what tells the SPA to show **its own** login screen. A hook's `401` carries
+`{ error: 'Unauthorized' }` instead: it means "your app says nobody is signed in", which the
+console's login cannot fix, so it is never confused with it (and `/me`, where the SPA reads its
+login state, is never behind `authorize`). Point the page's "Sign in" button at your app's login
+with `accessDenied: { loginHref: '/login' }`. Two refinements are shared with the other
+dashboards:
+
+- **An answer the hook writes wins.** If `authorize` sets a `location` header
+  (typically `ctx.response.redirect(...)`) — or queues a body — before denying, the guard
+  leaves that answer alone instead of overwriting it with the `401`/`403` — the
   hook for sending an unauthenticated visitor to your own login page.
 - **A throwing hook fails closed.** If `authorize` throws, the request is denied
   (`403`) — a buggy hook never accidentally opens the console.
@@ -44,7 +67,7 @@ The third is `auth`: a **self-contained session for the console itself**, signed
 
 ### The access-denied page
 
-What a browser sees when `authorize` refuses it: the same `403` the API answers with, as a page
+What a browser sees when `authorize` refuses it: the same `401`/`403` the API answers with, as a page
 — a dark card in the console's visual language showing the status, a sentence explaining the
 refusal and a "Back to app" link.
 It carries no inline script, so a nonce'd `script-src` CSP cannot break it (its one inline

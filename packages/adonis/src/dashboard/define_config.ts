@@ -23,14 +23,37 @@ export type AccessDeniedOption = GenericAccessDeniedOption<HttpContext>;
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
 
 /**
- * The access-decision hook gating the console (SPA + JSON API), same shape as the
- * `authorize` hooks of the other `@adonis-agora` dashboards (telescope, durable, agent):
- * return `true` to allow, `false` to deny (the guard answers `401`/`403`). Runs BEFORE any
- * configured `middleware`, and composes with the built-in `auth` session guard (all must
- * pass). Sync or async. Receives the real AdonisJS `HttpContext`, so it can read the
- * session, a bearer token, an IP allow-list, etc.
+ * A structured answer from the {@link DashboardAuthorize} hook — the dashboard-gate contract every
+ * `@adonis-agora` console (telescope, durable, media, payments, agent) shares verbatim, so a hook
+ * such as `@adonis-agora/authz`'s `authorizeByRoles` can tell a console WHY it refused.
+ *
+ * - `allowed: true` lets the request through (`reason` is ignored).
+ * - `allowed: false` denies it. `reason: 'unauthenticated'` answers `401` (nobody is signed in);
+ *   `reason: 'forbidden'` — or no reason at all — answers `403` (fail closed).
  */
-export type DashboardAuthorize = (ctx: HttpContext) => boolean | Promise<boolean>;
+export interface AuthorizeDecision {
+  allowed: boolean;
+  reason?: 'unauthenticated' | 'forbidden';
+}
+
+/**
+ * What the {@link DashboardAuthorize} hook may return: a bare boolean (`true` allows, `false` is a
+ * `403`) or an {@link AuthorizeDecision}. NOTE a decision object is always truthy — the console
+ * reads its `allowed` field, so `{ allowed: false }` DENIES.
+ */
+export type AuthorizeResult = boolean | AuthorizeDecision;
+
+/**
+ * The access-decision hook gating the console (SPA + JSON API), same contract as the
+ * `authorize` hooks of the other `@adonis-agora` dashboards (telescope, durable, payments, agent):
+ * return `true` / `{ allowed: true }` to allow; `false` / `{ allowed: false }` to deny with `403`;
+ * `{ allowed: false, reason: 'unauthenticated' }` to deny with `401`. A hook that throws denies
+ * with `403`; a hook that answers the request itself (a redirect) keeps its answer. Runs BEFORE
+ * any configured `middleware`, and composes with the built-in `auth` session guard (all must
+ * pass). Sync or async. Receives the real AdonisJS `HttpContext`, so it can read the session, a
+ * bearer token, an IP allow-list, etc.
+ */
+export type DashboardAuthorize = (ctx: HttpContext) => AuthorizeResult | Promise<AuthorizeResult>;
 
 /**
  * Configuration for the `@adonis-agora/media` dashboard, read by `dashboard_provider.ts` from
@@ -66,18 +89,22 @@ export interface MediaDashboardConfig {
   /** Host middleware (auth) applied to the whole console — SPA and API. */
   middleware?: DashboardMiddleware | DashboardMiddleware[];
   /**
-   * Access-decision hook gating the whole console (SPA + API), same shape as the
-   * `authorize` hooks of the other `@adonis-agora` dashboards. Runs BEFORE `middleware`
-   * and composes with the built-in `auth` session guard (all must pass). A denied request
-   * gets `403` (or honors a redirect the hook writes): `{ error: 'Forbidden' }` JSON on the
-   * API, the {@link accessDenied} page on a page navigation. Default: allow when not in
-   * production.
+   * Access-decision hook gating the whole console (SPA + API), same contract as the
+   * `authorize` hooks of the other `@adonis-agora` dashboards — see {@link DashboardAuthorize}
+   * and {@link AuthorizeResult}. Runs BEFORE `middleware` and composes with the built-in `auth`
+   * session guard (all must pass). A denied request honors a redirect the hook writes;
+   * otherwise it gets `401` when the hook answered `{ allowed: false, reason: 'unauthenticated' }`
+   * (`{ error: 'Unauthorized' }` JSON on the API) and `403` for every other refusal — `false`,
+   * `{ allowed: false }`, `reason: 'forbidden'`, a thrown error (`{ error: 'Forbidden' }`) — and
+   * the {@link accessDenied} page with the matching status on a page navigation. Omitted: no gate
+   * (the console is open unless `middleware`/`auth` close it).
    */
   authorize?: DashboardAuthorize;
   /**
    * What a BROWSER sees when `authorize` refuses a page navigation — the SPA shell or its assets.
-   * API requests are unaffected: they keep getting `403 { error: 'Forbidden' }` JSON. Omit it for
-   * the built-in page — a dark card in the console's own visual language with the same `403`, a
+   * API requests are unaffected: they keep getting `{ error: 'Forbidden' }` (`403`) or
+   * `{ error: 'Unauthorized' }` (`401`) JSON. Omit it for the built-in page — a dark card in the
+   * console's own visual language with the same status as the API, a
    * sentence explaining the refusal and a "Back to app" link. Pass an
    * object to tweak that page (`brand`, `title`, `message`, `homeHref`, `accent`, …), or a function
    * to render/answer it yourself — see {@link AccessDeniedRenderer}. A redirect written by

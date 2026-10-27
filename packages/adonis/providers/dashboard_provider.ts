@@ -12,7 +12,11 @@ import {
   SESSION_COOKIE_NAME,
   serializeSetCookie,
 } from '../src/dashboard/cookie.js';
-import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
+import type {
+  AccessDeniedOption,
+  AuthorizeResult,
+  MediaDashboardConfig,
+} from '../src/dashboard/define_config.js';
 import {
   type ConsoleSession,
   type ConsoleSessionUser,
@@ -95,34 +99,36 @@ export default class MediaDashboardProvider {
         ? config.middleware
         : [config.middleware]
       : [];
-    // Access-decision hook (same shape as the other @adonis-agora dashboards). Runs BEFORE
-    // `middleware` and composes with the built-in `auth` session guard (all must pass).
-    // A denied request honors a redirect the hook wrote (like the telescope guard, we check for a
-    // `location` header so a hook can send visitors to the app login); otherwise it is a `403` —
-    // the hook knew who was asking and said no, same status as every other Agora console — as
-    // `{ error }` JSON for an API request, and as the built-in access-denied page (or the host's
-    // `accessDenied` version of it) for a PAGE navigation (the SPA shell, its assets). The `401`
-    // with `{ auth: { modes } }` stays the SESSION guard's alone: that is what tells the SPA to
-    // show its login screen, and an `authorize` refusal must not be mistaken for it.
+    // Access-decision hook — the dashboard-gate contract shared by every @adonis-agora console
+    // (see `AuthorizeResult`). Runs BEFORE `middleware` and composes with the built-in `auth`
+    // session guard (all must pass). The hook may answer a bare boolean or an `AuthorizeDecision`;
+    // `decideAuthorize` normalizes both, so a `{ allowed: false }` object (truthy!) DENIES.
+    // A denied request honors an answer the hook wrote itself (a `location` header — a redirect to
+    // the app login — or a queued body); otherwise it is `401` for `reason: 'unauthenticated'` and
+    // `403` for everything else (bare `false`, no reason, `'forbidden'`, a throw — fail closed) —
+    // as `{ error }` JSON for an API request, and as the built-in access-denied page (or the host's
+    // `accessDenied` version of it) with the same status for a PAGE navigation (the SPA shell, its
+    // assets). The `401` WITH `{ auth: { modes } }` stays the SESSION guard's alone: that body is
+    // what tells the SPA to show its login screen. A hook's `401` carries `{ error: 'Unauthorized' }`
+    // instead — "the host app says you are not signed in" — so it can never be mistaken for "sign in
+    // to this console" (and `/me`, the route the SPA reads its login state from, is never behind
+    // `authorize`).
     const authorizeGate = (mode: 'api' | 'page') =>
       config.authorize
         ? [
             async (ctx: HttpContext, next: () => Promise<void>) => {
-              let allowed: boolean;
-              try {
-                allowed = await config.authorize!(ctx);
-              } catch {
-                allowed = false;
-              }
-              if (allowed) return next();
+              const denial = await decideAuthorize(() => config.authorize!(ctx));
+              if (denial === null) return next();
               if (mode === 'api') {
-                // A redirect the hook wrote stands on its own — the handler must NOT run after it
+                // An answer the hook wrote stands on its own — the handler must NOT run after it
                 // (it would queue a JSON body onto a 302).
-                if (ctx.response.getHeader('location')) return;
-                ctx.response.status(403).send({ error: 'Forbidden' });
+                if (responseAnswered(ctx)) return;
+                ctx.response
+                  .status(denial.status)
+                  .send({ error: denial.status === 401 ? 'Unauthorized' : 'Forbidden' });
                 return;
               }
-              await denyPage(ctx, { basePath, accessDenied: config.accessDenied });
+              await denyPage(ctx, { basePath, accessDenied: config.accessDenied, ...denial });
             },
           ]
         : [];
@@ -596,25 +602,62 @@ function applyMiddleware(
   (group.use as (m: unknown) => unknown)(middleware);
 }
 
+/* Authorize decision --------------------------------------------------------------------------- */
+
+/** How the gate answers a refusal: the HTTP status and the matching access-denied reason. */
+interface AuthorizeDenial {
+  status: 401 | 403;
+  reason: 'unauthenticated' | 'forbidden';
+}
+
+/**
+ * Run the `authorize` hook and normalize its {@link AuthorizeResult} — `null` when the request may
+ * proceed, the {@link AuthorizeDenial} otherwise. ONLY `true` and `{ allowed: true }` allow: a
+ * decision object is truthy, so a plain `if (await authorize(ctx))` would have let
+ * `{ allowed: false }` through. `reason: 'unauthenticated'` is a `401`; everything else that is not
+ * an allow — `false`, `{ allowed: false }` with no or a `'forbidden'` reason, a malformed value, a
+ * throw — is a `403` (fail closed).
+ */
+async function decideAuthorize(
+  run: () => AuthorizeResult | Promise<AuthorizeResult>,
+): Promise<AuthorizeDenial | null> {
+  let result: AuthorizeResult;
+  try {
+    result = await run();
+  } catch {
+    return { status: 403, reason: 'forbidden' };
+  }
+  if (result === true) return null;
+  if (typeof result === 'object' && result !== null) {
+    if (result.allowed === true) return null;
+    if (result.reason === 'unauthenticated') return { status: 401, reason: 'unauthenticated' };
+  }
+  return { status: 403, reason: 'forbidden' };
+}
+
 /* Access-denied page -------------------------------------------------------------------------- */
 
 /**
  * Answer a refused PAGE navigation with HTML instead of the API's JSON: the built-in page, the
  * host's tweaked version of it, or whatever the host's `accessDenied` renderer produced. Stands down
  * when the request is already answered — an `authorize` hook (or the renderer) that wrote a redirect
- * keeps it; the provider never overwrites a `location` header. `403`, like the API's JSON: the hook
- * knew who was asking and said no.
+ * keeps it; the provider never overwrites a `location` header. Same status as the API's JSON: `401`
+ * (`unauthenticated` — the page offers a "Sign in" button when `accessDenied.loginHref` points at
+ * the host's login) or `403` (`forbidden` — the hook knew who was asking and said no).
  */
 async function denyPage(
   ctx: HttpContext,
-  options: { basePath: string; accessDenied: AccessDeniedOption | undefined },
+  options: {
+    basePath: string;
+    accessDenied: AccessDeniedOption | undefined;
+  } & AuthorizeDenial,
 ): Promise<void> {
   const answered = () => responseAnswered(ctx);
   if (answered()) return;
   const nonce = cspNonce(ctx);
   const info: AccessDeniedInfo = {
-    status: 403,
-    reason: 'forbidden',
+    status: options.status,
+    reason: options.reason,
     basePath: options.basePath,
     ...(nonce !== undefined ? { nonce } : {}),
   };
