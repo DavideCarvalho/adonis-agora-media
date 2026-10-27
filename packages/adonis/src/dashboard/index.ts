@@ -27,6 +27,8 @@ export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './au
 export type {
   AccessDeniedOption,
   AccessDeniedRenderer,
+  AuthorizeDecision,
+  AuthorizeResult,
   DashboardAuthorize,
   DashboardMiddleware,
   MediaDashboardConfig,
