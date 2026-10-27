@@ -19,7 +19,8 @@ import {
   NotAnImageError,
   TransformNotReadyError,
 } from './errors.js';
-import type { MediaLibrary } from './media_library.js';
+import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols.js';
+import type { DeliverOptions, MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
 import { type MediaStream, streamFormatOf } from './streaming.js';
@@ -176,7 +177,8 @@ export class MediaAccess {
     const record = await this.#library.find(id);
     if (!record) throw new MediaNotFoundError(id);
     await this.authorize(ctx, 'read', record, authorize);
-    return this.#library.image(id, imageOptions);
+    // The record just authorized is the one rendered — no second lookup.
+    return this.#library[imageOfRecord](record, imageOptions);
   }
 
   /**
@@ -201,7 +203,7 @@ export class MediaAccess {
     const record = await this.#library.find(id);
     if (!record) throw new MediaNotFoundError(id);
     await this.authorize(ctx, 'read', record, authorize);
-    return this.#library.stream(id, streamOptions);
+    return this.#library[streamOfRecord](record, streamOptions);
   }
 
   /**
@@ -340,7 +342,7 @@ export class MediaAccess {
       const trusted = this.#library.checkDeliverySignature(signed, { required: false });
       if (!trusted) await this.authorize(ctx, 'read', record, options.authorize);
 
-      const result = await this.#library.deliver(id, {
+      const deliverOptions: DeliverOptions = {
         ...(signed.conversion !== undefined ? { conversion: signed.conversion } : {}),
         ...(signed.width !== undefined && signed.width !== ''
           ? {
@@ -354,7 +356,13 @@ export class MediaAccess {
         ...(options.signedTtlSeconds !== undefined
           ? { signedTtlSeconds: options.signedTtlSeconds }
           : {}),
-      });
+      };
+      // A record this call looked up itself is delivered as is; one the caller handed in is
+      // re-read by id, as before (it may not be the stored one).
+      const result =
+        typeof target === 'string'
+          ? await this.#library[deliverRecord](record, deliverOptions)
+          : await this.#library.deliver(id, deliverOptions);
 
       response.header('cache-control', cacheControl);
       if (result.vary) response.header('vary', result.vary);

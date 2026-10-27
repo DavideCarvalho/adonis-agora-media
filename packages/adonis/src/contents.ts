@@ -7,7 +7,9 @@ import { Readable } from 'node:stream';
 export async function toBytes(contents: Buffer | Readable): Promise<Uint8Array> {
   if (Buffer.isBuffer(contents)) return contents;
   const chunks: Buffer[] = [];
-  for await (const chunk of contents) chunks.push(Buffer.from(chunk));
+  // `Buffer.concat` copies once; wrapping a chunk that already is a Buffer would copy it twice.
+  for await (const chunk of contents)
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
 }
 
