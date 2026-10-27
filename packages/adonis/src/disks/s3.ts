@@ -93,6 +93,24 @@ function toExpiresInSeconds(expiresIn: string | number | undefined): number {
   return DEFAULT_SIGNED_URL_TTL_SECONDS;
 }
 
+/** The parts of an endpoint URL a presigned URL is built from. */
+interface EndpointBase {
+  protocol: 'http:' | 'https:';
+  host: string;
+  /** Path the endpoint is mounted under, without a trailing slash (`''` at the root). */
+  basePath: string;
+}
+
+function parseEndpointBase(endpoint: string | undefined): EndpointBase | undefined {
+  if (endpoint === undefined) return undefined;
+  const url = new URL(endpoint);
+  return {
+    protocol: url.protocol === 'http:' ? 'http:' : 'https:',
+    host: url.host,
+    basePath: url.pathname.replace(/\/+$/, ''),
+  };
+}
+
 function isNotFound(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
   return e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.$metadata?.httpStatusCode === 404;
@@ -119,6 +137,10 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
   private readonly publicEndpoint: string | undefined;
   private readonly forcePathStyle: boolean;
   private readonly visibility: 'public' | 'private';
+  /** Parsed {@link endpoint} / {@link publicEndpoint}, on first presign. */
+  #endpointBases:
+    | { internal: EndpointBase | undefined; public: EndpointBase | undefined }
+    | undefined;
 
   constructor(options: S3DiskOptions) {
     this.client = options.client;
@@ -295,19 +317,23 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     options: { browserFacing: boolean; region: string; bucket?: string | undefined },
   ): { protocol: 'http:' | 'https:'; host: string; path: string } {
     const bucket = options.bucket ?? this.bucket;
-    const base = (options.browserFacing ? this.publicEndpoint : undefined) ?? this.endpoint;
+    this.#endpointBases ??= {
+      internal: parseEndpointBase(this.endpoint),
+      public: parseEndpointBase(this.publicEndpoint),
+    };
+    const base =
+      (options.browserFacing ? this.#endpointBases.public : undefined) ??
+      this.#endpointBases.internal;
     if (base !== undefined) {
-      const url = new URL(base);
-      const basePath = url.pathname.replace(/\/+$/, '');
-      const protocol = url.protocol === 'http:' ? 'http:' : 'https:';
+      const { protocol, host, basePath } = base;
       if (this.forcePathStyle) {
         return {
           protocol,
-          host: url.host,
+          host,
           path: `${basePath}/${bucket}${fullKey ? `/${fullKey}` : ''}`,
         };
       }
-      return { protocol, host: `${bucket}.${url.host}`, path: `${basePath}/${fullKey}` };
+      return { protocol, host: `${bucket}.${host}`, path: `${basePath}/${fullKey}` };
     }
     return {
       protocol: 'https:',

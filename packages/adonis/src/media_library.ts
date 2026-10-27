@@ -239,6 +239,10 @@ interface CommitInput {
   path: string;
   /** Whether this call put the object there — i.e. whether compensation may delete it. */
   ownsObject: boolean;
+  /** The stored object's bytes, when this call already holds them (so nothing reads them back). */
+  bytes?: Buffer | undefined;
+  /** Size after `stripMetadata` already ran over {@link bytes} before they were written. */
+  strippedSize?: number | undefined;
 }
 
 export class MediaLibrary {
@@ -266,6 +270,10 @@ export class MediaLibrary {
   private readonly deliverySigning: DeliverySigningConfig | undefined;
   private readonly deliveryPath: string;
   private readonly deliveryStreamPath: string;
+  /** Lazy conversions being generated right now, by media id + conversion name. */
+  readonly #generating = new Map<string, Promise<MediaRecord>>();
+  /** The tail of each media id's queue of conversion-map writes (see {@link #serialized}). */
+  readonly #conversionWrites = new Map<string, Promise<unknown>>();
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
@@ -297,7 +305,7 @@ export class MediaLibrary {
 
   async attach(input: AttachInput): Promise<MediaRecord> {
     const context = await this.#prepare(input);
-    const { config, ownerId, disk, id, target, mimeType } = context;
+    const { config, ownerId, id, target, mimeType } = context;
     const path = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
     const hasConversions = (config.conversions ?? []).length > 0;
 
@@ -324,12 +332,28 @@ export class MediaLibrary {
         contentType: mimeType,
         contentLength: input.size as number,
       });
-    } else {
-      const bytes = await toBytes(contents);
-      await target.put(path, bytes, { contentType: mimeType });
+      return this.#commit(context, { ...input, mimeType, path, ownsObject: true });
     }
 
-    return this.#commit(context, { ...input, mimeType, path, ownsObject: true });
+    let bytes = asBuffer(await toBytes(contents));
+    let strippedSize: number | undefined;
+    if (config.stripMetadata) {
+      const stripped = await this.#strip(bytes, mimeType);
+      if (stripped) {
+        bytes = stripped;
+        strippedSize = stripped.byteLength;
+      }
+    }
+    await target.put(path, bytes, { contentType: mimeType });
+
+    return this.#commit(context, {
+      ...input,
+      mimeType,
+      path,
+      ownsObject: true,
+      bytes,
+      strippedSize,
+    });
   }
 
   /**
@@ -498,10 +522,16 @@ export class MediaLibrary {
     const { path } = input;
 
     let saved: MediaRecord;
+    let original = input.bytes;
     try {
-      const strippedSize = config.stripMetadata
-        ? await this.#stripMetadata(target, path, input.mimeType)
-        : undefined;
+      let strippedSize = input.strippedSize;
+      if (config.stripMetadata && original === undefined) {
+        const stripped = await this.#stripMetadata(target, path, input.mimeType);
+        if (stripped) {
+          original = stripped;
+          strippedSize = stripped.byteLength;
+        }
+      }
       // `getMetaData` is a HEAD-shaped metadata read, never a body download — the zero-copy
       // guarantee of `attachExisting` holds even when the caller omits `size` (and the collection
       // does not `stripMetadata`, which has to read the bytes).
@@ -545,9 +575,17 @@ export class MediaLibrary {
     const eagerTransformers = (config.transformers ?? []).filter((t) => t.eager === true);
     let current = saved;
     if (eagerPresets.length > 0 || eagerTransformers.length > 0) {
+      const generated: Record<string, MediaConversion> = {};
       try {
-        for (const preset of eagerPresets) {
-          current = await this.ensureConversion(saved.id, preset.name);
+        if (eagerPresets.length > 0) {
+          // One read of the original serves every preset, and all of them land in one save.
+          if (!this.imageProcessor) throw new ImageProcessorMissingError();
+          original ??= asBuffer(await target.getBytes(path));
+          for (const preset of eagerPresets) {
+            generated[preset.name] = await this.#renderConversion(saved, preset, original);
+          }
+          current = await this.#recordConversions(saved, generated);
+          for (const preset of eagerPresets) this.#emitConversion(saved.id, preset.name, generated);
         }
         for (const transformer of eagerTransformers) {
           current = await this.#runTransformer(current, transformer);
@@ -556,7 +594,7 @@ export class MediaLibrary {
         // The new media can't be rendered, so roll it back whole — bytes, any conversions already
         // written, and the row — and leave what it was replacing untouched.
         if (input.ownsObject) await this.#safeDelete(disk, path);
-        for (const variant of Object.values(current.conversions)) {
+        for (const variant of Object.values({ ...generated, ...current.conversions })) {
           await this.#deleteConversionArtifacts(variant, { safe: true });
         }
         await this.store.delete(saved.id);
@@ -604,6 +642,12 @@ export class MediaLibrary {
   async ensureConversion(id: string, conversionName: string): Promise<MediaRecord> {
     const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
+    return this.#ensureConversionOf(record, conversionName);
+  }
+
+  /** {@link ensureConversion} over a record already in hand. */
+  async #ensureConversionOf(record: MediaRecord, conversionName: string): Promise<MediaRecord> {
+    const { id } = record;
     if (record.conversions[conversionName]) return record;
 
     const config = this.collections.get(record.collection);
@@ -616,20 +660,67 @@ export class MediaLibrary {
       }
       throw new ConversionNotDefinedError(record.collection, conversionName);
     }
-    return this.#generateConversion(record, preset);
+    return this.#generateConversionOnce(record, preset);
+  }
+
+  /**
+   * {@link #generateConversion} for a read path: concurrent requests for the same missing
+   * conversion of the same media share one generation instead of each decoding the original.
+   */
+  #generateConversionOnce(record: MediaRecord, preset: ConversionPreset): Promise<MediaRecord> {
+    const key = `${record.id}\u0000${preset.name}`;
+    const running = this.#generating.get(key);
+    if (running) return running;
+    const generation = this.#generateConversion(record, preset).finally(() => {
+      this.#generating.delete(key);
+    });
+    this.#generating.set(key, generation);
+    return generation;
+  }
+
+  /**
+   * Run `write` after every earlier one queued for `id` has settled. Conversion entries are merged
+   * into the stored map by read-then-save, so two in this process must not interleave — the
+   * second would save over the first's entry.
+   */
+  async #serialized<T>(id: string, write: () => Promise<T>): Promise<T> {
+    const previous = this.#conversionWrites.get(id) ?? Promise.resolve();
+    const run = previous.then(write, write);
+    const tail = run.catch(() => {});
+    this.#conversionWrites.set(id, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.#conversionWrites.get(id) === tail) this.#conversionWrites.delete(id);
+    }
   }
 
   /** Run `preset` over the record's original, store the output and persist it as a conversion. */
   async #generateConversion(record: MediaRecord, preset: ConversionPreset): Promise<MediaRecord> {
     if (!this.imageProcessor) throw new ImageProcessorMissingError();
-
     const original = asBuffer(await this.storage.disk(record.disk).getBytes(record.path));
+    const conversion = await this.#renderConversion(record, preset, original);
+    const updated = await this.#recordConversions(record, { [preset.name]: conversion });
+    this.#emitConversion(record.id, preset.name, { [preset.name]: conversion });
+    return updated;
+  }
+
+  /**
+   * Run `preset` over `original` and write the output next to the record's object. Returns the
+   * conversion entry to persist — a metadata-only one when `onlyDownscale` skips the preset.
+   */
+  async #renderConversion(
+    record: MediaRecord,
+    preset: ConversionPreset,
+    original: Buffer,
+  ): Promise<MediaConversion> {
+    if (!this.imageProcessor) throw new ImageProcessorMissingError();
     if (preset.onlyDownscale && preset.width && this.imageProcessor.dimensions) {
       const size = await this.imageProcessor.dimensions(original);
       if (size && size.width <= preset.width) {
-        return this.#recordConversion(record, preset.name, {
+        return {
           meta: { skipped: 'not-smaller-than-original', width: size.width, height: size.height },
-        });
+        };
       }
     }
     const focalPoint = focalPointOf(record.customProperties);
@@ -643,44 +734,53 @@ export class MediaLibrary {
     await this.storage.disk(record.disk).put(conversionPath, result.data, {
       contentType: result.contentType,
     });
-
-    const updated = await this.#recordConversion(record, preset.name, {
+    return {
       path: conversionPath,
       disk: record.disk,
       ...(result.width && result.height
         ? { meta: { width: result.width, height: result.height } }
         : {}),
-    });
-    this.emit('conversion', { id: record.id, conversion: preset.name, path: conversionPath });
-    return updated;
+    };
+  }
+
+  /** Emit `conversion` for a generated (not skipped) entry of `conversions`. */
+  #emitConversion(id: string, name: string, conversions: Record<string, MediaConversion>): void {
+    const path = conversions[name]?.path;
+    if (path !== undefined) this.emit('conversion', { id, conversion: name, path });
+  }
+
+  /** The image bytes without their metadata, or `undefined` when there is nothing to strip. */
+  async #strip(bytes: Buffer, mimeType: string): Promise<Buffer | undefined> {
+    if (!mimeType.startsWith('image/') || mimeType.startsWith('image/svg')) return undefined;
+    if (!this.imageProcessor) throw new ImageProcessorMissingError();
+    if (!this.imageProcessor.stripMetadata) return undefined;
+    return (await this.imageProcessor.stripMetadata(bytes)) ?? undefined;
   }
 
   /**
    * Rewrite the object at `path` without its metadata (`stripMetadata` collections). Returns the
-   * new size, or `undefined` when nothing was rewritten (not an image, nothing to strip).
+   * stripped bytes, or `undefined` when nothing was rewritten (not an image, nothing to strip).
    */
-  async #stripMetadata(target: Disk, path: string, mimeType: string): Promise<number | undefined> {
+  async #stripMetadata(target: Disk, path: string, mimeType: string): Promise<Buffer | undefined> {
     if (!mimeType.startsWith('image/') || mimeType.startsWith('image/svg')) return undefined;
-    if (!this.imageProcessor) throw new ImageProcessorMissingError();
-    if (!this.imageProcessor.stripMetadata) return undefined;
-    const original = asBuffer(await target.getBytes(path));
-    const stripped = await this.imageProcessor.stripMetadata(original);
+    const stripped = await this.#strip(asBuffer(await target.getBytes(path)), mimeType);
     if (!stripped) return undefined;
     await target.put(path, stripped, { contentType: mimeType });
-    return stripped.byteLength;
+    return stripped;
   }
 
-  /** Persist one conversion entry, re-reading first so a concurrent one is not dropped. */
-  async #recordConversion(
+  /** Persist conversion entries, re-reading first so a concurrent one is not dropped. */
+  async #recordConversions(
     record: MediaRecord,
-    name: string,
-    conversion: MediaConversion,
+    entries: Record<string, MediaConversion>,
   ): Promise<MediaRecord> {
-    const current = (await this.store.find(record.id)) ?? record;
-    return this.store.save({
-      ...current,
-      conversions: { ...current.conversions, [name]: conversion },
-      updatedAt: this.now(),
+    return this.#serialized(record.id, async () => {
+      const current = (await this.store.find(record.id)) ?? record;
+      return this.store.save({
+        ...current,
+        conversions: { ...current.conversions, ...entries },
+        updatedAt: this.now(),
+      });
     });
   }
 
@@ -767,7 +867,7 @@ export class MediaLibrary {
     const format = negotiateFormat(request.accept, formats, record.mimeType);
     const name = `@w${width}q${quality}-${format}`;
     if (record.conversions[name]) return { record, conversion: name };
-    const updated = await this.#generateConversion(record, {
+    const updated = await this.#generateConversionOnce(record, {
       name,
       width,
       quality,
@@ -825,7 +925,11 @@ export class MediaLibrary {
     const disk = this.storage.disk(diskName);
     const dir = record.path.slice(0, record.path.lastIndexOf('/'));
     const outputPrefix = `${dir}/conversions/${transformer.name}/`;
-    const written: string[] = [];
+    // Every artifact path in the order its first write started, mapped to whether a write of it
+    // has completed — so concurrent writes still persist `files` in a deterministic order.
+    const artifacts = new Map<string, boolean>();
+    const written = (): string[] =>
+      [...artifacts].filter(([, completed]) => completed).map(([relative]) => relative);
 
     const write = async (
       relativePath: string,
@@ -834,6 +938,7 @@ export class MediaLibrary {
     ): Promise<void> => {
       const relative = assertSafeArtifactPath(transformer.name, relativePath);
       const key = `${outputPrefix}${relative}`;
+      if (!artifacts.has(relative)) artifacts.set(relative, false);
       const writeOptions = {
         ...(options.contentType !== undefined ? { contentType: options.contentType } : {}),
       };
@@ -848,7 +953,7 @@ export class MediaLibrary {
       } else {
         await disk.put(key, await toBytes(contents), writeOptions);
       }
-      if (!written.includes(relative)) written.push(relative);
+      artifacts.set(relative, true);
     };
 
     const context: TransformerContext = {
@@ -865,23 +970,23 @@ export class MediaLibrary {
     let result: TransformResult;
     try {
       result = await transformer.transform(context);
-      if (result.entry !== undefined && !written.includes(result.entry)) {
+      if (result.entry !== undefined && artifacts.get(result.entry) !== true) {
         throw new TransformerOutputError(
           transformer.name,
           `entry "${result.entry}" was never written through context.write`,
         );
       }
-      if (result.entry === undefined && written.length > 0) {
+      if (result.entry === undefined && written().length > 0) {
         throw new TransformerOutputError(
           transformer.name,
-          `it wrote ${written.length} artifact(s) but declared no entry`,
+          `it wrote ${written().length} artifact(s) but declared no entry`,
         );
       }
     } catch (error) {
       // Sweep the partial output (best-effort) so a retry starts clean and a failed transform
       // never leaks storage; the conversion entry was never persisted, so `transform()` will
       // simply run again.
-      for (const relative of written) {
+      for (const relative of artifacts.keys()) {
         await this.#safeDelete(diskName, `${outputPrefix}${relative}`);
       }
       throw error;
@@ -893,18 +998,20 @@ export class MediaLibrary {
             path: `${outputPrefix}${result.entry}`,
             disk: diskName,
             prefix: outputPrefix,
-            files: [...written],
+            files: written(),
             ...(result.meta !== undefined ? { meta: result.meta } : {}),
           }
         : { ...(result.meta !== undefined ? { meta: result.meta } : {}) };
 
     // Re-read before saving: the transform may have taken minutes, and `save` persists the whole
     // record — merging over a fresh row keeps conversions generated meanwhile.
-    const fresh = (await this.store.find(record.id)) ?? record;
-    const updated = await this.store.save({
-      ...fresh,
-      conversions: { ...fresh.conversions, [transformer.name]: conversion },
-      updatedAt: this.now(),
+    const updated = await this.#serialized(record.id, async () => {
+      const fresh = (await this.store.find(record.id)) ?? record;
+      return this.store.save({
+        ...fresh,
+        conversions: { ...fresh.conversions, [transformer.name]: conversion },
+        updatedAt: this.now(),
+      });
     });
     this.emit('conversion', {
       id: record.id,
@@ -1015,8 +1122,19 @@ export class MediaLibrary {
     id: string,
     conversion?: string | undefined,
   ): Promise<{ record: MediaRecord; disk: string; path: string; fileName: string }> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    return this.#targetOf(record, conversion);
+  }
+
+  /** {@link #resolveTarget} for a record already in hand. */
+  async #targetOf(
+    found: MediaRecord,
+    conversion?: string | undefined,
+  ): Promise<{ record: MediaRecord; disk: string; path: string; fileName: string }> {
+    const { id } = found;
     if (conversion) {
-      const record = await this.ensureConversion(id, conversion);
+      const record = await this.#ensureConversionOf(found, conversion);
       const variant = record.conversions[conversion];
       if (!variant) throw new MediaNotFoundError(`${id}#${conversion}`);
       // A metadata-only transform (a probe) HAS a conversion entry but no file behind it.
@@ -1032,9 +1150,7 @@ export class MediaLibrary {
         fileName: variant.path.slice(variant.path.lastIndexOf('/') + 1),
       };
     }
-    const record = await this.store.find(id);
-    if (!record) throw new MediaNotFoundError(id);
-    return { record, disk: record.disk, path: record.path, fileName: record.fileName };
+    return { record: found, disk: found.disk, path: found.path, fileName: found.fileName };
   }
 
   /**
@@ -1073,19 +1189,24 @@ export class MediaLibrary {
       for (const preset of presets) {
         if (options.conversions && !options.conversions.includes(preset.name)) continue;
         if (!preset.blur && !record.conversions[preset.name]) {
-          record = await this.ensureConversion(id, preset.name);
+          record = await this.#ensureConversionOf(record, preset.name);
         }
       }
     }
 
-    const urlOf = (conversion: string | undefined): string | Promise<string> => {
+    const found = record;
+    const urlOf = async (conversion: string | undefined): Promise<string> => {
       if (options.url) return options.url(conversion);
-      if (options.expiresIn !== undefined) {
-        return this.signedUrl(id, options.expiresIn, conversion ? { conversion } : {});
-      }
       // With signing configured, nothing goes out as a storage URL: everything through the route.
-      if (this.deliverySigning) return this.deliveryUrl(id, conversion ? { conversion } : {});
-      return this.url(id, conversion);
+      if (options.expiresIn === undefined && this.deliverySigning) {
+        return this.deliveryUrl(id, conversion ? { conversion } : {});
+      }
+      const target = await this.#targetOf(found, conversion);
+      const disk = this.storage.disk(target.disk);
+      if (options.expiresIn !== undefined) {
+        return disk.getSignedUrl(target.path, { expiresIn: options.expiresIn });
+      }
+      return disk.getUrl(target.path);
     };
 
     const candidates = imageCandidates(record, presets, options.conversions);

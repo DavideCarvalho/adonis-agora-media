@@ -220,7 +220,13 @@ export type { MediaManagerOptions } from './media_manager.js';
 export { MediaManager } from './media_manager.js';
 // Model + SPIs
 export type { MediaConversion, MediaRecord } from './media_record.js';
-export type { MediaCursor, MediaListOptions, MediaListPage, MediaStore } from './media_store.js';
+export type {
+  MediaCollectionTotals,
+  MediaCursor,
+  MediaListOptions,
+  MediaListPage,
+  MediaStore,
+} from './media_store.js';
 export {
   clampMediaListLimit,
   DEFAULT_MEDIA_LIST_LIMIT,

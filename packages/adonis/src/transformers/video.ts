@@ -194,31 +194,34 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
       });
 
       // Upload the whole package — manifests and segments — streaming each file (a segment never
-      // has to fit in memory). Sorted for a deterministic `conversions[name].files`.
-      const files = (await readdir(outputDir, { recursive: true })).sort();
-      const written: string[] = [];
-      let segmentCount = 0;
-      for (const file of files) {
-        const relative = file.split('\\').join('/');
+      // has to fit in memory), a few at a time. Sorted for a deterministic `conversions[name].files`.
+      const files: Array<{ relative: string; local: string; size: number }> = [];
+      for (const file of (await readdir(outputDir, { recursive: true })).sort()) {
         const local = join(outputDir, file);
         const info = await stat(local);
-        if (!info.isFile()) continue;
-        written.push(relative);
+        if (info.isFile())
+          files.push({ relative: file.split('\\').join('/'), local, size: info.size });
+      }
+      await forEachBounded(files, VIDEO_UPLOAD_CONCURRENCY, ({ relative, local, size }) => {
+        const contentType = streamArtifactContentType(relative);
+        return context.write(relative, createReadStream(local), {
+          contentLength: size,
+          ...(contentType !== undefined ? { contentType } : {}),
+        });
+      });
+      const written = new Set(files.map((file) => file.relative));
+      let segmentCount = 0;
+      for (const relative of written) {
         if (/\.(m4s|ts)$/i.test(relative) && !/(^|\/)init[^/]*$/i.test(relative)) {
           segmentCount += 1;
         }
-        const contentType = streamArtifactContentType(relative);
-        await context.write(relative, createReadStream(local), {
-          contentLength: info.size,
-          ...(contentType !== undefined ? { contentType } : {}),
-        });
       }
 
       for (const [format, manifest] of [
         ['hls', hls ? VIDEO_HLS_ENTRY : undefined],
         ['dash', dash ? VIDEO_DASH_MANIFEST : undefined],
       ] as const) {
-        if (manifest && !written.includes(manifest)) {
+        if (manifest && !written.has(manifest)) {
           throw new Error(
             `The video engine did not write the ${format.toUpperCase()} manifest "${manifest}".`,
           );
@@ -238,6 +241,35 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
       };
     });
   }
+}
+
+/** Package files uploaded at once: enough to hide per-request latency, few enough not to flood the disk. */
+const VIDEO_UPLOAD_CONCURRENCY = 6;
+
+/**
+ * Run `task` over `items`, at most `limit` at a time. On the first failure no further item starts,
+ * and the error is rethrown only once every task already running has settled — so a caller
+ * cleaning up after the failure never races an upload still in flight.
+ */
+export async function forEachBounded<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  let failure: { error: unknown } | undefined;
+  const worker = async (): Promise<void> => {
+    while (failure === undefined && next < items.length) {
+      const index = next++;
+      try {
+        await task(items[index] as T, index);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure !== undefined) throw failure.error;
 }
 
 /** Drop `undefined` values so the persisted meta round-trips identically through JSON stores. */

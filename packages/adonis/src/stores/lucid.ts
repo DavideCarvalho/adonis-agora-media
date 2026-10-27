@@ -5,6 +5,7 @@ import {
   clampMediaListLimit,
   decodeMediaCursor,
   encodeMediaCursor,
+  type MediaCollectionTotals,
   type MediaListOptions,
   type MediaListPage,
   type MediaStore,
@@ -162,6 +163,26 @@ export class LucidMediaStore implements MediaStore {
   async delete(id: string): Promise<void> {
     await this.ready();
     await this.query().where('id', id).delete();
+  }
+
+  async collectionTotals(): Promise<MediaCollectionTotals[]> {
+    await this.ready();
+    const rows = (await this.query()
+      .select('collection')
+      .count('* as count')
+      .sum('size as sum_size')
+      .max('created_at as newest')
+      .groupBy('collection')
+      .orderBy('newest', 'desc')) as Array<{
+      collection: string;
+      count: number | string;
+      sum_size: number | string | null;
+    }>;
+    return rows.map((row) => ({
+      collection: row.collection,
+      count: Number(row.count),
+      sumSize: Number(row.sum_size ?? 0),
+    }));
   }
 
   async nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number> {

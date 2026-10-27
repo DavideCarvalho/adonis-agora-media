@@ -252,22 +252,26 @@ revised same-named file never splices bytes into an old session. Ignored by `tus
 `proxy`.
 Source: `docs/react/index.mdx` (Resuming a direct upload across a reload).
 
-### [MEDIUM] Setting concurrency expecting parallel direct-S3 parts
+### [MEDIUM] Assuming direct-S3 parts still upload sequentially
 
 Wrong:
 
 ```ts
-createMediaUploadClient({ concurrency: 4 }) // expecting 4 parallel part PUTs
+createMediaUploadClient({ retries: 3 }) // assuming parts go one at a time
 ```
 
 Correct:
 
 ```ts
-createMediaUploadClient({ retries: 3 }) // parts are sequential today
+createMediaUploadClient({ concurrency: 4 }) // 4 direct-S3 part PUTs at once (the default)
+await client.uploadDirect(file, meta, { concurrency: 2 }) // per-upload bound wins
 ```
 
-Mechanism: `concurrency` is **reserved** — direct-S3 uploads run sequentially today; the
-option exists only for forward compatibility, so tuning it changes nothing.
+Mechanism: direct-S3 parts `PUT` in parallel, 4 at a time by default — the client-level
+and per-upload `concurrency` options set that bound. A failed part stops new parts from
+starting and rejects once the running ones settle, so `complete` never runs after a
+failure. TUS chunks stay sequential: each `PATCH` must start at the offset the previous
+one reached.
 Source: `docs/react/index.mdx` (client options table).
 
 See also: `media-uploads-resumable/SKILL.md` — the server routes this client speaks;

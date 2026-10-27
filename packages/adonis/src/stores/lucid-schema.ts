@@ -115,9 +115,14 @@ export async function createMediaTables(
       updated_at BIGINT NOT NULL
     )`,
   );
-  await run(`CREATE INDEX IF NOT EXISTS ${t.media}_owner_idx ON ${t.media} (owner_type, owner_id)`);
+  // `(owner_type, owner_id)` lookups use the leftmost prefix of the owner+collection index.
   await run(
     `CREATE INDEX IF NOT EXISTS ${t.media}_owner_collection_idx ON ${t.media} (owner_type, owner_id, collection)`,
+  );
+  // The newest-first keyset `list()` pages on, unfiltered and per collection.
+  await run(`CREATE INDEX IF NOT EXISTS ${t.media}_created_idx ON ${t.media} (created_at, id)`);
+  await run(
+    `CREATE INDEX IF NOT EXISTS ${t.media}_collection_created_idx ON ${t.media} (collection, created_at, id)`,
   );
 }
 

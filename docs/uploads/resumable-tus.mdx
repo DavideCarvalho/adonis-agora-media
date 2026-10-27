@@ -9,6 +9,8 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 Large uploads shouldn't restart from zero when a connection drops. The package implements the [tus](https://tus.io) `1.0.0` resumable protocol: bytes flow through the backend in chunks, each chunk is written immediately as a part on the target disk (native S3 multipart when available, else buffered part objects), and a **session** persists the offset so a `HEAD` tells the client exactly where to resume.
 
+When the upload finishes, native multipart is closed on S3 itself. Buffered parts are streamed in order into the disk's `putStream`, with the session offset as `contentLength`, opening each part only after the previous one has been read, so assembly holds about one part in memory whatever the file size. A disk without `putStream` gets a single `put` of the concatenated parts, which buffers the whole file.
+
 <Callout type="info">
   The engine (`ResumableUploadManager`) and the TUS server (`TusUploadHandler`) are framework-agnostic; the provider mounts thin AdonisJS routes over them. A browser client that speaks this protocol ships in [`@adonis-agora/media-react`](/docs/media/react) (`mode: 'tus'`, the default there).
 </Callout>

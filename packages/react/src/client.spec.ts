@@ -619,6 +619,128 @@ describe('uploadDirect (session-backed)', () => {
   });
 });
 
+describe('uploadDirect — parallel parts', () => {
+  const PARTS = 12;
+  const session = {
+    id: 'up-p',
+    key: 'u/p.bin',
+    disk: 's3',
+    partSize: 10,
+    size: PARTS * 10,
+    totalParts: PARTS,
+    parts: Array.from({ length: PARTS }, (_, i) => ({
+      partNumber: i + 1,
+      url: `https://s3.example/part-${i + 1}`,
+    })),
+  };
+
+  function server(confirmed: number[]) {
+    return vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'POST' && url === '/media/uploads/direct/sessions')
+        return json(session, 201);
+      const match = /\/parts\/(\d+)$/.exec(url);
+      if (match) {
+        confirmed.push(Number(match[1]));
+        return json({ offset: 0, completedParts: [] });
+      }
+      if (url.endsWith('/complete'))
+        return json({ ok: true, parts: JSON.parse(init.body as string) });
+      return json({});
+    });
+  }
+
+  /** A part transport that takes a few ms per part and tracks how many PUTs overlap. */
+  function slowUploader(fail?: number) {
+    const stats = { inFlight: 0, max: 0, started: [] as number[], settledAfterFailure: 0 };
+    let failed = false;
+    const uploader = vi.fn(
+      async (url: string, body: Blob, opts: { onBytes?: (n: number) => void }) => {
+        const partNumber = Number(url.slice(url.lastIndexOf('-') + 1));
+        stats.started.push(partNumber);
+        stats.inFlight += 1;
+        stats.max = Math.max(stats.max, stats.inFlight);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, partNumber === fail ? 1 : 10));
+          if (partNumber === fail) {
+            failed = true;
+            throw new MediaHttpError('media upload: PUT part failed', 403);
+          }
+          opts.onBytes?.(body.size);
+          if (failed) stats.settledAfterFailure += 1;
+          return `"etag-${partNumber}"`;
+        } finally {
+          stats.inFlight -= 1;
+        }
+      },
+    );
+    return { uploader, stats };
+  }
+
+  it('uploads parts concurrently by default, within a bound, and completes them sorted', async () => {
+    const confirmed: number[] = [];
+    const { uploader, stats } = slowUploader();
+    const client = createMediaUploadClient({
+      fetchImpl: server(confirmed) as unknown as typeof fetch,
+      partUploader: uploader,
+    });
+    const progress: number[] = [];
+
+    const result = await client.uploadDirect(
+      blobOf(PARTS * 10),
+      { filename: 'p.bin' },
+      { onProgress: (sent) => progress.push(sent) },
+    );
+
+    expect(stats.max).toBe(4);
+    expect(stats.started).toEqual(Array.from({ length: PARTS }, (_, i) => i + 1));
+    expect([...confirmed].sort((a, b) => a - b)).toEqual(stats.started);
+    const completed = (result as { body: { parts: { parts: Array<{ partNumber: number }> } } }).body
+      .parts.parts;
+    expect(completed.map((p) => p.partNumber)).toEqual(stats.started);
+    expect(progress.at(-1)).toBe(PARTS * 10);
+    expect(Math.max(...progress)).toBe(PARTS * 10);
+  });
+
+  it('honours the client and per-upload `concurrency` options', async () => {
+    const first = slowUploader();
+    const client = createMediaUploadClient({
+      fetchImpl: server([]) as unknown as typeof fetch,
+      partUploader: first.uploader,
+      concurrency: 2,
+    });
+    await client.uploadDirect(blobOf(PARTS * 10), { filename: 'p.bin' });
+    expect(first.stats.max).toBe(2);
+
+    const second = slowUploader();
+    const sequential = createMediaUploadClient({
+      fetchImpl: server([]) as unknown as typeof fetch,
+      partUploader: second.uploader,
+      concurrency: 6,
+    });
+    await sequential.uploadDirect(blobOf(PARTS * 10), { filename: 'p.bin' }, { concurrency: 1 });
+    expect(second.stats.max).toBe(1);
+  });
+
+  it('a failed part stops new parts, lets the running ones settle, then rejects', async () => {
+    const confirmed: number[] = [];
+    const { uploader, stats } = slowUploader(3);
+    const fetchImpl = server(confirmed);
+    const client = createMediaUploadClient({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      partUploader: uploader,
+    });
+
+    await expect(client.uploadDirect(blobOf(PARTS * 10), { filename: 'p.bin' })).rejects.toThrow(
+      'PUT part failed',
+    );
+
+    expect(stats.inFlight).toBe(0);
+    expect(stats.settledAfterFailure).toBeGreaterThan(0);
+    expect(stats.started.length).toBeLessThan(PARTS);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('/complete'))).toBe(false);
+  });
+});
+
 describe('uploadProxy (target proxy PUT endpoint)', () => {
   it('PUTs the whole body to /proxy with the key query param and returns key/disk', async () => {
     let putUrl = '';

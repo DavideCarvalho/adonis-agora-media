@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
@@ -17,7 +18,7 @@ import { StorageManager } from '../src/storage_manager.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import { InMemoryUploadSessionStore } from '../src/testing/in_memory_upload_session_store.js';
 import { parseTusMetadata, TusUploadHandler } from '../src/tus.js';
-import type { Disk } from '../src/types.js';
+import type { Disk, DiskWriteOptions } from '../src/types.js';
 
 const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');
 
@@ -144,6 +145,69 @@ describe('ResumableUploadManager — buffered (non-multipart) disk', () => {
     await expect(ttlManager.status('s-ttl')).rejects.toBeInstanceOf(UploadSessionExpiredError);
     // Its temp parts were cleaned up on the expiry sweep.
     expect(disk.files.has('.uploads/s-ttl/0')).toBe(false);
+  });
+
+  it('complete() streams the parts in order into putStream, opening each part lazily', async () => {
+    const log: string[] = [];
+    class TracingDisk extends InMemoryDisk {
+      override async put(key: string, contents: Uint8Array, options?: DiskWriteOptions) {
+        log.push(`put ${key}`);
+        return super.put(key, contents, options);
+      }
+      override async getBytes(key: string) {
+        log.push(`getBytes ${key}`);
+        return super.getBytes(key);
+      }
+      override async getStream(key: string) {
+        log.push(`open ${key}`);
+        return super.getStream(key);
+      }
+      override async putStream(key: string, contents: Readable, options?: DiskWriteOptions) {
+        log.push(`putStream ${key} length=${options?.contentLength}`);
+        const chunks: Buffer[] = [];
+        for await (const chunk of contents) {
+          log.push(`read ${Buffer.from(chunk).toString()}`);
+          chunks.push(Buffer.from(chunk));
+        }
+        return super.put(key, Buffer.concat(chunks), options);
+      }
+    }
+    const tracing = new TracingDisk();
+    const streaming = new ResumableUploadManager({
+      storage: storageOf(tracing),
+      sessions: new InMemoryUploadSessionStore(),
+      idGenerator: () => 's-1',
+      emitDiagnostics: false,
+    });
+    await streaming.createUpload({ disk: 'local', key: 'big.bin', contentType: 'video/mp4' });
+    await streaming.writeChunk('s-1', 0, Buffer.from('aa'));
+    await streaming.writeChunk('s-1', 2, Buffer.from('bbb'));
+    await streaming.writeChunk('s-1', 5, Buffer.from('c'));
+    log.length = 0;
+
+    expect(await streaming.complete('s-1')).toEqual({ key: 'big.bin', disk: 'local', size: 6 });
+
+    expect(log[0]).toBe('putStream big.bin length=6');
+    expect(log.filter((entry) => !entry.startsWith('read'))).toEqual([
+      'putStream big.bin length=6',
+      'open .uploads/s-1/0',
+      'open .uploads/s-1/1',
+      'open .uploads/s-1/2',
+    ]);
+    expect(log.filter((entry) => entry.startsWith('read'))).toEqual([
+      'read aa',
+      'read bbb',
+      'read c',
+    ]);
+    // Parts are opened as the consumer drains them: never more than one part ahead of the reads.
+    log.forEach((entry, index) => {
+      if (!entry.startsWith('read')) return;
+      const opened = log.slice(0, index).filter((e) => e.startsWith('open')).length;
+      const read = log.slice(0, index + 1).filter((e) => e.startsWith('read')).length;
+      expect(opened).toBeLessThanOrEqual(read + 1);
+    });
+    expect((await tracing.getBytes('big.bin')).toString()).toBe('aabbbc');
+    expect(tracing.files.get('big.bin')?.contentType).toBe('video/mp4');
   });
 });
 

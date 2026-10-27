@@ -265,6 +265,17 @@ await media.library.ensureConversion(m.id, 'thumb') // generate-if-absent, retur
 
 `ensureConversion` is idempotent — if the conversion already exists it returns the record untouched without re-running sharp.
 
+What each path costs:
+
+- **Eager** presets read the original at most once between them, and not at all when `attach` already holds the bytes (a `Buffer` input). All of them are stored on the record in a single `save`. With `stripMetadata`, a buffered `attach` strips the bytes it holds, writes the original once, and the eager presets render from the stripped bytes.
+- **Lazy** generation is deduplicated within a process: concurrent `url()` / `ensureConversion()` / `resized()` calls for the same media and conversion share one generation, so the original is decoded once. A failed generation is not cached; the next call tries again. Writes of conversion entries for one media are queued within the process, so two different conversions generated at the same moment both end up on the record.
+
+<Callout type="warn" title="Concurrent generation across processes">
+  The write queue is per process. Two app instances generating **different** conversions of the
+  same media at the same instant can each save over the other's entry, losing one. The file is
+  still on disk; the next read finds the entry missing and generates it again.
+</Callout>
+
 ### Where conversion files live
 
 A conversion is written next to its original, under a `conversions/` sub-directory, named by the preset and the output format:

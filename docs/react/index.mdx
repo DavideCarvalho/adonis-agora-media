@@ -196,7 +196,7 @@ Those are the three upload entry points; the client also exposes the session pri
 | `uploadsPath` | `/media/uploads` | Core upload routes — where the proxy endpoint lives. Match `uploads.routes.prefix`. |
 | `directPath` | `/media/uploads/direct/sessions` | Direct-session routes. Match `uploads.direct.routes.prefix`. Falls back to `uploadsPath` when that is set and this isn't. |
 | `chunkSize` | `8 MiB` | Bytes per **TUS** chunk. The direct-S3 part size is decided by the server, not here. |
-| `concurrency` | — | **Reserved.** Direct-S3 uploads are sequential today, so this does not apply to them; it is kept for forward compatibility. |
+| `concurrency` | `4` | Direct-S3 parts `PUT` at once (also accepted per upload). TUS chunks always go one at a time. |
 | `retries` | `3` | Per-chunk / per-part retry attempts. |
 | `fetchImpl` | global `fetch` | Custom fetch for tests / non-browser runtimes. |
 | `partUploader` | `xhrPartUploader` | Transport for one direct-S3 part `PUT`. See [Upload client](/docs/media/react/client#the-part-transport). |

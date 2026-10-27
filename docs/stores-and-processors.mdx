@@ -35,7 +35,7 @@ type DiskResolver = (name?: string) => Disk
 
 Ten methods, of which **eight are required**. The two optional ones are what a real Drive disk adds on top of the minimum, and each unlocks a specific behaviour rather than being decorative:
 
-- **`putStream`** writes a stream straight to the backend without buffering it in memory. The library uses it for a large upload that needs no conversions and whose size is known up front; when the method is absent it falls back to `put`, buffering the whole payload. On S3 the size matters: a stream has no knowable length and the API needs `ContentLength` up front, which is why `DiskWriteOptions.contentLength` exists.
+- **`putStream`** writes a stream straight to the backend without buffering it in memory. The library uses it for a large upload that needs no conversions and whose size is known up front, and to assemble a [resumable upload](/docs/media/uploads/resumable-tus) on a disk without native multipart; when the method is absent it falls back to `put`, buffering the whole payload. On S3 the size matters: a stream has no knowable length and the API needs `ContentLength` up front, which is why `DiskWriteOptions.contentLength` exists.
 - **`getVisibility`** answers whether an object is readable without credentials. This is the method `delivery.mode: 'auto'` asks: public ⇒ hand out the stable public URL, otherwise ⇒ sign one. A disk that cannot answer is treated as private, so `auto` degrades to `signed` rather than leaking a URL that would 403. See [Delivery](/docs/media/delivery).
 
 A couple more deliberate choices:
@@ -90,6 +90,7 @@ interface MediaStore {
   list(options?: MediaListOptions): Promise<MediaListPage>
   delete(id: string): Promise<void>
   nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number>
+  collectionTotals?(): Promise<MediaCollectionTotals[]>
 }
 ```
 
@@ -98,6 +99,8 @@ interface MediaStore {
 `list` is the **cross-owner** read, and it is not optional. It takes a `MediaListOptions` (`collection` / `ownerType` / `ownerId` / `prefix` filters, all `AND`ed, plus `cursor` and `limit`) and returns a `MediaListPage` — `{ items, nextCursor }`, where `nextCursor` is `null` on the last page. The ordering is a stable keyset: `createdAt` descending, then `id` descending, so paging stays consistent while rows are being written underneath it. Three helpers are exported for implementers: `encodeMediaCursor` / `decodeMediaCursor` (the cursor is base64url JSON of `{ createdAt, id }`) and `clampMediaListLimit` (defaults to `DEFAULT_MEDIA_LIST_LIMIT`, caps at `MAX_MEDIA_LIST_LIMIT`, so a caller cannot request an unbounded scan).
 
 Nothing inside `attach`/`url`/`delete` calls `list` — it exists for management views. It is what the [dashboard](/docs/media/dashboard/collections) browses stored records with, which is why a store that omits it leaves the console's collection views empty.
+
+`collectionTotals` is optional: `{ collection, count, sumSize }` per collection over the whole store, ordered by each collection's newest record first. The console's collection summary uses it when present (one aggregate) and pages through `list` when it is not.
 
 ### In-memory store
 
@@ -130,8 +133,9 @@ export default class extends BaseSchema {
       table.text('conversions')
       table.bigInteger('created_at').notNullable()
       table.bigInteger('updated_at').notNullable()
-      table.index(['owner_type', 'owner_id'], 'media_owner_idx')
       table.index(['owner_type', 'owner_id', 'collection'], 'media_owner_collection_idx')
+      table.index(['created_at', 'id'], 'media_created_idx')
+      table.index(['collection', 'created_at', 'id'], 'media_collection_created_idx')
     })
   }
 
@@ -154,7 +158,27 @@ defineConfig({
 node ace migration:run
 ```
 
-The two indexes back the library's hot paths — `listByOwner` (owner, optionally + collection) and the single-file replacement check. `connection` defaults to Lucid's default; `table` defaults to `media`.
+The indexes back the library's hot paths: the owner one serves `listByOwner` (owner, optionally + collection) and the single-file replacement check; the two `created_at` ones serve the newest-first `list()` pages the console reads, unfiltered and per collection. An owner-only index `(owner_type, owner_id)` would be redundant: those columns are the leftmost prefix of `media_owner_collection_idx`. A database that already has one (`media_owner_idx`) can keep it; nothing drops it. `connection` defaults to Lucid's default; `table` defaults to `media`.
+
+With the default `autoCreateSchema`, the store adds any missing index on boot (`CREATE INDEX IF NOT EXISTS`). A schema managed by migrations (`autoCreateSchema: false`) created before the `created_at` indexes existed gets them from a migration of its own:
+
+```ts title="database/migrations/..._index_media_created_at.ts"
+export default class extends BaseSchema {
+  async up() {
+    this.schema.alterTable('media', (table) => {
+      table.index(['created_at', 'id'], 'media_created_idx')
+      table.index(['collection', 'created_at', 'id'], 'media_collection_created_idx')
+    })
+  }
+
+  async down() {
+    this.schema.alterTable('media', (table) => {
+      table.dropIndex(['created_at', 'id'], 'media_created_idx')
+      table.dropIndex(['collection', 'created_at', 'id'], 'media_collection_created_idx')
+    })
+  }
+}
+```
 
 <Callout type="info">
   Import it directly from the subpath (`@adonis-agora/media/stores/lucid`) if you need the `LucidMediaStore` class — e.g. to construct one by hand in a test that uses a real database.

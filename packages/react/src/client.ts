@@ -151,8 +151,8 @@ export interface MediaUploadClientOptions {
   /** Bytes per TUS chunk. Default 8 MiB. The direct-S3 part size is decided by the server, not this. */
   chunkSize?: number;
   /**
-   * Reserved for parallel part PUTs. Direct-S3 uploads are currently sequential, so this option does
-   * not apply to direct; it is kept for the other strategies and forward compatibility.
+   * Direct-S3 parts uploaded at once. Default 4. TUS chunks always go one at a time — each `PATCH`
+   * must start at the offset the previous one reached.
    */
   concurrency?: number;
   /** Per-chunk/part retry attempts. Default 3. */
@@ -249,6 +249,7 @@ const DEFAULT_UPLOADS_PATH = '/media/uploads';
 /** Mirrors the server's `uploads.direct.routes.prefix` default. */
 const DEFAULT_DIRECT_PATH = '/media/uploads/direct/sessions';
 const DEFAULT_RETRIES = 3;
+const DEFAULT_CONCURRENCY = 4;
 const TUS_VERSION = '1.0.0';
 
 // --- small helpers (mirrors the reference client's utilities) --------------------------------
@@ -314,6 +315,31 @@ async function mergeHeaders(
 ): Promise<Record<string, string>> {
   if (!getHeaders) return { ...(staticHeaders ?? {}) };
   return { ...(staticHeaders ?? {}), ...headersInitToRecord(await getHeaders()) };
+}
+
+/**
+ * Run `task` over `items` in order, at most `limit` at a time. After the first failure no further
+ * item starts; the error is rethrown once the tasks already running have settled.
+ */
+async function runBounded<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  let failure: { error: unknown } | undefined;
+  const worker = async (): Promise<void> => {
+    while (failure === undefined && next < items.length) {
+      const item = items[next++] as T;
+      try {
+        await task(item);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure !== undefined) throw failure.error;
 }
 
 async function withRetry<T>(attempts: number, fn: () => Promise<T>): Promise<T> {
@@ -546,20 +572,35 @@ export function createMediaUploadClient(
     let sent = total - pendingBytes;
     options.onProgress?.(sent, total);
 
-    // 2) Upload each pending part in order, confirming each with the server as it lands.
+    // 2) Upload the pending parts, a few at a time in part order, confirming each with the server
+    // as it lands (the server records confirmations in any order).
     const uploaded: UploadedPart[] = [];
-    for (const part of pending) {
+    const inFlight = new Map<number, number>();
+    const report = () => {
+      let loaded = sent;
+      for (const bytes of inFlight.values()) loaded += bytes;
+      options.onProgress?.(loaded, total);
+    };
+    const concurrency = Math.max(
+      1,
+      Math.floor(options.concurrency ?? clientOptions.concurrency ?? DEFAULT_CONCURRENCY),
+    );
+    await runBounded(pending, concurrency, async (part) => {
       if (options.signal?.aborted) throw abortError();
       const start = (part.partNumber - 1) * partSize;
       const end = Math.min(start + partSize, total);
       const slice = data.slice(start, end);
+      inFlight.set(part.partNumber, 0);
 
       // PUT straight to S3 via the (injectable) part transport — no app auth headers.
       const etag = await withRetry(retries, () =>
         partUploader(part.url, slice, {
           ...(meta.contentType !== undefined ? { contentType: meta.contentType } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
-          onBytes: (loaded) => options.onProgress?.(sent + loaded, total),
+          onBytes: (loaded) => {
+            inFlight.set(part.partNumber, loaded);
+            report();
+          },
         }),
       );
 
@@ -567,9 +608,10 @@ export function createMediaUploadClient(
       await postJson(`${directPath}/${session.id}/parts/${part.partNumber}`, { etag });
 
       uploaded.push({ partNumber: part.partNumber, etag });
+      inFlight.delete(part.partNumber);
       sent += end - start;
-      options.onProgress?.(sent, total);
-    }
+      report();
+    });
 
     // 3) Complete: hand the server the confirmed parts (sorted) so it can assemble the object.
     uploaded.sort((a, b) => a.partNumber - b.partNumber);
