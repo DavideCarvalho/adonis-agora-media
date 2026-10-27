@@ -1,5 +1,6 @@
 import type { DeliveryResult } from '../delivery.js';
 import { DEFAULT_DELIVERY_SIGNED_TTL_SECONDS } from '../delivery.js';
+import { openWithMetadata, utf8Of } from '../disk_read.js';
 import {
   ConversionArtifactMissingError,
   MediaNotFoundError,
@@ -158,7 +159,7 @@ export class HlsDeliveryHandler {
     const key = `${prefix}${requested}`;
 
     if (requested.toLowerCase().endsWith('.m3u8')) {
-      const content = Buffer.from(await disk.getBytes(key)).toString('utf8');
+      const content = utf8Of(await disk.getBytes(key));
       const rewritten = await rewriteHlsPlaylist(content, async (ref) => {
         const target = resolvePackagePath(requested, ref.uri);
         // A relative reference that escapes the package or names a file the transformer never
@@ -183,10 +184,10 @@ export class HlsDeliveryHandler {
       };
     }
 
-    const metadata = await disk.getMetaData(key);
+    const { metadata, stream } = await openWithMetadata(disk, key);
     return {
       kind: 'stream',
-      stream: await disk.getStream(key),
+      stream,
       mimeType:
         metadata.contentType ?? hlsArtifactContentType(requested) ?? 'application/octet-stream',
       size: metadata.contentLength,

@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream';
 import { publishMedia } from './diagnostics.js';
+import { uint8View } from './disk_read.js';
 import { UploadNotSupportedError } from './errors.js';
 import { isMultipartCapable } from './multipart.js';
 import type { StorageManager } from './storage_manager.js';
@@ -225,8 +226,11 @@ export class UploadManager {
     } else {
       // A disk without streaming support: buffer the stream, then `put`.
       const chunks: Buffer[] = [];
-      for await (const chunk of input.contents) chunks.push(Buffer.from(chunk));
-      await disk.put(input.key, new Uint8Array(Buffer.concat(chunks)), writeOptions);
+      for await (const chunk of input.contents) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      // A plain Uint8Array VIEW of the concatenated bytes — not a second copy of the payload.
+      await disk.put(input.key, uint8View(Buffer.concat(chunks)), writeOptions);
     }
 
     return { key: input.key, disk: diskName };

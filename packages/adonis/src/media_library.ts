@@ -20,6 +20,7 @@ import {
   verifyDelivery,
 } from './delivery_signing.js';
 import { type MediaDiagnosticPayloads, publishMedia } from './diagnostics.js';
+import { openWithMetadata, utf8Of } from './disk_read.js';
 import {
   ContentSignatureUnrecognizedError,
   ContentTypeMismatchError,
@@ -46,6 +47,7 @@ import {
   type ImageProcessor,
   presetCrops,
 } from './image_processor.js';
+import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
@@ -848,7 +850,19 @@ export class MediaLibrary {
       trusted?: boolean | undefined;
     },
   ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
-    const { widths, qualities, formats } = this.deliveryImages;
+    const size = this.#resizeParams(request);
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    return this.#resizedOf(record, size, request.accept);
+  }
+
+  /** Validate a `?w=`/`?q=` request against `delivery.images` (before any lookup, as always). */
+  #resizeParams(request: {
+    width: number | string;
+    quality?: number | string | undefined;
+    trusted?: boolean | undefined;
+  }): { width: number; quality: number } {
+    const { widths, qualities } = this.deliveryImages;
     const width = request.trusted
       ? numberInRange('width', request.width, 1, MAX_SIGNED_WIDTH)
       : allowedNumber('width', request.width, widths);
@@ -858,13 +872,20 @@ export class MediaLibrary {
         : request.trusted
           ? numberInRange('quality', request.quality, 1, 100)
           : allowedNumber('quality', request.quality, qualities);
+    return { width, quality };
+  }
 
-    const record = await this.store.find(id);
-    if (!record) throw new MediaNotFoundError(id);
+  /** {@link resized} for a record already in hand, with validated params. */
+  async #resizedOf(
+    record: MediaRecord,
+    { width, quality }: { width: number; quality: number },
+    accept: string | undefined,
+  ): Promise<{ record: MediaRecord; conversion: string | undefined }> {
+    const { id } = record;
     if (record.mimeType.startsWith('image/svg')) return { record, conversion: undefined };
     if (!record.mimeType.startsWith('image/')) throw new NotAnImageError(id, record.mimeType);
 
-    const format = negotiateFormat(request.accept, formats, record.mimeType);
+    const format = negotiateFormat(accept, this.deliveryImages.formats, record.mimeType);
     const name = `@w${width}q${quality}-${format}`;
     if (record.conversions[name]) return { record, conversion: name };
     const updated = await this.#generateConversionOnce(record, {
@@ -1180,8 +1201,18 @@ export class MediaLibrary {
    * `srcSet`. Like {@link url}, this answers "how", not "who": authorize the caller first.
    */
   async image(id: string, options: ResponsiveImageOptions = {}): Promise<ResponsiveImage> {
-    let record = await this.store.find(id);
+    const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
+    return this[imageOfRecord](record, options);
+  }
+
+  /** {@link image} for a record already fetched (by `media.access.image`). @internal */
+  async [imageOfRecord](
+    fetched: MediaRecord,
+    options: ResponsiveImageOptions = {},
+  ): Promise<ResponsiveImage> {
+    const { id } = fetched;
+    let record = fetched;
     if (options.onDemand) return this.#onDemandImage(record, options.onDemand);
     const presets = this.collections.get(record.collection).conversions ?? [];
 
@@ -1347,6 +1378,15 @@ export class MediaLibrary {
   ): Promise<MediaStream> {
     const record = await this.store.find(id);
     if (!record) throw new MediaNotFoundError(id);
+    return this[streamOfRecord](record, options);
+  }
+
+  /** {@link stream} for a record already fetched (by `media.access.stream`). @internal */
+  [streamOfRecord](
+    record: MediaRecord,
+    options: { conversions?: readonly string[]; expiresIn?: number } = {},
+  ): MediaStream {
+    const { id } = record;
     const entries = streamEntries(record, options.conversions);
     const first = entries[0];
     if (!first) throw new TransformNotReadyError(id, options.conversions?.join(', ') ?? 'hls/dash');
@@ -1448,7 +1488,7 @@ export class MediaLibrary {
 
     const format = streamFormatOf(file);
     if (format) {
-      const stored = Buffer.from(await disk.getBytes(key)).toString('utf8');
+      const stored = utf8Of(await disk.getBytes(key));
       return {
         kind: 'manifest',
         content: await signManifest(file, stored, options.query ?? ''),
@@ -1463,10 +1503,10 @@ export class MediaLibrary {
       const expiresIn = options.signedTtlSeconds ?? this.deliverySignedTtlSeconds;
       return { kind: 'redirect', url: await disk.getSignedUrl(key, { expiresIn }) };
     }
-    const metadata = await disk.getMetaData(key);
+    const { metadata, stream } = await openWithMetadata(disk, key);
     return {
       kind: 'stream',
-      stream: await disk.getStream(key),
+      stream,
       // A disk that stores everything as a generic type (S3 multipart) would make a player
       // refuse the segment; the extension knows better.
       mimeType:
@@ -1523,19 +1563,40 @@ export class MediaLibrary {
    * ```
    */
   async deliver(id: string, options: DeliverOptions = {}): Promise<DeliveryResult> {
-    const resizing = options.width !== undefined && options.width !== '';
-    const conversion = resizing
-      ? (
-          await this.resized(id, {
-            width: options.width!,
-            quality: options.quality,
-            accept: options.accept,
-            trusted: options.trusted,
-          })
-        ).conversion
-      : options.conversion;
-    const vary = resizing && options.accept !== undefined ? { vary: 'Accept' as const } : {};
-    const target = await this.#resolveTarget(id, conversion);
+    // Size params are validated before the lookup, so a bad `?w=` is refused even for an unknown id.
+    const size = this.#deliverySize(options);
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    return this.#deliverOf(record, options, size);
+  }
+
+  /** {@link deliver} for a record already fetched (by `media.access.serve`). @internal */
+  async [deliverRecord](
+    record: MediaRecord,
+    options: DeliverOptions = {},
+  ): Promise<DeliveryResult> {
+    return this.#deliverOf(record, options, this.#deliverySize(options));
+  }
+
+  #deliverySize(options: DeliverOptions): { width: number; quality: number } | undefined {
+    if (options.width === undefined || options.width === '') return undefined;
+    return this.#resizeParams({
+      width: options.width,
+      quality: options.quality,
+      trusted: options.trusted,
+    });
+  }
+
+  async #deliverOf(
+    found: MediaRecord,
+    options: DeliverOptions,
+    size: { width: number; quality: number } | undefined,
+  ): Promise<DeliveryResult> {
+    // The resize hands back the record it generated into, so the target needs no second lookup.
+    const resized = size ? await this.#resizedOf(found, size, options.accept) : undefined;
+    const conversion = resized ? resized.conversion : options.conversion;
+    const vary = resized && options.accept !== undefined ? { vary: 'Accept' as const } : {};
+    const target = await this.#targetOf(resized?.record ?? found, conversion);
     const disk = this.storage.disk(target.disk);
     const mode = await resolveDeliveryMode(options.mode ?? this.deliveryMode, disk, target.path);
 
@@ -1553,10 +1614,10 @@ export class MediaLibrary {
 
     // Prefer the disk's own metadata over the record's: for a conversion the record describes the
     // ORIGINAL (a `thumb` of a PNG may well be a WEBP), and its `size` is the original's too.
-    const metadata = await disk.getMetaData(target.path);
+    const { metadata, stream } = await openWithMetadata(disk, target.path);
     return {
       kind: 'stream',
-      stream: await disk.getStream(target.path),
+      stream,
       mimeType: deliveredMimeType(metadata.contentType, target.record.mimeType, conversion),
       size: metadata.contentLength,
       fileName: target.fileName,

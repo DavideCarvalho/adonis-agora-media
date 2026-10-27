@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream';
+import { uint8View } from '../disk_read.js';
 import { isExtendedDisk } from '../extended_disk.js';
 import type { MediaConversion, MediaRecord } from '../media_record.js';
 import type { MediaCollectionTotals, MediaListOptions, MediaListPage } from '../media_store.js';
@@ -428,7 +429,8 @@ export class DashboardService {
       }
       chunks.push(buffer);
     }
-    await disk.put(key, new Uint8Array(Buffer.concat(chunks)), contentType ? { contentType } : {});
+    // A plain Uint8Array VIEW of the concatenated bytes — not a second copy of the upload.
+    await disk.put(key, uint8View(Buffer.concat(chunks)), contentType ? { contentType } : {});
   }
 
   /**
