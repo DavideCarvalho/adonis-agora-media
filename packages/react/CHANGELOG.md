@@ -1,5 +1,11 @@
 # @adonis-agora/media-react
 
+## 0.8.1
+
+### Patch Changes
+
+- [#228](https://github.com/DavideCarvalho/adonis-agora-media/pull/228) [`98ae7c1`](https://github.com/DavideCarvalho/adonis-agora-media/commit/98ae7c1af1187943eff5215e41196bff36e508f0) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Direct-S3 uploads `PUT` their parts in parallel, four at a time by default. The `concurrency` client option (and the per-upload one) now sets that bound; it was accepted but ignored. A failed part stops new parts from starting and rejects once the running ones settle.
+
 ## 0.8.0
 
 ### Minor Changes
