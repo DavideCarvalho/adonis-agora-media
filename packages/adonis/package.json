@@ -192,7 +192,7 @@
     "luxon": "3.7.2",
     "mediabunny": "1.62.1",
     "sharp": "0.35.5",
-    "tempura": "0.4.1",
+    "tempura": "1.0.1",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
