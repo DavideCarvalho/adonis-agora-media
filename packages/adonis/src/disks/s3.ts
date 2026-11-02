@@ -6,6 +6,7 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
+  type DeleteObjectsCommandOutput,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -429,17 +430,40 @@ export class S3Disk implements Disk, MultipartUploadDisk, ExtendedDisk {
     await this.delete(from);
   }
 
+  private batchDeleteUnsupported = false;
+
+  private async deleteOneByOne(keys: string[]): Promise<void> {
+    for (const key of keys) {
+      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(key) }));
+    }
+  }
+
   async deleteMany(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
     // S3 caps a DeleteObjects batch at 1000 keys.
     for (let start = 0; start < keys.length; start += 1000) {
       const batch = keys.slice(start, start + 1000);
-      const res = await this.client.send(
-        new DeleteObjectsCommand({
-          Bucket: this.bucket,
-          Delete: { Objects: batch.map((key) => ({ Key: this.key(key) })) },
-        }),
-      );
+      if (this.batchDeleteUnsupported) {
+        await this.deleteOneByOne(batch);
+        continue;
+      }
+      let res: DeleteObjectsCommandOutput;
+      try {
+        res = await this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: batch.map((key) => ({ Key: this.key(key) })) },
+          }),
+        );
+      } catch (error) {
+        const { name, Code } = (error ?? {}) as { name?: string; Code?: string };
+        if (name !== 'MissingContentMD5' && Code !== 'MissingContentMD5') throw error;
+        // MinIO without flexible-checksum support insists on Content-MD5, which current SDKs no
+        // longer send on DeleteObjects (they send CRC32). Remember it: the batch call never works.
+        this.batchDeleteUnsupported = true;
+        await this.deleteOneByOne(batch);
+        continue;
+      }
       // DeleteObjects returns 200 with a per-key Errors[] on partial failure; single delete()
       // throws on failure, so match that here instead of swallowing.
       if (res.Errors && res.Errors.length > 0) {
