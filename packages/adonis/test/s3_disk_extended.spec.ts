@@ -158,6 +158,31 @@ describe('S3Disk — ExtendedDisk surface', () => {
     });
   });
 
+  describe('deleteMany on MinIO (MissingContentMD5)', () => {
+    it('falls back to single deletes and stops trying the batch call', async () => {
+      mock
+        .on(DeleteObjectsCommand)
+        .rejects(Object.assign(new Error('missing md5'), { name: 'MissingContentMD5' }));
+      mock.on(DeleteObjectCommand).resolves({});
+      const disk = new S3Disk({ client, bucket: 'b', keyPrefix: 'up' });
+
+      await disk.deleteMany(['a', 'b']);
+      await disk.deleteMany(['c']);
+
+      expect(mock.commandCalls(DeleteObjectsCommand)).toHaveLength(1);
+      expect(mock.commandCalls(DeleteObjectCommand).map((c) => c.args[0].input.Key)).toEqual([
+        'up/a',
+        'up/b',
+        'up/c',
+      ]);
+    });
+
+    it('rethrows any other batch error', async () => {
+      mock.on(DeleteObjectsCommand).rejects(new Error('boom'));
+      await expect(new S3Disk({ client, bucket: 'b' }).deleteMany(['a'])).rejects.toThrow('boom');
+    });
+  });
+
   describe('list', () => {
     it('returns folders from CommonPrefixes and files from Contents', async () => {
       mock.on(ListObjectsV2Command).resolves({
