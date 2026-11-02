@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 0.28.2
+
+### Patch Changes
+
+- [#246](https://github.com/DavideCarvalho/adonis-agora-media/pull/246) [`2e21558`](https://github.com/DavideCarvalho/adonis-agora-media/commit/2e215589fab2c7373bd7f34e7f97d807dc587a4f) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `S3Disk.deleteMany` now works on MinIO versions that reject `DeleteObjects` with `MissingContentMD5`: it falls back to single deletes and remembers.
+
 ## 0.28.1
 
 ### Patch Changes
