@@ -161,6 +161,21 @@ describe('MediaManager.fake()', () => {
     expect(await media.library.find(record.id)).not.toBeNull();
   });
 
+  it('media.access goes through the recording library while faked', async () => {
+    const fake = real.manager.fake();
+    const record = await real.manager.library.attach(attachInput);
+    const ctx = { auth: { user: { id: '1' } } };
+
+    const image = await real.manager.access.image(ctx, record.id, { authorize: () => true });
+    expect(image).toBeDefined();
+    fake.assertCalled('find', (id) => id === record.id);
+
+    fake.stub('find', async () => null);
+    await expect(
+      real.manager.access.image(ctx, record.id, { authorize: () => true }),
+    ).rejects.toThrow();
+  });
+
   it('restore() brings the original back; fake twice and restore without fake are safe', async () => {
     const originalLibrary = real.manager.library;
     const originalStore = real.manager.store;

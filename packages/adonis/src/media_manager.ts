@@ -111,7 +111,7 @@ export class MediaManager {
   /** Kept so {@link fake} can build an in-memory twin with the same collections and settings. */
   readonly #options: MediaManagerOptions;
   /** The in-memory twin every accessor defers to while {@link fake} is active. */
-  #fake: { manager: MediaManager; handle: MediaFake } | undefined;
+  #fake: { manager: MediaManager; handle: MediaFake; access: MediaAccess } | undefined;
 
   constructor(options: MediaManagerOptions) {
     this.#options = options;
@@ -211,7 +211,7 @@ export class MediaManager {
 
   /** Authorization for media: the delivery route, authorized `image()`, `authorize()`/`can()`. */
   get access(): MediaAccess {
-    return this.#fake ? this.#fake.manager.access : this.#access;
+    return this.#fake ? this.#fake.access : this.#access;
   }
 
   /** Column attachments. */
@@ -279,7 +279,15 @@ export class MediaManager {
         if (this.#fake?.handle === handle) this.restore();
       },
     });
-    this.#fake = { manager, handle };
+    // Access goes through the RECORDING library, so `media.access.image/serve` calls are recorded
+    // and honour stubs, like a direct `media.library` call.
+    const access = new MediaAccess({
+      library: handle.library,
+      ...(this.#options.accessIdentity !== undefined
+        ? { identity: this.#options.accessIdentity }
+        : {}),
+    });
+    this.#fake = { manager, handle, access };
     return handle;
   }
 

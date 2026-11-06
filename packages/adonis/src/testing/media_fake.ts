@@ -195,7 +195,12 @@ export class MediaFake {
           return (ownerType: string, ownerId: string | number) =>
             target.for.call(proxy, ownerType, ownerId);
         }
-        if (!isFakeMethod(prop)) return Reflect.get(target, prop, target);
+        if (!isFakeMethod(prop)) {
+          // Bound to the real library: its methods read private fields, which a Proxy `this` lacks
+          // (e.g. `media.access.image` calls the symbol-keyed `imageOfRecord`).
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
         return (...args: unknown[]) => {
           (this.calls[prop] as unknown[][]).push(args);
           const stub = this.#stubs.get(prop) as ((...a: unknown[]) => unknown) | undefined;
