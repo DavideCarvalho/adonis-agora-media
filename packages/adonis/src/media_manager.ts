@@ -14,6 +14,14 @@ import type { MediaStore } from './media_store.js';
 import type { UploadSessionStore } from './resumable_upload.js';
 import { ResumableUploadManager } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
+import { FakeImageProcessor } from './testing/fake_image_processor.js';
+import { InMemoryMediaStore } from './testing/in_memory_media_store.js';
+import { InMemoryUploadSessionStore } from './testing/in_memory_upload_session_store.js';
+import {
+  lazyInMemoryDiskResolver,
+  MediaFake,
+  type MediaFakeOptions,
+} from './testing/media_fake.js';
 import type { DiskResolver, MultipartPart } from './types.js';
 import {
   type AbortDirectUploadInput,
@@ -90,28 +98,27 @@ export interface MediaManagerOptions {
  * ```
  */
 export class MediaManager {
-  readonly storage: StorageManager;
-  readonly library: MediaLibrary;
-  /** Authorization for media: the delivery route, authorized `image()`, `authorize()`/`can()`. */
-  readonly access: MediaAccess;
-  readonly attachments: AttachmentManager;
-  /**
-   * The configured persistence SPI. Exposed for management/console reads (e.g. the cross-owner
-   * {@link MediaStore.list}); day-to-day writes go through {@link MediaManager.library}.
-   */
-  readonly store: MediaStore;
-  /** Direct-S3 upload coordinator (proxy + direct multipart modes). */
-  readonly uploads: UploadManager;
+  readonly #storage: StorageManager;
+  readonly #library: MediaLibrary;
+  readonly #access: MediaAccess;
+  readonly #attachments: AttachmentManager;
+  readonly #store: MediaStore;
+  readonly #uploads: UploadManager;
   /** Resumable (TUS) upload coordinator — present only when a session store is configured. */
   readonly #resumable: ResumableUploadManager | undefined;
   /** Session-backed direct upload coordinator — present only when a session store is configured. */
   readonly #direct: DirectUploadManager | undefined;
+  /** Kept so {@link fake} can build an in-memory twin with the same collections and settings. */
+  readonly #options: MediaManagerOptions;
+  /** The in-memory twin every accessor defers to while {@link fake} is active. */
+  #fake: { manager: MediaManager; handle: MediaFake; access: MediaAccess } | undefined;
 
   constructor(options: MediaManagerOptions) {
-    this.store = options.store;
-    this.storage = new StorageManager({ default: options.defaultDisk, resolve: options.resolve });
-    this.library = new MediaLibrary({
-      storage: this.storage,
+    this.#options = options;
+    this.#store = options.store;
+    this.#storage = new StorageManager({ default: options.defaultDisk, resolve: options.resolve });
+    this.#library = new MediaLibrary({
+      storage: this.#storage,
       store: options.store,
       ...(options.collections !== undefined ? { collections: options.collections } : {}),
       ...(options.imageProcessor !== undefined ? { imageProcessor: options.imageProcessor } : {}),
@@ -131,12 +138,12 @@ export class MediaManager {
         ? { deliveryStreamPath: options.deliveryStreamPath }
         : {}),
     });
-    this.access = new MediaAccess({
-      library: this.library,
+    this.#access = new MediaAccess({
+      library: this.#library,
       ...(options.accessIdentity !== undefined ? { identity: options.accessIdentity } : {}),
     });
-    this.attachments = new AttachmentManager({
-      storage: this.storage,
+    this.#attachments = new AttachmentManager({
+      storage: this.#storage,
       ...(options.imageProcessor !== undefined ? { imageProcessor: options.imageProcessor } : {}),
       ...(options.attachmentKeyPrefix !== undefined
         ? { keyPrefix: options.attachmentKeyPrefix }
@@ -145,8 +152,8 @@ export class MediaManager {
         ? { emitDiagnostics: options.emitDiagnostics }
         : {}),
     });
-    this.uploads = new UploadManager({
-      storage: this.storage,
+    this.#uploads = new UploadManager({
+      storage: this.#storage,
       ...(options.uploadMode !== undefined ? { mode: options.uploadMode } : {}),
       ...(options.uploadPartSize !== undefined ? { partSize: options.uploadPartSize } : {}),
       ...(options.uploadPresignTtlSeconds !== undefined
@@ -158,7 +165,7 @@ export class MediaManager {
     });
     if (options.uploadSessions !== undefined) {
       this.#resumable = new ResumableUploadManager({
-        storage: this.storage,
+        storage: this.#storage,
         sessions: options.uploadSessions,
         ...(options.resumableTmpPrefix !== undefined
           ? { tmpPrefix: options.resumableTmpPrefix }
@@ -173,11 +180,11 @@ export class MediaManager {
     }
     if (options.directUploadSessions !== undefined) {
       this.#direct = new DirectUploadManager({
-        storage: this.storage,
+        storage: this.#storage,
         sessions: options.directUploadSessions,
         // The manager reads the whitelist from the same registry attach uses, so the initiate
         // gate and the attach-time barrier cannot drift.
-        collections: this.library.collections,
+        collections: this.#library.collections,
         ...(options.directPartSize !== undefined ? { partSize: options.directPartSize } : {}),
         ...(options.directPresignTtlSeconds !== undefined
           ? { presignTtlSeconds: options.directPresignTtlSeconds }
@@ -192,11 +199,109 @@ export class MediaManager {
     }
   }
 
+  /** Storage façade the layers resolve disks through. */
+  get storage(): StorageManager {
+    return this.#fake ? this.#fake.manager.storage : this.#storage;
+  }
+
+  /** Owner collections + conversions. While {@link fake} is active, the recording in-memory twin. */
+  get library(): MediaLibrary {
+    return this.#fake ? this.#fake.handle.library : this.#library;
+  }
+
+  /** Authorization for media: the delivery route, authorized `image()`, `authorize()`/`can()`. */
+  get access(): MediaAccess {
+    return this.#fake ? this.#fake.access : this.#access;
+  }
+
+  /** Column attachments. */
+  get attachments(): AttachmentManager {
+    return this.#fake ? this.#fake.manager.attachments : this.#attachments;
+  }
+
+  /**
+   * The configured persistence SPI. Exposed for management/console reads (e.g. the cross-owner
+   * {@link MediaStore.list}); day-to-day writes go through {@link MediaManager.library}.
+   */
+  get store(): MediaStore {
+    return this.#fake ? this.#fake.manager.store : this.#store;
+  }
+
+  /** Direct-S3 upload coordinator (proxy + direct multipart modes). */
+  get uploads(): UploadManager {
+    return this.#fake ? this.#fake.manager.uploads : this.#uploads;
+  }
+
+  /**
+   * Swap the whole manager onto in-memory doubles — the `drive.fake()` / `mail.fake()` of this
+   * package. Because the swap happens INSIDE the manager, code that already holds it (the
+   * `@adonis-agora/media/services/main` singleton, captured once at boot) sees the fake too.
+   *
+   * The twin runs the real {@link MediaLibrary} with this manager's collections and delivery
+   * settings over an `InMemoryMediaStore`, in-memory disks for every disk name and a
+   * `FakeImageProcessor`, so attach/list/deliver/signedUrl/delete keep their real semantics. Every
+   * `media.library` call is recorded on the returned {@link MediaFake}, which can also stub a method.
+   *
+   * Calling it again replaces the previous fake with a fresh one. Undo with {@link restore}.
+   *
+   * ```ts
+   * const fake = media.fake()
+   * // ... exercise the app ...
+   * fake.assertCalled('delete', (id) => id === record.id)
+   * media.restore()
+   * ```
+   */
+  fake(options: MediaFakeOptions = {}): MediaFake {
+    this.restore();
+    const { resolve, disks } = lazyInMemoryDiskResolver(
+      this.#options.defaultDisk,
+      options.visibility,
+    );
+    const store = options.store ?? new InMemoryMediaStore();
+    const manager = new MediaManager({
+      ...this.#options,
+      resolve,
+      store,
+      imageProcessor: options.imageProcessor ?? new FakeImageProcessor(),
+      ...(this.#options.uploadSessions !== undefined
+        ? { uploadSessions: new InMemoryUploadSessionStore() }
+        : {}),
+      ...(this.#options.directUploadSessions !== undefined
+        ? { directUploadSessions: new InMemoryUploadSessionStore() }
+        : {}),
+    });
+    const handle: MediaFake = new MediaFake({
+      library: manager.library,
+      store,
+      resolve,
+      disks,
+      onRestore: () => {
+        if (this.#fake?.handle === handle) this.restore();
+      },
+    });
+    // Access goes through the RECORDING library, so `media.access.image/serve` calls are recorded
+    // and honour stubs, like a direct `media.library` call.
+    const access = new MediaAccess({
+      library: handle.library,
+      ...(this.#options.accessIdentity !== undefined
+        ? { identity: this.#options.accessIdentity }
+        : {}),
+    });
+    this.#fake = { manager, handle, access };
+    return handle;
+  }
+
+  /** Undo {@link fake}: the real store, disks and library are back. A no-op when not faked. */
+  restore(): void {
+    this.#fake = undefined;
+  }
+
   /**
    * The resumable (TUS) upload coordinator. Throws {@link ResumableUploadsNotConfiguredError} unless
    * a session store was configured via `uploads.resumable` in `config/media.ts`.
    */
   get resumable(): ResumableUploadManager {
+    if (this.#fake) return this.#fake.manager.resumable;
     if (!this.#resumable) throw new ResumableUploadsNotConfiguredError();
     return this.#resumable;
   }
@@ -230,13 +335,14 @@ export class MediaManager {
    * unless a session store was configured via `uploads.direct` in `config/media.ts`.
    */
   get direct(): DirectUploadManager {
+    if (this.#fake) return this.#fake.manager.direct;
     if (!this.#direct) throw new DirectUploadsNotConfiguredError();
     return this.#direct;
   }
 
   /** Whether session-backed direct uploads are configured (a session store is present). */
   get hasDirect(): boolean {
-    return this.#direct !== undefined;
+    return this.#fake ? this.#fake.manager.hasDirect : this.#direct !== undefined;
   }
 
   /**
@@ -273,7 +379,7 @@ export class MediaManager {
 
   /** Whether resumable (TUS) uploads are configured (a session store is present). */
   get hasResumable(): boolean {
-    return this.#resumable !== undefined;
+    return this.#fake ? this.#fake.manager.hasResumable : this.#resumable !== undefined;
   }
 
   /** Resolve a raw disk by name (escape hatch to the underlying Drive disk). */

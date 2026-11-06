@@ -360,6 +360,49 @@ const library = new MediaLibrary({
 In a real app you can also `drive.fake()` from `@adonisjs/drive` to back the disks with an in-memory
 fake while keeping the rest of the wiring intact.
 
+### Faking the `media` service in app tests
+
+`import media from '@adonis-agora/media/services/main'` captures the manager once at boot, so
+`app.container.swap(MediaManager, ...)` never reaches code that already imported it — and
+monkeypatching `media.library.attach = ...` leaks between suites. Use `media.fake()` instead, the
+same idea as `drive.fake()` / `mail.fake()`:
+
+```ts
+import media from '@adonis-agora/media/services/main'
+
+test('uploads the avatar', async ({ assert, cleanup }) => {
+  const fake = media.fake() // every `media.*` now runs in memory
+  cleanup(() => media.restore())
+
+  await client.post('/avatar').file('avatar', path).loginAs(user)
+
+  // Real library semantics (collections, whitelist, single-file replace, delivery) over an
+  // in-memory store, in-memory disks and a fake image processor:
+  const [record] = await media.library.list('User', user.id, 'avatar')
+  assert.equal(fake.disk().files.size, 1)
+
+  // Every `media.library` call is recorded with its typed arguments:
+  fake.assertCalled('attach', (input) => input.collection === 'avatar')
+  assert.equal(fake.calls.signedUrl[0]?.[1], 300) // the TTL passed to signedUrl
+  fake.assertNotCalled('delete')
+
+  // Force a result or an error the in-memory library would not produce:
+  fake.stub('deliver', async () => ({ kind: 'redirect', url: 'https://cdn.test/x' }))
+  fake.stub('attach', () => {
+    throw new Error('S3 is down')
+  })
+})
+```
+
+- `media.fake(options?)` — `{ visibility?: 'private' | 'public' | 'unknown', store?, imageProcessor? }`.
+  Keeps the configured collections and delivery settings; every disk name resolves to an
+  `InMemoryDisk` (`fake.disk(name)`). Calling it again starts a fresh fake.
+- `fake.calls.<method>` — args tuples per call, for `attach`, `attachExisting`, `list`, `find`,
+  `delete`, `url`, `deliver`, `signedUrl`, `ensureConversion`, `transform` (`for(...)` records as
+  the method it calls). `fake.assertCalled` / `fake.assertNotCalled` take an optional predicate.
+- `fake.stub(method, fn)` / `fake.unstub(method)` — stubbed calls are still recorded.
+- `media.restore()` puts the real manager back (safe to call without a fake, or twice).
+
 ## Links
 
 - Repo: https://github.com/DavideCarvalho/adonis-media
