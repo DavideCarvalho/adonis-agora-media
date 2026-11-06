@@ -5,3 +5,11 @@ export type { DiskVisibility } from './in_memory_disk.js';
 export { InMemoryDisk, inMemoryDiskResolver } from './in_memory_disk.js';
 export { InMemoryMediaStore } from './in_memory_media_store.js';
 export { InMemoryUploadSessionStore } from './in_memory_upload_session_store.js';
+export type {
+  MediaFakeCall,
+  MediaFakeCalls,
+  MediaFakeMethod,
+  MediaFakeOptions,
+  MediaFakeStub,
+} from './media_fake.js';
+export { lazyInMemoryDiskResolver, MEDIA_FAKE_METHODS, MediaFake } from './media_fake.js';
