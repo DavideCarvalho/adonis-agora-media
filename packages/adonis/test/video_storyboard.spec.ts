@@ -76,14 +76,14 @@ describe('storyboard WebVTT', () => {
     });
 
     expect(vtt).toBe(
-      [
+      `${[
         'WEBVTT',
         '00:00:00.000 --> 00:00:05.000\nstoryboard-001.jpg#xywh=0,0,160,90',
         '00:00:05.000 --> 00:00:10.000\nstoryboard-001.jpg#xywh=160,0,160,90',
         '00:00:10.000 --> 00:00:15.000\nstoryboard-001.jpg#xywh=0,90,160,90',
         '00:00:15.000 --> 00:00:20.000\nstoryboard-001.jpg#xywh=160,90,160,90',
         '00:00:20.000 --> 00:00:23.000\nstoryboard-002.jpg#xywh=0,0,160,90',
-      ].join('\n\n') + '\n',
+      ].join('\n\n')}\n`,
     );
   });
 

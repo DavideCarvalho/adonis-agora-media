@@ -400,7 +400,7 @@ export function buildStoryboardVtt(input: {
       `${vttTime(start)} --> ${vttTime(end)}\nstoryboard-${sheet}.jpg#xywh=${x},${y},${width},${input.height}`,
     );
   }
-  return ['WEBVTT', ...cues].join('\n\n') + '\n';
+  return `${['WEBVTT', ...cues].join('\n\n')}\n`;
 }
 
 /**
