@@ -291,7 +291,8 @@ export function buildHlsArgs(input: {
  * Validate a ladder while the config is in hand — a bad rung would otherwise fail deep inside
  * libx264 with a cryptic error on the first transcode.
  */
-function validateLadder(ladder: FfmpegRendition[] | undefined): void {
+/** Check a ladder at config time: even positive heights, parseable bitrates. Exported for the other engines. */
+export function validateLadder(ladder: FfmpegRendition[] | undefined): void {
   for (const r of ladder ?? []) {
     if (!Number.isInteger(r.height) || r.height <= 0 || r.height % 2 !== 0) {
       throw new Error(
@@ -304,7 +305,8 @@ function validateLadder(ladder: FfmpegRendition[] | undefined): void {
 }
 
 /** `'2800k'` → 2_800_000. Plain numbers pass through. */
-function parseBitrate(value: string): number {
+/** `'800k'` → `800000`, `'5M'` → `5000000`. Exported for the other engines. */
+export function parseBitrate(value: string): number {
   const match = /^(\d+(?:\.\d+)?)([kKmM]?)$/.exec(value.trim());
   if (!match) throw new Error(`Invalid bitrate "${value}" (expected e.g. '800k', '5M', '128000')`);
   const n = Number(match[1]);
@@ -547,6 +549,7 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
     '128k';
 
   return {
+    storyboard: true,
     async package(request: VideoPackageRequest): Promise<VideoPackageSummary> {
       const summary = await probeSource(ffprobePath, request.sourcePath, 'video');
       // Same definitive signal the mediabunny engine gives for an unusable source, so callers

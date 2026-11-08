@@ -51,6 +51,7 @@ function attach(library: MediaLibrary, contents: Buffer) {
 /** Writes the HLS master and, when asked and `writeStoryboard`, a storyboard. */
 function fakeEngine(requests: VideoPackageRequest[], writeStoryboard = true): VideoPackagingEngine {
   return {
+    storyboard: true,
     async package(request) {
       requests.push(request);
       if (request.hlsEntry) await writeFile(join(request.outputDir, request.hlsEntry), '#EXTM3U');
@@ -159,8 +160,14 @@ describe('transformers.video({ storyboard })', () => {
     await expect(library.transform(record.id, 'video')).rejects.toThrow(/storyboard\.vtt/);
   });
 
-  it('refuses at config time without an engine that decodes frames', () => {
+  it('refuses at config time without an engine that writes it', () => {
     expect(() => new VideoTransformer({ storyboard: true })).toThrow(/engines\.ffmpeg/);
+    expect(() => new VideoTransformer({ engine: engines.mediabunny(), storyboard: true })).toThrow(
+      /engines\.ffmpeg/,
+    );
+    expect(
+      () => new VideoTransformer({ engine: { package: async () => ({}) }, storyboard: true }),
+    ).toThrow(/engines\.ffmpeg/);
   });
 
   it('refuses a non-positive interval at config time', () => {

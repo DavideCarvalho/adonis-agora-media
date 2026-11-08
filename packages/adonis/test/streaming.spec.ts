@@ -132,6 +132,7 @@ const STORYBOARD_VTT = [
 
 function fakeEngine(requests: VideoPackageRequest[] = []): VideoPackagingEngine {
   return {
+    storyboard: true,
     async package(request) {
       requests.push(request);
       if (request.dashManifest) await writeFile(join(request.outputDir, request.dashManifest), MPD);
