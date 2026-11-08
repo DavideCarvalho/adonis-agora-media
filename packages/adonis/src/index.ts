@@ -278,9 +278,12 @@ export type {
 export {
   buildDashArgs,
   buildHlsArgs,
+  buildStoryboardArgs,
+  buildStoryboardVtt,
   effectiveLadder,
   ffmpegVideoEngine,
   ffprobeEngine,
+  storyboardTileHeight,
 } from './transformers/ffmpeg.js';
 export type {
   ImagePlaceholder,
@@ -301,6 +304,8 @@ export type {
   VideoPackageSummary,
   VideoPackagingEngine,
   VideoSegmentFormat,
+  VideoStoryboardOptions,
+  VideoStoryboardRequest,
   VideoTransformerOptions,
   WebCodecsProvider,
   WebCodecsSupport,
@@ -309,6 +314,8 @@ export {
   resolveWebCodecsSupport,
   VIDEO_DASH_MANIFEST,
   VIDEO_HLS_ENTRY,
+  VIDEO_STORYBOARD,
+  VIDEO_STORYBOARD_DEFAULTS,
   VideoTransformer,
 } from './transformers/video.js';
 export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js';

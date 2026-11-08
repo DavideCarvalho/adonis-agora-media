@@ -151,6 +151,7 @@ Deleting the media deletes every listed artifact (batched via `deleteMany` on ca
 | `engine` | mediabunny | `engines.ffmpeg({ ladder })` to transcode, or your own engine. |
 | `webcodecs` | — | Inject a WebCodecs implementation into the mediabunny engine (see below). |
 | `eager` | `false` | Run inside attach (think twice — see above). |
+| `storyboard` | off | Timeline thumbnails: `true`, or `{ interval, width, columns, rows }` (see below). Needs an engine that decodes frames (`engines.ffmpeg()`). |
 
 The package files upload to the disk 6 at a time. On the first failed upload no new one starts; the error is rethrown once the uploads already running have settled, and the failure sweep then deletes everything written, including files whose upload had started. The persisted `files` list is sorted.
 
@@ -221,6 +222,26 @@ CMAF packages go through ffmpeg's DASH muxer, which writes the MPD and the HLS m
 <Callout type="warn" title="Transcoding is heavy">
   A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'video')` from background work, on a worker sized for it.
 </Callout>
+
+### Timeline thumbnails (storyboard)
+
+The preview a player shows over the progress bar while scrubbing. With `storyboard`, the engine takes a frame every `interval` seconds (default 5), scales it to `width` px (default 160; the height keeps the aspect ratio, rounded to even) and tiles `columns` × `rows` thumbnails (default 10 × 10) per JPEG sheet — `storyboard-001.jpg`, `storyboard-002.jpg`… — plus a WebVTT, `storyboard.vtt` (`VIDEO_STORYBOARD`), mapping each interval to its tile:
+
+```text
+WEBVTT
+
+00:00:00.000 --> 00:00:05.000
+storyboard-001.jpg#xywh=0,0,160,90
+```
+
+```ts
+transformers.video({
+  engine: engines.ffmpeg({ ladder: engines.ladders.standard }),
+  storyboard: true,
+})
+```
+
+The files land in the package next to the segments, so the stream route serves them (sheets as `image/jpeg`), and the conversion `meta.storyboard` names the WebVTT. Point a `<track kind="metadata" label="thumbnails" default>` at it — the format Video.js, Vidstack and JW Player read. The ffmpeg engine runs the storyboard decode alongside the encode, from the same local source: no second download. The default mediabunny engine cannot decode frames in Node, so `storyboard` without an engine is refused at config time.
 
 ---
 

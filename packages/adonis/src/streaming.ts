@@ -109,6 +109,8 @@ export function streamArtifactContentType(file: string): string | undefined {
   if (lower.endsWith('.aac')) return 'audio/aac';
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
   if (lower.endsWith('.vtt')) return 'text/vtt';
+  // Storyboard sprite sheets (timeline thumbnails) live in the same package.
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   return undefined;
 }
 
