@@ -231,7 +231,8 @@ export function createVideoEngine(
  * output, its muxer fails an assertion when the shared audio track closes (`HlsMuxer.
  * advancePlaylist`, mediabunny 1.65.2) — from a promise nobody awaits, so it surfaces as an
  * unhandled rejection that takes the worker process down. Video-only variants and a lone audio
- * playlist do not hit it; the extra cost is decoding the audio twice, which is cheap.
+ * playlist do not hit it; the extra cost is decoding the audio twice, which is cheap. Reported
+ * upstream: https://github.com/Vanilagy/mediabunny/issues/633 — back to one conversion once fixed.
  */
 async function packageLadder(
   request: VideoPackageRequest,
