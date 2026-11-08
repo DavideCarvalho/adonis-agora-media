@@ -1,5 +1,15 @@
 # @adonis-agora/media
 
+## 0.30.0
+
+### Minor Changes
+
+- [#270](https://github.com/DavideCarvalho/adonis-agora-media/pull/270) [`64d5c2a`](https://github.com/DavideCarvalho/adonis-agora-media/commit/64d5c2abf610ab693b0198f2fc72f8fb9488de50) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `engines.mediabunny({ ladder })` encodes an adaptive-bitrate ladder without spawning ffmpeg, through the optional peer `@mediabunny/server` (mediabunny's Node decoders/encoders over NodeAV; its native binary needs glibc). Every rung is encoded from one decode of the video, with a keyframe every `targetDuration` seconds, and the audio once to aac as the shared group; both manifests are written over the CMAF playlists. Without `ladder` it is the default remux engine. A missing `@mediabunny/server` throws `TransformerRuntimeMissingError`. The audio is muxed in its own pass because mediabunny 1.65.2's HLS muxer fails an assertion — as an unhandled rejection — when several video variants share an audio group in one output.
+  
+  `VideoPackagingEngine` gains an optional `storyboard` flag: `transformers.video({ storyboard })` now refuses, at config time, any engine that does not declare it (`engines.ffmpeg()` does). The HLS master of the mediabunny engines lists every video rendition.
+
+- [#270](https://github.com/DavideCarvalho/adonis-agora-media/pull/270) [`64d5c2a`](https://github.com/DavideCarvalho/adonis-agora-media/commit/64d5c2abf610ab693b0198f2fc72f8fb9488de50) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `transformers.video({ storyboard })` writes timeline thumbnails — the preview a player shows over the progress bar while scrubbing — next to the streaming package: JPEG sprite sheets (`storyboard-001.jpg`…, a frame every `interval` seconds, `width` px wide, `columns` × `rows` per sheet; defaults 5 s, 160 px, 10 × 10) and a WebVTT (`storyboard.vtt`, `VIDEO_STORYBOARD`) mapping each interval to its tile with `#xywh=`. The stream route serves the sheets as `image/jpeg`, and the conversion `meta.storyboard` names the WebVTT; under `delivery.signing` a package WebVTT is signed like a manifest — only its cue lines that name package files get the signature, before the `#xywh=` fragment (new: `isWebVtt`, `rewriteWebVtt`, `WEBVTT_MIME_TYPE`). `engines.ffmpeg()` runs the storyboard decode alongside the encode, from the same local source; the default mediabunny engine cannot decode frames in Node, so `storyboard` without an engine is refused at config time. Also exported: `buildStoryboardArgs`, `buildStoryboardVtt`, `storyboardTileHeight`, `VIDEO_STORYBOARD_DEFAULTS`.
+
 ## 0.29.0
 
 ### Minor Changes
