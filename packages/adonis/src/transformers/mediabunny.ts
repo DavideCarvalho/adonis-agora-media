@@ -105,7 +105,19 @@ function registerServer(
       const server = provider
         ? await provider()
         : ((await import(specifier)) as MediabunnyServerModule);
-      server.registerMediabunnyServer();
+      try {
+        server.registerMediabunnyServer();
+      } catch (error) {
+        // Installed but unusable: the usual cause is NodeAV's native binary on a host it does not
+        // support (musl/Alpine), which only surfaces when it loads.
+        throw new TransformerRuntimeMissingError(
+          'video',
+          "a working '@mediabunny/server' (it is installed, but registering it failed: " +
+            `${error instanceof Error ? error.message : String(error)})`,
+          'Its native binary needs glibc — Debian/Ubuntu images, not Alpine. Use ' +
+            '`engines.ffmpeg({ ladder })`, or drop the `ladder` to remux.',
+        );
+      }
     } catch (error) {
       serverRegistration = undefined;
       if (

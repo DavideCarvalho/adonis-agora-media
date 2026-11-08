@@ -25,7 +25,61 @@ function makeLibrary(transformer: VideoTransformer<string>) {
   return { library, disks };
 }
 
+/** Package any bytes: the server is registered before the source is read. */
+async function packageBytes(engine: ReturnType<typeof engines.mediabunny>) {
+  const { library } = makeLibrary(new VideoTransformer({ engine, targetDuration: 2 }));
+  const record = await library.attach({
+    ownerType: 'Course',
+    ownerId: '1',
+    collection: 'videos',
+    fileName: 'lesson.mp4',
+    mimeType: 'video/mp4',
+    contents: Buffer.from('not-a-real-video'),
+  });
+  return library.transform(record.id, 'video');
+}
+
+// Before any suite that registers the real server: registration is cached per process.
+describe('engines.mediabunny({ ladder }) without a usable @mediabunny/server', () => {
+  const ladder = [{ height: 180, videoBitrate: '300k' }];
+
+  it('a missing peer is a typed runtime error, with the way out', async () => {
+    const missing = Object.assign(new Error("Cannot find package '@mediabunny/server'"), {
+      code: 'ERR_MODULE_NOT_FOUND',
+    });
+    const engine = engines.mediabunny({ ladder, server: () => Promise.reject(missing) });
+
+    const error = await packageBytes(engine).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TransformerRuntimeMissingError);
+    expect(String(error)).toMatch(/pnpm add @mediabunny\/server/);
+  });
+
+  it('a peer that installs but cannot register (native binary on musl) says why', async () => {
+    const engine = engines.mediabunny({
+      ladder,
+      server: async () => ({
+        registerMediabunnyServer: () => {
+          throw new Error(
+            'Error relocating node-av.node: __libc_single_threaded: symbol not found',
+          );
+        },
+      }),
+    });
+
+    const error = await packageBytes(engine).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TransformerRuntimeMissingError);
+    expect(String(error)).toMatch(/__libc_single_threaded/);
+    expect(String(error)).toMatch(/glibc/);
+  });
+});
+
 describe('engines.mediabunny() at config time', () => {
+  it('refuses an unknown hardwareAcceleration', () => {
+    expect(() => engines.mediabunny({ hardwareAcceleration: 'gpu-please' as never })).toThrow(
+      /hardwareAcceleration/,
+    );
+  });
+
   it('validates the ladder like engines.ffmpeg()', () => {
     expect(() => engines.mediabunny({ ladder: [{ height: 361, videoBitrate: '800k' }] })).toThrow(
       /even integer/,
@@ -102,19 +156,6 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasServer())(
       });
       return { disks, record: await library.transform(record.id, 'video') };
     }
-
-    // First, while the server is still unregistered in this process (registration is cached).
-    it('a missing @mediabunny/server is a typed runtime error, with the way out', async () => {
-      const missing = Object.assign(new Error("Cannot find package '@mediabunny/server'"), {
-        code: 'ERR_MODULE_NOT_FOUND',
-      });
-      const engine = engines.mediabunny({
-        ladder: [{ height: 180, videoBitrate: '300k' }],
-        server: () => Promise.reject(missing),
-      });
-
-      await expect(packageWith(engine)).rejects.toBeInstanceOf(TransformerRuntimeMissingError);
-    });
 
     it('encodes every rung that fits from one video decode, listed in both manifests', async () => {
       const { disks, record } = await packageWith(

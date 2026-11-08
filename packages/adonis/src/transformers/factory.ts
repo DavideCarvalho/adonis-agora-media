@@ -60,17 +60,6 @@ export const transformers = {
 };
 
 /**
- * Alternative engines for the built-in transformers, plugged in through their `engine` option.
- * The ffmpeg ones spawn the system `ffmpeg` / `ffprobe` binaries (nothing bundled, nothing to
- * install from npm) and, unlike the default mediabunny engine, can **transcode** — an
- * adaptive-bitrate ladder instead of a single stream copy:
- *
- * ```ts
- * transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) })
- * transformers.probe({ engine: engines.ffprobe() })
- * ```
- */
-/**
  * Video packaging via mediabunny: remux by default (the default engine), or — with
  * `@mediabunny/server` — encode `ladder` into renditions without spawning a binary. Validated at
  * config time; mediabunny itself loads at the first transform.
@@ -78,6 +67,16 @@ export const transformers = {
 function mediabunnyVideoEngine(options: MediabunnyVideoEngineOptions = {}): VideoPackagingEngine {
   validateLadder(options.ladder);
   if (options.audioBitrate !== undefined) parseBitrate(options.audioBitrate);
+  const acceleration = options.hardwareAcceleration;
+  if (
+    acceleration !== undefined &&
+    !['no-preference', 'prefer-hardware', 'prefer-software'].includes(acceleration)
+  ) {
+    throw new Error(
+      `engines.mediabunny(): unknown hardwareAcceleration '${String(acceleration)}' — use ` +
+        "'no-preference', 'prefer-hardware' or 'prefer-software'.",
+    );
+  }
   let engine: VideoPackagingEngine | undefined;
   return {
     async package(request) {
@@ -87,6 +86,18 @@ function mediabunnyVideoEngine(options: MediabunnyVideoEngineOptions = {}): Vide
   };
 }
 
+/**
+ * Alternative engines for the built-in transformers, plugged in through their `engine` option.
+ * The ffmpeg ones spawn the system `ffmpeg` / `ffprobe` binaries (nothing bundled, nothing to
+ * install from npm) and can **transcode** — an adaptive-bitrate ladder instead of a single stream
+ * copy. `engines.mediabunny({ ladder })` transcodes too, without a binary, through the optional
+ * peer `@mediabunny/server`:
+ *
+ * ```ts
+ * transformers.video({ engine: engines.ffmpeg({ ladder: engines.ladders.standard }) })
+ * transformers.probe({ engine: engines.ffprobe() })
+ * ```
+ */
 export const engines = {
   /** Video packaging via system ffmpeg: remux by default, or encode `ladder` into renditions. */
   ffmpeg: ffmpegVideoEngine,
