@@ -289,6 +289,10 @@ export {
   storyboardTileHeight,
 } from './transformers/ffmpeg.js';
 export type {
+  MediabunnyServerModule,
+  MediabunnyVideoEngineOptions,
+} from './transformers/mediabunny_loader.js';
+export type {
   ImagePlaceholder,
   PlaceholderEngine,
   PlaceholderOptions,

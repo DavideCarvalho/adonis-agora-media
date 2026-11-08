@@ -111,6 +111,11 @@ export interface VideoPackageSummary {
  * ffmpeg. Tests inject a fake that writes files.
  */
 export interface VideoPackagingEngine {
+  /**
+   * Whether the engine can write a storyboard (it decodes frames). `transformers.video({
+   * storyboard })` refuses, at config time, an engine that does not say so.
+   */
+  readonly storyboard?: boolean;
   package(request: VideoPackageRequest): Promise<VideoPackageSummary>;
 }
 
@@ -299,10 +304,10 @@ function resolveStoryboard(
   options: VideoTransformerOptions<string>,
 ): VideoStoryboardRequest | undefined {
   if (!options.storyboard) return undefined;
-  if (!options.engine) {
+  if (!options.engine?.storyboard) {
     throw new Error(
-      `transformers.video({ name: '${name}' }): \`storyboard\` needs an engine that decodes ` +
-        'frames — the default mediabunny engine only remuxes in Node. Use `engine: engines.ffmpeg()`.',
+      `transformers.video({ name: '${name}' }): \`storyboard\` needs an engine that writes it — ` +
+        '`engines.ffmpeg()`. The mediabunny engines (the default included) do not.',
     );
   }
   const resolved = {
