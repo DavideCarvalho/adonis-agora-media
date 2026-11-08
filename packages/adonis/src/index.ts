@@ -259,9 +259,12 @@ export type {
 export {
   DASH_MIME_TYPE,
   HLS_MIME_TYPE,
+  isWebVtt,
   rewriteDashManifest,
+  rewriteWebVtt,
   streamArtifactContentType,
   streamEntries,
+  WEBVTT_MIME_TYPE,
 } from './streaming.js';
 // Transformers (pluggable content transformations persisted as conversions)
 export type {
@@ -278,10 +281,17 @@ export type {
 export {
   buildDashArgs,
   buildHlsArgs,
+  buildStoryboardArgs,
+  buildStoryboardVtt,
   effectiveLadder,
   ffmpegVideoEngine,
   ffprobeEngine,
+  storyboardTileHeight,
 } from './transformers/ffmpeg.js';
+export type {
+  MediabunnyServerModule,
+  MediabunnyVideoEngineOptions,
+} from './transformers/mediabunny_loader.js';
 export type {
   ImagePlaceholder,
   PlaceholderEngine,
@@ -301,6 +311,8 @@ export type {
   VideoPackageSummary,
   VideoPackagingEngine,
   VideoSegmentFormat,
+  VideoStoryboardOptions,
+  VideoStoryboardRequest,
   VideoTransformerOptions,
   WebCodecsProvider,
   WebCodecsSupport,
@@ -309,6 +321,8 @@ export {
   resolveWebCodecsSupport,
   VIDEO_DASH_MANIFEST,
   VIDEO_HLS_ENTRY,
+  VIDEO_STORYBOARD,
+  VIDEO_STORYBOARD_DEFAULTS,
   VideoTransformer,
 } from './transformers/video.js';
 export type { TusRequest, TusResponse, TusUploadHandlerOptions } from './tus.js';

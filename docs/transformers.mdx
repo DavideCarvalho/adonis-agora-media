@@ -148,9 +148,10 @@ Deleting the media deletes every listed artifact (batched via `deleteMany` on ca
 | `formats` | `['hls', 'dash']` | Which manifests to write. |
 | `segments` | `'cmaf'` | Segment container: `'cmaf'` (fragmented MP4) or `'ts'` (MPEG-TS, HLS only). |
 | `targetDuration` | `4` | Target (max) segment duration, seconds. |
-| `engine` | mediabunny | `engines.ffmpeg({ ladder })` to transcode, or your own engine. |
+| `engine` | mediabunny | `engines.ffmpeg({ ladder })` or `engines.mediabunny({ ladder })` to transcode, or your own engine. |
 | `webcodecs` | — | Inject a WebCodecs implementation into the mediabunny engine (see below). |
 | `eager` | `false` | Run inside attach (think twice — see above). |
+| `storyboard` | off | Timeline thumbnails: `true`, or `{ interval, width, columns, rows }` (see below). Needs an engine that writes it (`engines.ffmpeg()`). |
 
 The package files upload to the disk 6 at a time. On the first failed upload no new one starts; the error is rethrown once the uploads already running have settled, and the failure sweep then deletes everything written, including files whose upload had started. The persisted `files` list is sorted.
 
@@ -221,6 +222,44 @@ CMAF packages go through ffmpeg's DASH muxer, which writes the MPD and the HLS m
 <Callout type="warn" title="Transcoding is heavy">
   A ladder re-encodes the whole video once per rung. Keep the transformer deferred (the default) and run `media.library.transform(id, 'video')` from background work, on a worker sized for it.
 </Callout>
+
+### The mediabunny engine with a ladder (no binary)
+
+`engines.mediabunny({ ladder })` encodes the same kind of ladder without spawning ffmpeg, through [`@mediabunny/server`](https://www.npmjs.com/package/@mediabunny/server) — mediabunny's decoders and encoders for Node, backed by NodeAV (FFmpeg's C libraries as a native module).
+
+```ts
+transformers.video({
+  engine: engines.mediabunny({ ladder: engines.ladders.standard }),
+})
+```
+
+- Install the optional peer: `pnpm add @mediabunny/server`. Its prebuilt binary needs **glibc** — Debian/Ubuntu images, not Alpine. A missing one throws `TransformerRuntimeMissingError` at the first transform. `server: () => import('@mediabunny/server')` supplies it explicitly.
+- Every rung is encoded from one decode of the video (h264, a keyframe every `targetDuration` seconds so the renditions line up); the audio is encoded once to aac (`audioBitrate`, default the ladder's highest, else `'128k'`) as the shared group. CMAF only — use `engines.ffmpeg({ ladder })` for TS.
+- `hardwareAcceleration` (`'no-preference'` by default) is passed to mediabunny's encoder choice.
+- Without `ladder`, it is the default engine: remux.
+- No storyboard: only `engines.ffmpeg()` writes one.
+
+Measured on one 8-core host (1080p, 60 s, 360p + 720p): ffmpeg 8.9 s / 400 MB, mediabunny 21 s / 720 MB. Prefer ffmpeg where the binary is available; this engine is for hosts where spawning one is not an option.
+
+### Timeline thumbnails (storyboard)
+
+The preview a player shows over the progress bar while scrubbing. With `storyboard`, the engine takes a frame every `interval` seconds (default 5), scales it to `width` px (default 160; the height keeps the aspect ratio, rounded to even) and tiles `columns` × `rows` thumbnails (default 10 × 10) per JPEG sheet — `storyboard-001.jpg`, `storyboard-002.jpg`… — plus a WebVTT, `storyboard.vtt` (`VIDEO_STORYBOARD`), mapping each interval to its tile:
+
+```text
+WEBVTT
+
+00:00:00.000 --> 00:00:05.000
+storyboard-001.jpg#xywh=0,0,160,90
+```
+
+```ts
+transformers.video({
+  engine: engines.ffmpeg({ ladder: engines.ladders.standard }),
+  storyboard: true,
+})
+```
+
+The files land in the package next to the segments, so the stream route serves them (sheets as `image/jpeg`), and the conversion `meta.storyboard` names the WebVTT. Under `delivery.signing`, the WebVTT is signed like a manifest: each cue line that names a file of the package gets the signature (before its `#xywh=` fragment), so a viewer holding only the package signature loads the thumbnails too. Lines that are not package files — a captions track's text — are never touched. Point a `<track kind="metadata" label="thumbnails" default>` at it — the format Video.js, Vidstack and JW Player read. The ffmpeg engine runs the storyboard decode alongside the encode, from the same local source: no second download. An engine declares it can (`storyboard: true` on the engine object — `engines.ffmpeg()` does, the mediabunny engines do not); `storyboard` with any other engine is refused at config time.
 
 ---
 

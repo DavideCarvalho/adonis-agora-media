@@ -7,7 +7,12 @@ import {
   TransformerRuntimeMissingError,
 } from '../errors.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
-import type { VideoPackageRequest, VideoPackageSummary, VideoPackagingEngine } from './video.js';
+import type {
+  VideoPackageRequest,
+  VideoPackageSummary,
+  VideoPackagingEngine,
+  VideoStoryboardRequest,
+} from './video.js';
 
 /**
  * Engines backed by the system `ffmpeg` / `ffprobe` binaries — the alternative to the default
@@ -286,7 +291,8 @@ export function buildHlsArgs(input: {
  * Validate a ladder while the config is in hand — a bad rung would otherwise fail deep inside
  * libx264 with a cryptic error on the first transcode.
  */
-function validateLadder(ladder: FfmpegRendition[] | undefined): void {
+/** Check a ladder at config time: even positive heights, parseable bitrates. Exported for the other engines. */
+export function validateLadder(ladder: FfmpegRendition[] | undefined): void {
   for (const r of ladder ?? []) {
     if (!Number.isInteger(r.height) || r.height <= 0 || r.height % 2 !== 0) {
       throw new Error(
@@ -299,7 +305,8 @@ function validateLadder(ladder: FfmpegRendition[] | undefined): void {
 }
 
 /** `'2800k'` → 2_800_000. Plain numbers pass through. */
-function parseBitrate(value: string): number {
+/** `'800k'` → `800000`, `'5M'` → `5000000`. Exported for the other engines. */
+export function parseBitrate(value: string): number {
   const match = /^(\d+(?:\.\d+)?)([kKmM]?)$/.exec(value.trim());
   if (!match) throw new Error(`Invalid bitrate "${value}" (expected e.g. '800k', '5M', '128000')`);
   const n = Number(match[1]);
@@ -310,6 +317,131 @@ function parseBitrate(value: string): number {
 /** Segment names of a CMAF package; `$…$` are DASH template identifiers ffmpeg fills in. */
 const DASH_INIT_PATTERN = 'init-$RepresentationID$.m4s';
 const DASH_SEGMENT_PATTERN = 'chunk-$RepresentationID$-$Number%05d$.m4s';
+
+/** Sprite sheet file names of a storyboard: `storyboard-001.jpg`, `storyboard-002.jpg`… */
+const STORYBOARD_SHEET_PATTERN = 'storyboard-%03d.jpg';
+const STORYBOARD_SHEET_RE = /^storyboard-(\d{3,})\.jpg$/;
+
+/** Thumbnail height for `width` px wide, keeping the source aspect ratio, rounded to even. */
+export function storyboardTileHeight(
+  width: number,
+  source: { width?: number | undefined; height?: number | undefined },
+): number {
+  const ratio = source.width && source.height ? source.height / source.width : 9 / 16;
+  return Math.max(2, Math.round((width * ratio) / 2) * 2);
+}
+
+/**
+ * Build the ffmpeg argument list that writes a storyboard's sprite sheets: one frame every
+ * `interval` seconds, scaled to `width`×`height`, tiled `columns`×`rows` per JPEG. Exported for
+ * tests.
+ */
+export function buildStoryboardArgs(input: {
+  sourcePath: string;
+  outputDir: string;
+  storyboard: VideoStoryboardRequest;
+  height: number;
+}): string[] {
+  const { interval, width, columns, rows } = input.storyboard;
+  return [
+    '-hide_banner',
+    '-y',
+    '-i',
+    input.sourcePath,
+    '-map',
+    '0:v:0',
+    '-an',
+    '-vf',
+    `fps=1/${interval},scale=${width}:${input.height},tile=${columns}x${rows}`,
+    '-q:v',
+    '5',
+    join(input.outputDir, STORYBOARD_SHEET_PATTERN),
+  ];
+}
+
+/** `3725.5` → `01:02:05.500`. */
+function vttTime(seconds: number): string {
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+  const totalSeconds = Math.floor(totalMs / 1000);
+  return `${pad(Math.floor(totalSeconds / 3600))}:${pad(Math.floor(totalSeconds / 60) % 60)}:${pad(totalSeconds % 60)}.${pad(totalMs % 1000, 3)}`;
+}
+
+/**
+ * The storyboard WebVTT: one cue per thumbnail, `[i·interval, (i+1)·interval)` (the last one ends
+ * at `durationSeconds`), pointing at its tile with a media fragment
+ * (`storyboard-002.jpg#xywh=320,90,160,90`). Thumbnails are capped at what the written sheets
+ * hold, so a cue never points past the last tile. Exported for tests.
+ */
+export function buildStoryboardVtt(input: {
+  storyboard: VideoStoryboardRequest;
+  height: number;
+  sheets: number;
+  durationSeconds?: number | undefined;
+}): string {
+  const { interval, width, columns, rows } = input.storyboard;
+  const perSheet = columns * rows;
+  const capacity = input.sheets * perSheet;
+  const count =
+    input.durationSeconds !== undefined && input.durationSeconds > 0
+      ? Math.min(Math.ceil(input.durationSeconds / interval), capacity)
+      : capacity;
+  const cues: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const start = i * interval;
+    const end =
+      input.durationSeconds !== undefined && input.durationSeconds > 0
+        ? Math.min((i + 1) * interval, input.durationSeconds)
+        : (i + 1) * interval;
+    if (end <= start) break;
+    const sheet = String(Math.floor(i / perSheet) + 1).padStart(3, '0');
+    const tile = i % perSheet;
+    const x = (tile % columns) * width;
+    const y = Math.floor(tile / columns) * input.height;
+    cues.push(
+      `${vttTime(start)} --> ${vttTime(end)}\nstoryboard-${sheet}.jpg#xywh=${x},${y},${width},${input.height}`,
+    );
+  }
+  return `${['WEBVTT', ...cues].join('\n\n')}\n`;
+}
+
+/**
+ * Write a storyboard into `outputDir`: the sprite sheets (one ffmpeg run) and the WebVTT, built
+ * from the sheets ffmpeg actually wrote.
+ */
+async function writeStoryboard(
+  ffmpegPath: string,
+  request: VideoPackageRequest & { storyboard: VideoStoryboardRequest },
+  source: {
+    width?: number | undefined;
+    height?: number | undefined;
+    durationSeconds?: number | undefined;
+  },
+): Promise<void> {
+  const height = storyboardTileHeight(request.storyboard.width, source);
+  await run(
+    ffmpegPath,
+    buildStoryboardArgs({
+      sourcePath: request.sourcePath,
+      outputDir: request.outputDir,
+      storyboard: request.storyboard,
+      height,
+    }),
+    'video',
+  );
+  const sheets = (await readdir(request.outputDir)).filter((file) =>
+    STORYBOARD_SHEET_RE.test(file),
+  ).length;
+  await writeFile(
+    join(request.outputDir, request.storyboard.vtt),
+    buildStoryboardVtt({
+      storyboard: request.storyboard,
+      height,
+      sheets,
+      durationSeconds: source.durationSeconds,
+    }),
+  );
+}
 
 /**
  * Build the ffmpeg argument list for one DASH (CMAF) run — one manifest, fragmented-MP4 segments
@@ -417,6 +549,7 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
     '128k';
 
   return {
+    storyboard: true,
     async package(request: VideoPackageRequest): Promise<VideoPackageSummary> {
       const summary = await probeSource(ffprobePath, request.sourcePath, 'video');
       // Same definitive signal the mediabunny engine gives for an unusable source, so callers
@@ -439,22 +572,36 @@ export function ffmpegVideoEngine(options: FfmpegVideoEngineOptions = {}): Video
         extraArgs: options.extraArgs ?? [],
       };
 
-      if (request.segments === 'ts') {
-        if (!request.hlsEntry) {
-          throw new Error('TS segments only play over HLS: the request needs an `hlsEntry`.');
+      const packaging = async () => {
+        if (request.segments === 'ts') {
+          if (!request.hlsEntry) {
+            throw new Error('TS segments only play over HLS: the request needs an `hlsEntry`.');
+          }
+          await run(ffmpegPath, buildHlsArgs({ ...common, entryName: request.hlsEntry }), 'video');
+        } else {
+          // The DASH muxer always writes an MPD; an HLS-only package drops it afterwards.
+          const manifestName = request.dashManifest ?? 'manifest.mpd';
+          await run(
+            ffmpegPath,
+            buildDashArgs({
+              ...common,
+              manifestName,
+              hlsEntryName: request.hlsEntry,
+              audioBitrate,
+            }),
+            'video',
+          );
+          if (!request.dashManifest) await rm(join(request.outputDir, manifestName));
+          if (request.hlsEntry) await normalizeVodPlaylists(request.outputDir);
         }
-        await run(ffmpegPath, buildHlsArgs({ ...common, entryName: request.hlsEntry }), 'video');
-      } else {
-        // The DASH muxer always writes an MPD; an HLS-only package drops it afterwards.
-        const manifestName = request.dashManifest ?? 'manifest.mpd';
-        await run(
-          ffmpegPath,
-          buildDashArgs({ ...common, manifestName, hlsEntryName: request.hlsEntry, audioBitrate }),
-          'video',
-        );
-        if (!request.dashManifest) await rm(join(request.outputDir, manifestName));
-        if (request.hlsEntry) await normalizeVodPlaylists(request.outputDir);
-      }
+      };
+      // The storyboard is a second, light decode of the same source: run it alongside the encode
+      // (one ffmpeg process does not use every core) rather than after it.
+      const storyboard = request.storyboard;
+      await Promise.all([
+        packaging(),
+        storyboard ? writeStoryboard(ffmpegPath, { ...request, storyboard }, summary) : undefined,
+      ]);
 
       const result: VideoPackageSummary = {};
       if (summary.durationSeconds !== undefined) result.durationSeconds = summary.durationSeconds;

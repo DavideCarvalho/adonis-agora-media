@@ -49,6 +49,29 @@ export async function resolveWebCodecsSupport(
   return 'absent';
 }
 
+/**
+ * Timeline thumbnails — the preview a player shows over the progress bar while scrubbing. Frames
+ * are taken every `interval` seconds, scaled to `width` px wide (height follows the aspect ratio),
+ * and tiled `columns` × `rows` per JPEG sprite sheet; a WebVTT ({@link VIDEO_STORYBOARD}) maps each
+ * time range to its tile (`storyboard-001.jpg#xywh=x,y,w,h`), the format Video.js, Vidstack,
+ * JW Player and others read from a `<track kind="metadata" label="thumbnails">`.
+ */
+export interface VideoStoryboardOptions {
+  /** Seconds between thumbnails. Default 5. */
+  interval?: number;
+  /** Thumbnail width in px. Default 160. */
+  width?: number;
+  /** Thumbnails per sheet row. Default 10. */
+  columns?: number;
+  /** Thumbnail rows per sheet. Default 10. */
+  rows?: number;
+}
+
+/** The storyboard an engine is asked for: every option resolved, plus the WebVTT file name. */
+export interface VideoStoryboardRequest extends Required<VideoStoryboardOptions> {
+  vtt: string;
+}
+
 /** What {@link VideoPackagingEngine.package} receives. */
 export interface VideoPackageRequest {
   /** Local path of the source file. */
@@ -65,6 +88,11 @@ export interface VideoPackageRequest {
   targetDuration: number;
   /** Optional WebCodecs implementation enabling the mediabunny re-encode fallback. */
   webcodecs?: WebCodecsProvider | undefined;
+  /**
+   * Timeline thumbnails to write next to the package (sprite sheets plus `storyboard.vtt`), or
+   * `undefined` when not wanted. An engine that cannot decode frames must reject the request.
+   */
+  storyboard?: VideoStoryboardRequest | undefined;
 }
 
 /** What the engine learned about the source — persisted into the conversion `meta`. */
@@ -83,6 +111,11 @@ export interface VideoPackageSummary {
  * ffmpeg. Tests inject a fake that writes files.
  */
 export interface VideoPackagingEngine {
+  /**
+   * Whether the engine can write a storyboard (it decodes frames). `transformers.video({
+   * storyboard })` refuses, at config time, an engine that does not say so.
+   */
+  readonly storyboard?: boolean;
   package(request: VideoPackageRequest): Promise<VideoPackageSummary>;
 }
 
@@ -110,10 +143,27 @@ export interface VideoTransformerOptions<Name extends string = 'video'> {
   engine?: VideoPackagingEngine;
   /** WebCodecs for the mediabunny engine's re-encode fallback (see {@link WebCodecsProvider}). */
   webcodecs?: WebCodecsProvider;
+  /**
+   * Timeline thumbnails (see {@link VideoStoryboardOptions}): `true` for the defaults, an object
+   * to tune them. Default off. Needs an engine that decodes frames — `engines.ffmpeg()`; the
+   * default mediabunny engine only remuxes in Node.
+   */
+  storyboard?: boolean | VideoStoryboardOptions;
 }
 
 /** File name of the HLS master playlist a {@link VideoTransformer} writes. */
 export const VIDEO_HLS_ENTRY = 'index.m3u8';
+
+/** File name of the storyboard WebVTT a {@link VideoTransformer} writes with `storyboard`. */
+export const VIDEO_STORYBOARD = 'storyboard.vtt';
+
+/** Defaults of {@link VideoStoryboardOptions}: a thumbnail every 5 s, 160 px wide, 10×10 a sheet. */
+export const VIDEO_STORYBOARD_DEFAULTS: Required<VideoStoryboardOptions> = {
+  interval: 5,
+  width: 160,
+  columns: 10,
+  rows: 10,
+};
 
 /** File name of the DASH manifest a {@link VideoTransformer} writes. */
 export const VIDEO_DASH_MANIFEST = 'manifest.mpd';
@@ -140,6 +190,7 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
   private readonly targetDuration: number;
   private readonly engine: VideoPackagingEngine | undefined;
   private readonly webcodecs: WebCodecsProvider | undefined;
+  private readonly storyboard: VideoStoryboardRequest | undefined;
 
   constructor(options: VideoTransformerOptions<Name> = {}) {
     this.name = options.name ?? ('video' as Name);
@@ -165,6 +216,7 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
         `transformers.video({ name: '${this.name}' }): unknown segments '${this.segments}' — use 'cmaf' or 'ts'.`,
       );
     }
+    this.storyboard = resolveStoryboard(this.name, options);
     if (this.segments === 'ts' && this.formats.includes('dash')) {
       throw new Error(
         `transformers.video({ name: '${this.name}' }): DASH cannot use TS segments — players ` +
@@ -191,6 +243,7 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
         dashManifest: dash ? VIDEO_DASH_MANIFEST : undefined,
         targetDuration: this.targetDuration,
         webcodecs: this.webcodecs,
+        storyboard: this.storyboard,
       });
 
       // Upload the whole package — manifests and segments — streaming each file (a segment never
@@ -220,6 +273,7 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
       for (const [format, manifest] of [
         ['hls', hls ? VIDEO_HLS_ENTRY : undefined],
         ['dash', dash ? VIDEO_DASH_MANIFEST : undefined],
+        ['storyboard', this.storyboard?.vtt],
       ] as const) {
         if (manifest && !written.has(manifest)) {
           throw new Error(
@@ -237,10 +291,42 @@ export class VideoTransformer<Name extends string = 'video'> implements Transfor
           targetDuration: this.targetDuration,
           hlsEntry: hls ? VIDEO_HLS_ENTRY : undefined,
           dashManifest: dash ? VIDEO_DASH_MANIFEST : undefined,
+          storyboard: this.storyboard?.vtt,
         }),
       };
     });
   }
+}
+
+/** Resolve and validate `storyboard` at config time (the engine check included). */
+function resolveStoryboard(
+  name: string,
+  options: VideoTransformerOptions<string>,
+): VideoStoryboardRequest | undefined {
+  if (!options.storyboard) return undefined;
+  if (!options.engine?.storyboard) {
+    throw new Error(
+      `transformers.video({ name: '${name}' }): \`storyboard\` needs an engine that writes it — ` +
+        '`engines.ffmpeg()`. The mediabunny engines (the default included) do not.',
+    );
+  }
+  const resolved = {
+    ...VIDEO_STORYBOARD_DEFAULTS,
+    ...(options.storyboard === true ? {} : options.storyboard),
+  };
+  for (const key of ['interval', 'width', 'columns', 'rows'] as const) {
+    const value = resolved[key];
+    const valid =
+      key === 'interval'
+        ? Number.isFinite(value) && value > 0
+        : Number.isInteger(value) && value > 0;
+    if (!valid) {
+      throw new Error(
+        `transformers.video({ name: '${name}' }): storyboard.${key} must be a positive ${key === 'interval' ? 'number' : 'integer'}, got ${String(value)}.`,
+      );
+    }
+  }
+  return { ...resolved, vtt: VIDEO_STORYBOARD };
 }
 
 /** Package files uploaded at once: enough to hide per-request latency, few enough not to flood the disk. */

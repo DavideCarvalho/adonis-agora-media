@@ -4,6 +4,8 @@ import {
   ALL_FORMATS,
   CmafOutputFormat,
   Conversion,
+  type ConversionAudioOptions,
+  type ConversionVideoOptions,
   FilePathSource,
   FilePathTarget,
   HlsOutputFormat,
@@ -12,13 +14,15 @@ import {
   Output,
   PathedTarget,
 } from 'mediabunny';
-import { HlsSourceUnsupportedError } from '../errors.js';
+import { HlsSourceUnsupportedError, TransformerRuntimeMissingError } from '../errors.js';
 import {
   buildDashManifest,
   type DashRepresentationInput,
   parseMasterPlaylist,
   parseMediaPlaylist,
 } from '../hls/to_dash.js';
+import { effectiveLadder, parseBitrate } from './ffmpeg.js';
+import type { MediabunnyServerModule, MediabunnyVideoEngineOptions } from './mediabunny_loader.js';
 import type { MediaProbeEngine, MediaProbeSummary } from './probe.js';
 import type {
   VideoPackageRequest,
@@ -88,10 +92,70 @@ async function summarize(input: Input): Promise<VideoPackageSummary> {
   return summary;
 }
 
-export function createVideoEngine(): VideoPackagingEngine {
+/** Registration of `@mediabunny/server`, once per process (a failed one is retried next time). */
+let serverRegistration: Promise<void> | undefined;
+
+function registerServer(
+  provider: (() => Promise<MediabunnyServerModule>) | undefined,
+): Promise<void> {
+  serverRegistration ??= (async () => {
+    try {
+      // By name, through a variable: an optional peer the package does not depend on.
+      const specifier = '@mediabunny/server';
+      const server = provider
+        ? await provider()
+        : ((await import(specifier)) as MediabunnyServerModule);
+      try {
+        server.registerMediabunnyServer();
+      } catch (error) {
+        // Installed but unusable: the usual cause is NodeAV's native binary on a host it does not
+        // support (musl/Alpine), which only surfaces when it loads.
+        throw new TransformerRuntimeMissingError(
+          'video',
+          "a working '@mediabunny/server' (it is installed, but registering it failed: " +
+            `${error instanceof Error ? error.message : String(error)})`,
+          'Its native binary needs glibc — Debian/Ubuntu images, not Alpine. Use ' +
+            '`engines.ffmpeg({ ladder })`, or drop the `ladder` to remux.',
+        );
+      }
+    } catch (error) {
+      serverRegistration = undefined;
+      if (
+        (error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND' &&
+        error instanceof Error &&
+        error.message.includes('@mediabunny/server')
+      ) {
+        throw new TransformerRuntimeMissingError(
+          'video',
+          "the optional peer dependency '@mediabunny/server'",
+          'Install it (`pnpm add @mediabunny/server`; its native binary needs glibc — ' +
+            'Debian/Ubuntu images, not Alpine), use `engines.ffmpeg({ ladder })`, or drop the ' +
+            '`ladder` to remux.',
+        );
+      }
+      throw error;
+    }
+  })();
+  return serverRegistration;
+}
+
+export function createVideoEngine(
+  options: MediabunnyVideoEngineOptions = {},
+): VideoPackagingEngine {
+  const audioBitrate = parseBitrate(
+    options.audioBitrate ??
+      [...(options.ladder ?? [])]
+        .map((r) => r.audioBitrate)
+        .filter((b): b is string => b !== undefined)
+        .sort((a, b) => parseBitrate(b) - parseBitrate(a))[0] ??
+      '128k',
+  );
   return {
     async package(request: VideoPackageRequest): Promise<VideoPackageSummary> {
       await installWebCodecs(request.webcodecs);
+      if (options.ladder && options.ladder.length > 0) {
+        return packageLadder(request, options, options.ladder, audioBitrate);
+      }
       const input = new Input({
         source: new FilePathSource(request.sourcePath),
         formats: ALL_FORMATS,
@@ -160,35 +224,140 @@ export function createVideoEngine(): VideoPackagingEngine {
           });
         }
 
-        if (request.hlsEntry) {
-          await writeFile(join(request.outputDir, request.hlsEntry), hlsMaster(parsed));
-        }
-        if (request.dashManifest) {
-          await writeFile(
-            join(request.outputDir, request.dashManifest),
-            buildDashManifest({
-              durationSeconds:
-                summary.durationSeconds ??
-                Math.max(
-                  ...parsed.map((p) => p.playlist.segments.reduce((t, s) => t + s.duration, 0)),
-                ),
-              targetDuration: request.targetDuration,
-              representations: parsed,
-            }),
-          );
-        }
-        if (!request.hlsEntry) {
-          // DASH only: the media playlists were scaffolding.
-          for (const p of parsed) {
-            await rm(join(request.outputDir, p.playlistPath));
-          }
-        }
+        await writeManifests(request, parsed, summary.durationSeconds);
         return summary;
       } finally {
         input.dispose();
       }
     },
   };
+}
+
+/**
+ * Encode a ladder: every rung from ONE decode of the video (h264, a keyframe every
+ * `targetDuration` seconds so the renditions' segments line up), and the primary audio once to aac,
+ * as its own `#EXT-X-MEDIA` group. The package master and the DASH manifest are written over the
+ * resulting CMAF playlists.
+ *
+ * Two conversions, not one: with several video variants AND audio in the same mediabunny HLS
+ * output, its muxer fails an assertion when the shared audio track closes (`HlsMuxer.
+ * advancePlaylist`, mediabunny 1.65.2) — from a promise nobody awaits, so it surfaces as an
+ * unhandled rejection that takes the worker process down. Video-only variants and a lone audio
+ * playlist do not hit it; the extra cost is decoding the audio twice, which is cheap. Reported
+ * upstream: https://github.com/Vanilagy/mediabunny/issues/633 — back to one conversion once fixed.
+ */
+async function packageLadder(
+  request: VideoPackageRequest,
+  options: MediabunnyVideoEngineOptions,
+  ladder: NonNullable<MediabunnyVideoEngineOptions['ladder']>,
+  audioBitrate: number,
+): Promise<VideoPackageSummary> {
+  if (request.segments !== 'cmaf') {
+    throw new Error(
+      "The mediabunny ladder writes CMAF segments: use `segments: 'cmaf'` (the default), or " +
+        '`engines.ffmpeg({ ladder })` for TS.',
+    );
+  }
+  await registerServer(options.server);
+
+  const probe = new Input({ source: new FilePathSource(request.sourcePath), formats: ALL_FORMATS });
+  let summary: VideoPackageSummary;
+  let firstTimestamp: number;
+  let hasAudio: boolean;
+  try {
+    firstTimestamp = await probe.getFirstTimestamp();
+    summary = await summarize(probe);
+    if (!(await probe.getPrimaryVideoTrack())) {
+      throw new HlsSourceUnsupportedError(
+        'the source has no video stream',
+        'Video packaging needs a video track; this file is audio-only or not a video.',
+      );
+    }
+    hasAudio = Boolean(await probe.getPrimaryAudioTrack());
+  } finally {
+    probe.dispose();
+  }
+  const renditions = effectiveLadder(ladder, summary.height);
+  const hardwareAcceleration = options.hardwareAcceleration ?? 'no-preference';
+
+  const parsed: MuxedTrack[] = [];
+  const passes: { type: 'video' | 'audio'; base: string }[] = [
+    { type: 'video', base: 'video/' },
+    ...(hasAudio ? [{ type: 'audio' as const, base: 'audio/' }] : []),
+  ];
+  for (const pass of passes) {
+    const master = join(request.outputDir, pass.base, 'index.m3u8');
+    await muxHls(request.sourcePath, master, {
+      segmentFormat: new CmafOutputFormat(),
+      targetDuration: request.targetDuration,
+      firstTimestamp,
+      only: pass.type,
+      encode:
+        pass.type === 'video'
+          ? {
+              video: renditions.map((rung) => ({
+                codec: 'avc' as const,
+                height: rung.height,
+                bitrate: parseBitrate(rung.videoBitrate),
+                keyFrameInterval: request.targetDuration,
+                hardwareAcceleration,
+              })),
+            }
+          : { audio: { codec: 'aac' as const, bitrate: audioBitrate } },
+    });
+    const variants = parseMasterPlaylist(await readFile(master, 'utf8'));
+    if (variants.length === 0) throw new Error(`mediabunny wrote no ${pass.type} playlist`);
+    for (const variant of variants) {
+      parsed.push({
+        type: pass.type,
+        base: `${pass.base}${variant.uri.slice(0, variant.uri.lastIndexOf('/') + 1)}`,
+        playlist: parseMediaPlaylist(
+          await readFile(join(request.outputDir, pass.base, variant.uri), 'utf8'),
+        ),
+        codecs: variant.codecs,
+        bandwidth: pass.type === 'audio' ? audioBitrate : variant.bandwidth,
+        width: variant.width,
+        height: variant.height,
+        playlistPath: `${pass.base}${variant.uri}`,
+      });
+    }
+    // Each pass wrote its own master; the package gets one, written below.
+    await rm(master);
+  }
+
+  await writeManifests(request, parsed, summary.durationSeconds);
+  return { ...summary, videoCodec: 'avc', ...(hasAudio ? { audioCodec: 'aac' } : {}) };
+}
+
+/**
+ * The package's manifests over its single-track CMAF playlists: the HLS master and/or the DASH
+ * manifest (and, for DASH only, the media playlists removed — they were scaffolding).
+ */
+async function writeManifests(
+  request: VideoPackageRequest,
+  parsed: MuxedTrack[],
+  durationSeconds: number | undefined,
+): Promise<void> {
+  if (request.hlsEntry) {
+    await writeFile(join(request.outputDir, request.hlsEntry), hlsMaster(parsed));
+  }
+  if (request.dashManifest) {
+    await writeFile(
+      join(request.outputDir, request.dashManifest),
+      buildDashManifest({
+        durationSeconds:
+          durationSeconds ??
+          Math.max(...parsed.map((p) => p.playlist.segments.reduce((t, s) => t + s.duration, 0))),
+        targetDuration: request.targetDuration,
+        representations: parsed,
+      }),
+    );
+  }
+  if (!request.hlsEntry) {
+    for (const p of parsed) {
+      await rm(join(request.outputDir, p.playlistPath));
+    }
+  }
 }
 
 /** One single-track CMAF playlist of the package, as the manifests need it. */
@@ -209,6 +378,11 @@ async function muxHls(
     targetDuration: number;
     firstTimestamp: number;
     only?: 'video' | 'audio';
+    /** Encode instead of copying: the options for the kept track (an array = one per rung). */
+    encode?: {
+      video?: ConversionVideoOptions[];
+      audio?: ConversionAudioOptions;
+    };
   },
 ): Promise<void> {
   // mediabunny's file targets do not create directories.
@@ -232,8 +406,14 @@ async function muxHls(
       input,
       output,
       trim: { start: options.firstTimestamp },
-      video: (track) => ({ discard: options.only === 'audio' || track.id !== primaryVideo }),
-      audio: (track) => ({ discard: options.only === 'video' || track.id !== primaryAudio }),
+      video: (track) =>
+        options.only === 'audio' || track.id !== primaryVideo
+          ? { discard: true }
+          : (options.encode?.video ?? { discard: false }),
+      audio: (track) =>
+        options.only === 'video' || track.id !== primaryAudio
+          ? { discard: true }
+          : (options.encode?.audio ?? { discard: false }),
     });
 
     // With no video/audio options, mediabunny copies compatible tracks and re-encodes the rest —
@@ -259,18 +439,24 @@ async function muxHls(
   }
 }
 
-/** The package's HLS master: the video rendition, with the audio as its `#EXT-X-MEDIA` group. */
+/**
+ * The package's HLS master: one `#EXT-X-STREAM-INF` per video rendition (one when remuxing, one per
+ * rung of a ladder), the audio as their shared `#EXT-X-MEDIA` group.
+ */
 function hlsMaster(tracks: MuxedTrack[]): string {
-  const video = tracks.find((t) => t.type === 'video')!;
+  const videos = tracks.filter((t) => t.type === 'video');
   const audio = tracks.find((t) => t.type === 'audio');
-  const codecs = [video.codecs, audio?.codecs].filter(Boolean).join(',');
-  const bandwidth = (video.bandwidth ?? 0) + (audio?.bandwidth ?? 0);
-  const inf = [
-    `BANDWIDTH=${Math.max(1, bandwidth)}`,
-    ...(codecs ? [`CODECS="${codecs}"`] : []),
-    ...(video.width && video.height ? [`RESOLUTION=${video.width}x${video.height}`] : []),
-    ...(audio ? ['AUDIO="audio"'] : []),
-  ].join(',');
+  const variants = videos.flatMap((video) => {
+    const codecs = [video.codecs, audio?.codecs].filter(Boolean).join(',');
+    const bandwidth = (video.bandwidth ?? 0) + (audio?.bandwidth ?? 0);
+    const inf = [
+      `BANDWIDTH=${Math.max(1, Math.round(bandwidth))}`,
+      ...(codecs ? [`CODECS="${codecs}"`] : []),
+      ...(video.width && video.height ? [`RESOLUTION=${video.width}x${video.height}`] : []),
+      ...(audio ? ['AUDIO="audio"'] : []),
+    ].join(',');
+    return [`#EXT-X-STREAM-INF:${inf}`, video.playlistPath];
+  });
   return [
     '#EXTM3U',
     '#EXT-X-VERSION:7',
@@ -280,8 +466,7 @@ function hlsMaster(tracks: MuxedTrack[]): string {
           `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="audio",DEFAULT=YES,AUTOSELECT=YES,URI="${audio.playlistPath}"`,
         ]
       : []),
-    `#EXT-X-STREAM-INF:${inf}`,
-    video.playlistPath,
+    ...variants,
     '',
   ].join('\n');
 }
