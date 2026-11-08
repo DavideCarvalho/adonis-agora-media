@@ -249,5 +249,55 @@ describe.skipIf(!hasBinary('ffmpeg') || !hasBinary('ffprobe'))(
         .trim();
       expect(size).toBe('480,180');
     }, 60_000);
+
+    it('a partial last sheet keeps its full size, and the cues stop at the real thumbnails', async () => {
+      const { library, disks } = makeLibrary(
+        new VideoTransformer({
+          engine: engines.ffmpeg(),
+          targetDuration: 2,
+          // 12 s every 5 s = 3 thumbnails (0, 5, 10 s) on a 3×2 sheet: one row filled, one padded.
+          storyboard: { interval: 5, width: 160, columns: 3, rows: 2 },
+        }),
+      );
+      const record = await attach(library, source);
+
+      const updated = await library.transform(record.id, 'video');
+      const conversion = updated.conversions.video!;
+
+      expect(conversion.files).toEqual(expect.arrayContaining(['storyboard-001.jpg']));
+      expect(conversion.files).not.toContain('storyboard-002.jpg');
+      const vtt = Buffer.from(
+        await disks.fs!.getBytes(`${conversion.prefix}${VIDEO_STORYBOARD}`),
+      ).toString();
+      expect(vtt).toBe(
+        `${[
+          'WEBVTT',
+          '00:00:00.000 --> 00:00:05.000\nstoryboard-001.jpg#xywh=0,0,160,90',
+          '00:00:05.000 --> 00:00:10.000\nstoryboard-001.jpg#xywh=160,0,160,90',
+          '00:00:10.000 --> 00:00:12.000\nstoryboard-001.jpg#xywh=320,0,160,90',
+        ].join('\n\n')}\n`,
+      );
+
+      const sheetPath = join(dir, 'partial-sheet.jpg');
+      await writeFile(
+        sheetPath,
+        await disks.fs!.getBytes(`${conversion.prefix}storyboard-001.jpg`),
+      );
+      const size = execFileSync('ffprobe', [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'csv=p=0',
+        sheetPath,
+      ])
+        .toString()
+        .trim();
+      // ffmpeg's tile filter pads the unfilled slots: the sheet keeps the 3×2 grid size.
+      expect(size).toBe('480,180');
+    }, 60_000);
   },
 );

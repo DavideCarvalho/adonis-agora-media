@@ -241,7 +241,7 @@ transformers.video({
 })
 ```
 
-The files land in the package next to the segments, so the stream route serves them (sheets as `image/jpeg`), and the conversion `meta.storyboard` names the WebVTT. Point a `<track kind="metadata" label="thumbnails" default>` at it — the format Video.js, Vidstack and JW Player read. The ffmpeg engine runs the storyboard decode alongside the encode, from the same local source: no second download. The default mediabunny engine cannot decode frames in Node, so `storyboard` without an engine is refused at config time.
+The files land in the package next to the segments, so the stream route serves them (sheets as `image/jpeg`), and the conversion `meta.storyboard` names the WebVTT. Under `delivery.signing`, the WebVTT is signed like a manifest: each cue line that names a file of the package gets the signature (before its `#xywh=` fragment), so a viewer holding only the package signature loads the thumbnails too. Lines that are not package files — a captions track's text — are never touched. Point a `<track kind="metadata" label="thumbnails" default>` at it — the format Video.js, Vidstack and JW Player read. The ffmpeg engine runs the storyboard decode alongside the encode, from the same local source: no second download. The default mediabunny engine cannot decode frames in Node, so `storyboard` without an engine is refused at config time.
 
 ---
 

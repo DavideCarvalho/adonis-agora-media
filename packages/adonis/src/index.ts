@@ -259,9 +259,12 @@ export type {
 export {
   DASH_MIME_TYPE,
   HLS_MIME_TYPE,
+  isWebVtt,
   rewriteDashManifest,
+  rewriteWebVtt,
   streamArtifactContentType,
   streamEntries,
+  WEBVTT_MIME_TYPE,
 } from './streaming.js';
 // Transformers (pluggable content transformations persisted as conversions)
 export type {

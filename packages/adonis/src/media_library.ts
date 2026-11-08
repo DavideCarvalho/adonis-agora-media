@@ -62,12 +62,14 @@ import type { StorageManager } from './storage_manager.js';
 import {
   DASH_MIME_TYPE,
   HLS_MIME_TYPE,
+  isWebVtt,
   type MediaStream,
   type MediaStreamSource,
   signManifest,
   streamArtifactContentType,
   streamEntries,
   streamFormatOf,
+  WEBVTT_MIME_TYPE,
 } from './streaming.js';
 import type {
   Transformer,
@@ -1487,12 +1489,18 @@ export class MediaLibrary {
     const fileName = file.slice(file.lastIndexOf('/') + 1);
 
     const format = streamFormatOf(file);
-    if (format) {
+    if (format || isWebVtt(file)) {
       const stored = utf8Of(await disk.getBytes(key));
+      // A WebVTT's references (a storyboard's sheets) resolve against its own directory.
+      const dir = file.slice(0, file.lastIndexOf('/') + 1);
+      const files = new Set(variant.files);
       return {
         kind: 'manifest',
-        content: await signManifest(file, stored, options.query ?? ''),
-        contentType: format === 'hls' ? HLS_MIME_TYPE : DASH_MIME_TYPE,
+        content: await signManifest(file, stored, options.query ?? '', (uri) =>
+          files.has(`${dir}${uri.split('#', 1)[0]}`),
+        ),
+        contentType:
+          format === 'hls' ? HLS_MIME_TYPE : format === 'dash' ? DASH_MIME_TYPE : WEBVTT_MIME_TYPE,
         fileName,
       };
     }

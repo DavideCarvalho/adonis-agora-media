@@ -23,7 +23,7 @@ import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols
 import type { DeliverOptions, MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
-import { type MediaStream, streamFormatOf } from './streaming.js';
+import { isWebVtt, type MediaStream, streamFormatOf } from './streaming.js';
 
 /**
  * The slice of an AdonisJS `HttpContext` the delivery route uses — typed structurally so the
@@ -239,12 +239,14 @@ export class MediaAccess {
       );
       if (!trusted) await this.authorize(ctx, 'read', record, options.authorize);
 
-      // Only a manifest needs the signature its references will carry.
-      const query = !streamFormatOf(file)
-        ? ''
-        : trusted
-          ? deliveryQueryString({ expires: Number(expires), signature }).slice(1)
-          : this.#library.streamQuery(record, conversion, options.expiresIn);
+      // Only a manifest (or a WebVTT pointing at package files) needs the signature its references
+      // will carry.
+      const query =
+        !streamFormatOf(file) && !isWebVtt(file)
+          ? ''
+          : trusted
+            ? deliveryQueryString({ expires: Number(expires), signature }).slice(1)
+            : this.#library.streamQuery(record, conversion, options.expiresIn);
       const result = await this.#library.streamFile(record, conversion, file, {
         query,
         mode: options.mode,

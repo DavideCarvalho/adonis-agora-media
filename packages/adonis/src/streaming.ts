@@ -21,6 +21,43 @@ export const HLS_MIME_TYPE = 'application/vnd.apple.mpegurl';
 /** Content type of a DASH manifest (ISO/IEC 23009-1). */
 export const DASH_MIME_TYPE = 'application/dash+xml';
 
+/** Content-Type of a WebVTT file (a storyboard's `storyboard.vtt`, a captions track). */
+export const WEBVTT_MIME_TYPE = 'text/vtt';
+
+/** Whether a package file is a WebVTT — served as text, its package references signed. */
+export function isWebVtt(file: string): boolean {
+  return (file.split(/[?#]/, 1)[0] as string).toLowerCase().endsWith('.vtt');
+}
+
+/**
+ * Rewrite the cue payload lines of a WebVTT through `rewrite` (`undefined` = keep the line).
+ * Header, `NOTE`/`STYLE`/`REGION` blocks, cue identifiers and timing lines are never passed to it —
+ * only the text that follows a timing line, up to the blank line ending the cue.
+ */
+export function rewriteWebVtt(
+  content: string,
+  rewrite: (line: string) => string | undefined,
+): string {
+  let inPayload = false;
+  return content
+    .split(/(?<=\n)/)
+    .map((raw) => {
+      const line = raw.replace(/\r?\n$/, '');
+      if (line.trim() === '') {
+        inPayload = false;
+        return raw;
+      }
+      if (line.includes('-->')) {
+        inPayload = true;
+        return raw;
+      }
+      if (!inPayload) return raw;
+      const rewritten = rewrite(line.trim());
+      return rewritten === undefined ? raw : `${rewritten}${raw.slice(line.length)}`;
+    })
+    .join('');
+}
+
 /** One way to play a video — what `<source>` / a player gets. */
 export interface MediaStreamSource {
   /** URL of the entry manifest (master playlist or MPD). */
@@ -108,7 +145,7 @@ export function streamArtifactContentType(file: string): string | undefined {
   if (lower.endsWith('.m4a')) return 'audio/mp4';
   if (lower.endsWith('.aac')) return 'audio/aac';
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  if (lower.endsWith('.vtt')) return 'text/vtt';
+  if (lower.endsWith('.vtt')) return WEBVTT_MIME_TYPE;
   // Storyboard sprite sheets (timeline thumbnails) live in the same package.
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   return undefined;
@@ -157,12 +194,26 @@ export async function rewriteDashManifest(
 /**
  * Add `query` to every relative reference of a manifest (`.m3u8` or `.mpd`) — how a signature
  * travels from the manifest request to the segment requests it leads to.
+ *
+ * A WebVTT (`.vtt`) is signed too, but only on the cue lines `isArtifact` recognizes as files of
+ * the package (a storyboard's `storyboard-001.jpg#xywh=…`, the query landing before the fragment):
+ * a captions track's spoken text is never touched.
  */
-export async function signManifest(file: string, content: string, query: string): Promise<string> {
+export async function signManifest(
+  file: string,
+  content: string,
+  query: string,
+  isArtifact: (uri: string) => boolean = () => false,
+): Promise<string> {
   if (query === '') return content;
   const format = streamFormatOf(file);
   if (format === 'hls') return rewriteHlsPlaylist(content, (ref) => withQuery(ref.uri, query));
   if (format === 'dash') return rewriteDashManifest(content, (uri) => withQuery(uri, query));
+  if (isWebVtt(file)) {
+    return rewriteWebVtt(content, (line) =>
+      isRelativeUri(line) && isArtifact(line) ? withQuery(line, query) : undefined,
+    );
+  }
   return content;
 }
 

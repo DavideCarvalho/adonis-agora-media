@@ -116,6 +116,20 @@ describe('manifest rewriting', () => {
 });
 
 /** A fake engine writing a CMAF package shaped like ffmpeg's. */
+/** A storyboard WebVTT: a sheet reference, a cue with spoken-looking text, and a NOTE. */
+const STORYBOARD_VTT = [
+  'WEBVTT',
+  '',
+  'NOTE storyboard-001.jpg in a note is not a reference',
+  '',
+  '00:00:00.000 --> 00:00:05.000',
+  'storyboard-001.jpg#xywh=0,0,160,90',
+  '',
+  '00:00:05.000 --> 00:00:10.000',
+  'storyboard-999.jpg#xywh=160,0,160,90',
+  '',
+].join('\n');
+
 function fakeEngine(requests: VideoPackageRequest[] = []): VideoPackagingEngine {
   return {
     async package(request) {
@@ -128,6 +142,10 @@ function fakeEngine(requests: VideoPackageRequest[] = []): VideoPackagingEngine 
       }
       await writeFile(join(request.outputDir, 'init-0.m4s'), 'init');
       await writeFile(join(request.outputDir, 'chunk-0-00001.m4s'), 'segment-bytes');
+      if (request.storyboard) {
+        await writeFile(join(request.outputDir, 'storyboard-001.jpg'), 'sheet-bytes');
+        await writeFile(join(request.outputDir, request.storyboard.vtt), STORYBOARD_VTT);
+      }
       return { durationSeconds: 7200, width: 1280, height: 720, videoCodec: 'h264' };
     },
   };
@@ -544,6 +562,35 @@ describe('media.access.streamRoute()', () => {
       expect(sent.body).toContain(
         `media="chunk-$RepresentationID$-$Number%05d$.m4s?${dash.searchParams.toString().replace('&', '&amp;')}"`,
       );
+    });
+
+    it("signs a storyboard WebVTT's sheet references, and only those", async () => {
+      const { serve } = await ready({
+        signing,
+        transformer: transformers.video({ engine: fakeEngine(), storyboard: true }),
+      });
+      const { ctx, sent } = fakeHttp({
+        user: owner,
+        params: { id: 'vid-1', conversion: 'video', file: 'storyboard.vtt' },
+      });
+      await serve(ctx);
+
+      expect(sent.headers['content-type']).toBe('text/vtt');
+      const signed = /^storyboard-001\.jpg\?(exp=\d+&sig=[\w-]+)#xywh=0,0,160,90$/m.exec(
+        sent.body ?? '',
+      );
+      expect(signed).not.toBeNull();
+      // Not a package file, not a cue payload: left as stored.
+      expect(sent.body).toContain('\nstoryboard-999.jpg#xywh=160,0,160,90\n');
+      expect(sent.body).toContain('NOTE storyboard-001.jpg in a note is not a reference');
+
+      // The signature alone opens the sheet.
+      const sheet = fakeHttp({
+        params: { id: 'vid-1', conversion: 'video', file: 'storyboard-001.jpg' },
+        query: Object.fromEntries(new URLSearchParams(signed![1])),
+      });
+      await serve(sheet.ctx);
+      expect(await readAll(sheet.sent.stream!)).toBe('sheet-bytes');
     });
 
     it('refuses a tampered signature and one made for another conversion', async () => {
