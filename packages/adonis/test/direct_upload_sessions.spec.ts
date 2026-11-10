@@ -17,15 +17,9 @@ import { MediaCollectionRegistry } from '../src/media_collection.js';
 import { MediaManager } from '../src/media_manager.js';
 import { StorageManager } from '../src/storage_manager.js';
 import { FakeTransformer } from '../src/testing/fake_transformer.js';
-import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../src/testing/in_memory_media_store.js';
 import { InMemoryUploadSessionStore } from '../src/testing/in_memory_upload_session_store.js';
-import type {
-  DirectUploadPolicy,
-  DiskWriteOptions,
-  MultipartPart,
-  MultipartUploadDisk,
-} from '../src/types.js';
+import type { DirectUploadPolicy } from '../src/types.js';
 import { FakeMultipartDisk } from './fake_multipart_disk.js';
 
 const EMIT_SLOT = Symbol.for('@agora/diagnostics:emit');

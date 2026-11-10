@@ -186,7 +186,7 @@ export default class MediaDashboardProvider {
 
       router
         .post('/login', async (ctx: HttpContext) => {
-          if (!auth || !auth.login) return ctx.response.status(404).send('');
+          if (!auth?.login) return ctx.response.status(404).send('');
           const raw = ctx.request.body() as Partial<LoginBody>;
           if (typeof raw.username !== 'string' || typeof raw.password !== 'string') {
             return ctx.response
@@ -206,7 +206,7 @@ export default class MediaDashboardProvider {
 
       router
         .post('/session', async (ctx: HttpContext) => {
-          if (!auth || !auth.session) return ctx.response.status(404).send('');
+          if (!auth?.session) return ctx.response.status(404).send('');
           const user = await runAuthHook(() => auth.session?.(ctx.request.request));
           if (!user) return ctx.response.status(401).json({ error: 'unauthorized' });
           issueSessionCookie(ctx, user, auth);
