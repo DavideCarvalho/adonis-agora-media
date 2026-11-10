@@ -70,6 +70,8 @@ providers: [
 import type { DiskInfo, ObjectListResponse } from '@adonis-agora/media-dashboard/types'
 ```
 
+It no longer has peer dependencies, so installing it no longer requires `@adonis-agora/media` or `@adonisjs/core`.
+
 ### Everything else works unchanged
 
 Code like this works on 1.0 exactly as it did on 0.30:
@@ -115,7 +117,5 @@ The optional integrations now accept both 0.x and 1.x of the packages they work 
 | `@adonis-agora/authkit-client` | `>=0.18.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0` |
 | `@adonis-agora/authkit-server` | `>=0.60.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0` |
 | `@adonis-agora/telescope`      | `>=0.4.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0`  |
-
-`@adonis-agora/media-dashboard` accepts `@adonis-agora/media` `>=0.18.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0`.
 
 The second clause in each range admits the 1.0 release candidates, so you can mix `rc` packages without peer warnings.

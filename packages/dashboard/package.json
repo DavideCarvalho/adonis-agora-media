@@ -55,14 +55,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
-  "peerDependencies": {
-    "@adonis-agora/media": ">=0.18.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0",
-    "@adonisjs/core": "^7.3.0"
-  },
   "devDependencies": {
-    "@adonis-agora/media": "npm:@adonis-agora/media@0.18.0",
     "@adonis-agora/media-react": "workspace:*",
-    "@adonisjs/core": "7.6.0",
     "@base-ui/react": "1.9.0",
     "@tailwindcss/postcss": "4.3.5",
     "@tanstack/intent": "0.5.6",
