@@ -11,7 +11,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Nothing about storage is reimplemented: the console consumes the **real** media surface — disk `list` / `stat` / `copy` / `move` / `deleteMany` (from the [S3 disk](/docs/media/storage/s3-disk)'s extended operations) and the resumable [`UploadSessionStore.list()`](/docs/media/uploads/resumable-tus) — through provider-registered routes, and reuses [`@adonis-agora/media-react`](/docs/media/react) for the upload UI.
 
 <Callout type="info" title="Ships embedded — no separate install">
-  The console is built into `@adonis-agora/media` itself. `node ace configure @adonis-agora/media` registers its provider for you — nothing else to add. `@adonis-agora/media-dashboard` still exists as a standalone package (its build is the console's source, and its own provider still works as a thin delegate) for hosts that prefer registering it explicitly — see [Standalone install](#standalone-install-legacy) below.
+  The console is built into `@adonis-agora/media` itself. `node ace configure @adonis-agora/media` registers its provider for you — nothing else to add.
 </Callout>
 
 ---
@@ -237,26 +237,6 @@ Three properties of the design are worth being explicit about:
 - **Login** — when `auth` is configured and no valid session cookie exists, the SPA renders its login screen instead of the console, offering exactly the mode(s) the server advertised. See [Console authentication](/docs/media/dashboard/authentication).
 
 ---
-
-## Standalone install (legacy)
-
-`@adonis-agora/media-dashboard` is still published and still works, for hosts that already register
-it directly or prefer the console as its own explicit, separately-versioned install:
-
-```sh
-pnpm add @adonis-agora/media-dashboard
-```
-
-```ts title="adonisrc.ts"
-providers: [
-  () => import('@adonis-agora/media/media_provider'),
-  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
-]
-```
-
-Its provider is a thin delegate to the embedded one above — no logic of its own — so both entry points
-stay identical in behavior, and `config/media_dashboard.ts` is read from the same `media_dashboard` key
-either way. **Register only one of the two providers.**
 
 ## Next steps
 

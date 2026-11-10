@@ -3,18 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The delegate in `media_dashboard_provider.ts` imports `@adonis-agora/media/dashboard_provider`.
- * Whether that import type-checks used to depend on which published `@adonis-agora/media` pnpm's
- * `auto-install-peers` happened to materialise — and the build passed only because the lockfile
- * pinned 0.10.3, which predates that subpath. A `@ts-expect-error` sat on the import to absorb the
- * failure, so the whole thing compiled *because* the peer did not resolve. Refreshing the lockfile
- * to any version >= 0.11.0 turned that directive into `TS2578: Unused '@ts-expect-error' directive`
- * and broke the build; bumping media out of the peer's range broke `--frozen-lockfile` outright.
- *
- * The resolution is explicit now — an exact published copy pinned as a devDependency — and these
- * pin the three properties that keep it that way. `vitest.config.ts` aliases the specifier for the
- * delegate's unit test, so this file asserts against the installed package on disk instead, which
- * no alias can mask.
+ * `@adonis-agora/media` is a peer of this package, and an exact published copy is pinned as a
+ * devDependency so its types resolve deterministically (a version picked by pnpm's
+ * `auto-install-peers` used to decide whether the build passed). These pin the three properties
+ * that keep that pin sound, asserting against the installed package on disk.
  */
 
 // Paths off `process.cwd()` (the package root under vitest) rather than `import.meta.url`, which
@@ -26,16 +18,16 @@ const pkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf
 
 const MEDIA = '@adonis-agora/media';
 
-describe('the @adonis-agora/media peer this package delegates to', () => {
+describe('the @adonis-agora/media peer', () => {
   it('declares a peer range wide enough that a minor bump cannot leave it', () => {
     const range = pkg.peerDependencies[MEDIA];
     // `^0.11.0` would be left behind by 0.12.0, which is what made changesets rewrite this field
     // and desynchronise the lockfile — a range the release could no longer install from.
-    // The optional `|| >=1.0.0-0 <2.0.0` clause admits 1.0.0 prereleases (`1.0.0-rc.N`), which
+    // The optional `|| >=1.0.0-rc.0 <2.0.0` clause admits 1.0.0 prereleases (`1.0.0-rc.N`), which
     // semver keeps out of a plain `<2.0.0` range; without it changesets rewrites this field to an
     // empty `>=1.0.0-rc.0 <1.0.0` when media is versioned in `rc` pre mode.
     expect(range).toMatch(
-      /^>=\d+\.\d+\.\d+ <\d+\.\d+\.\d+( \|\| >=\d+\.\d+\.\d+-0 <\d+\.\d+\.\d+)?$/,
+      /^>=\d+\.\d+\.\d+ <\d+\.\d+\.\d+( \|\| >=\d+\.\d+\.\d+-rc\.\d+ <\d+\.\d+\.\d+)?$/,
     );
   });
 
@@ -51,12 +43,11 @@ describe('the @adonis-agora/media peer this package delegates to', () => {
     expect(pin).toBe(`npm:${MEDIA}@${floor}`);
   });
 
-  it('resolves to that copy on disk, exposing the subpath the delegate imports', () => {
+  it('resolves to that copy on disk', () => {
     const installed = JSON.parse(
       readFileSync(resolve(process.cwd(), 'node_modules', MEDIA, 'package.json'), 'utf8'),
-    ) as { version: string; exports: Record<string, unknown> };
+    ) as { version: string };
 
     expect(installed.version).toBe(pkg.devDependencies[MEDIA]?.split('@').pop());
-    expect(installed.exports['./dashboard_provider']).toBeDefined();
   });
 });

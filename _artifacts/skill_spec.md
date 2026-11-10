@@ -11,9 +11,8 @@ packages/{adonis,react,dashboard}.
 
 The monorepo publishes three packages. `@adonis-agora/media` is the flagship and owns almost
 the whole consumer surface; the console ships embedded inside it (`./dashboard_provider`), with
-`@adonis-agora/media-dashboard` as its standalone/delegate install. Skills therefore target all
-three packages, with the dashboard skill owned by the dashboard package since that is where a
-standalone host looks.
+`@adonis-agora/media-dashboard` as the SPA's build source. Skills therefore target all
+three packages, with the dashboard skill owned by the dashboard package.
 
 | Package | Version | Skills | Why |
 |---|---|---|---|
@@ -59,7 +58,7 @@ React package — `packages/react/skills/`:
    status discipline, header/SigV4 rules, `OpenMediaDashboardButton`.
 
 Dashboard package — `packages/dashboard/skills/`:
-7. `media-dashboard-console` — embedded-vs-standalone provider choice, `actions` gate,
+7. `media-dashboard-console` — embedded provider, `actions` gate,
    `middleware` + built-in `auth` composition (Mode A/B), cookie signing helpers,
    `DashboardService`/`DashboardError`, object insights.
 

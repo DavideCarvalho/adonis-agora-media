@@ -34,9 +34,8 @@ primary_packages:
       createMediaUploadClient (./client), console launcher (OpenMediaDashboardButton).
   - name: '@adonis-agora/media-dashboard'
     dir: packages/dashboard
-    role: Standalone management console (React SPA build source + thin delegate
-      provider). The console ships embedded in @adonis-agora/media; this package is
-      the legacy/explicit-install variant.
+    role: Management console SPA build source + console API types. The console
+      ships embedded in @adonis-agora/media.
 
 # The mental model an AI agent must hold to use the library correctly.
 concepts:
@@ -124,8 +123,7 @@ concepts:
     source: docs/react/index.mdx, docs/react/client.mdx
   - id: console
     summary: >-
-      Embedded console (dashboard_provider) + standalone @adonis-agora/media-dashboard
-      delegate. Read-only by default; actions:true enables copy/move/delete (gated 403
+      Embedded console (dashboard_provider). Read-only by default; actions:true enables copy/move/delete (gated 403
       in DashboardService). Built-in session auth (Mode A mint-from-app-auth / Mode B
       credentials) composes with host middleware. DashboardService is the framework-free
       engine; deleteMediaRecord deletes the ROW, not the object.
@@ -200,7 +198,7 @@ domains:
       - 'OpenMediaDashboardButton / useOpenMediaDashboard / openMediaDashboard; ConsoleSessionError redirect trap'
 
   - id: dashboard-console
-    title: Management console (embedded + standalone)
+    title: Management console (embedded)
     package: '@adonis-agora/media-dashboard'
     surface:
       - 'config/media_dashboard.ts: basePath, apiBasePath, actions, disks, middleware, enabled, auth, objectInsights'
@@ -412,11 +410,6 @@ failure_modes:
     mechanism: actions:true enables copy/move/delete/folder sweeps/record deletion; the routes are mounted regardless and refuse only via DashboardService's 403 — gate with middleware/auth first.
     source: docs/dashboard/index.mdx warn callout
     priority: CRITICAL
-    skills: [media-dashboard-console]
-  - mistake: registering both the embedded and standalone console providers
-    mechanism: media_dashboard_provider (embedded) and @adonis-agora/media-dashboard's delegate provider must not both be registered — register exactly one.
-    source: docs/dashboard/index.mdx (Standalone install)
-    priority: MEDIUM
     skills: [media-dashboard-console]
   - mistake: assuming deleteMediaRecord removes the underlying object
     mechanism: DashboardService.deleteMediaRecord deletes the MediaStore row only — the disk object stays where it is.

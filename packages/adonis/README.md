@@ -327,9 +327,7 @@ The console reads/writes through the real `@adonis-agora/media` surface (disk
 `list`/`stat`/`copy`/`move`/`deleteMany`, the resumable session store, the `MediaStore`) — nothing
 about storage is reimplemented. Full config reference, routes, and folder-operations semantics are
 documented in [`@adonis-agora/media-dashboard`](https://github.com/DavideCarvalho/adonis-agora-media/tree/master/packages/dashboard),
-which is now the **build-time source** of the console's SPA bundle (embedded here at build time) and
-remains installable **standalone** — its own provider is a thin delegate to this one, kept for hosts
-that already register it directly. Don't register both providers in the same app.
+which is the **build-time source** of the console's SPA bundle (embedded here at build time).
 
 ## Diagnostics
 

@@ -63,6 +63,13 @@
       "automerge": false
     },
     {
+      "description": "The pinned toolchain Node (`.nvmrc` and every `node-version:` in the workflows) stays on the 24 line: build and release run on Node 24, and CI tests 24 and 26 through the matrix. Patch and minor bumps of the pin still come through; a major moves only by hand.",
+      "matchManagers": ["nvm", "node-version", "github-actions"],
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "description": "Lockfile maintenance refreshes the whole tree at once, so Renovate has no single release to age: its `renovate/stability-days` check stays pending forever and the automerge below never fires. pnpm already enforces the minimum release age itself when it resolves the refreshed lockfile, so the check adds nothing here.",
       "matchUpdateTypes": ["lockFileMaintenance"],
       "minimumReleaseAge": null
