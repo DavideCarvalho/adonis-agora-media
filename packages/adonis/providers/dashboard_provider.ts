@@ -61,8 +61,7 @@ const SESSION_COOKIE_PATH = '/';
  * session store. Nothing about storage is reimplemented here.
  *
  * Registering this provider is all a consuming app needs to do to get the dashboard — no separate
- * `@adonis-agora/media-dashboard` install (its provider still exists, standalone, for hosts that
- * prefer it — see `packages/dashboard`):
+ * `@adonis-agora/media-dashboard` install:
  * ```ts
  * providers: [
  *   () => import('@adonis-agora/media/media_provider'),

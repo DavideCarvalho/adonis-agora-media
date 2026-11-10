@@ -57,10 +57,7 @@ export type DashboardAuthorize = (ctx: HttpContext) => AuthorizeResult | Promise
 
 /**
  * Configuration for the `@adonis-agora/media` dashboard, read by `dashboard_provider.ts` from
- * `config/media_dashboard.ts`. Same config KEY (`media_dashboard`) the standalone
- * `@adonis-agora/media-dashboard` package's provider always read, so an existing
- * `config/media_dashboard.ts` keeps working unchanged when a host switches from the standalone
- * provider to this embedded one.
+ * `config/media_dashboard.ts` (config key `media_dashboard`).
  *
  * The console is a read-only browser by default (`actions: false`); flip `actions` on — and gate the
  * routes with your own `middleware` (an auth guard) — to enable copy/move/delete. Storage, uploads and
