@@ -29,7 +29,7 @@ export class FakeMultipartDisk extends InMemoryDisk implements MultipartUploadDi
   }
 
   async uploadPart(
-    key: string,
+    _key: string,
     uploadId: string,
     partNumber: number,
     body: Uint8Array,

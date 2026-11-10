@@ -1,6 +1,3 @@
-import type { Database } from '@adonisjs/lucid/database';
-import type { QueryClientContract } from '@adonisjs/lucid/types/database';
-
 /**
  * The media schema for the Lucid store, as standalone functions.
  *

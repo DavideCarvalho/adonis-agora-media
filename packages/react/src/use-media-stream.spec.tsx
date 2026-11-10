@@ -120,6 +120,7 @@ function fakeDash() {
 /** Renders a `<video>` driven by the hook; `result()` is the hook's latest return. */
 function mount(input: MediaStreamInput, options: UseMediaStreamOptions = {}) {
   let latest: UseMediaStreamResult | undefined;
+  // biome-ignore lint/correctness/noComponentHookFactories: test harness; each mount closes over its own options and result slot
   function Player({ value }: { value: MediaStreamInput }) {
     const ref = useRef<HTMLVideoElement>(null);
     latest = useMediaStream(ref, value, options);

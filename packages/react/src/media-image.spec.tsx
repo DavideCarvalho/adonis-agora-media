@@ -342,10 +342,10 @@ describe('<MediaImage> focal point', () => {
         src="/a.jpg"
         focalPoint={{ x: 1, y: 0 }}
         alt=""
-        style={{ objectPosition: 'center' }}
+        style={{ objectPosition: '25% 75%' }}
       />,
     );
-    expect(img().style.objectPosition).toBe('center');
+    expect(img().style.objectPosition).toBe('25% 75%');
   });
 });
 
