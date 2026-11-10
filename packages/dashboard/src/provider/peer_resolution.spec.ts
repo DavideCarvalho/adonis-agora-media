@@ -31,7 +31,12 @@ describe('the @adonis-agora/media peer this package delegates to', () => {
     const range = pkg.peerDependencies[MEDIA];
     // `^0.11.0` would be left behind by 0.12.0, which is what made changesets rewrite this field
     // and desynchronise the lockfile — a range the release could no longer install from.
-    expect(range).toMatch(/^>=\d+\.\d+\.\d+ <\d+\.\d+\.\d+$/);
+    // The optional `|| >=1.0.0-0 <2.0.0` clause admits 1.0.0 prereleases (`1.0.0-rc.N`), which
+    // semver keeps out of a plain `<2.0.0` range; without it changesets rewrites this field to an
+    // empty `>=1.0.0-rc.0 <1.0.0` when media is versioned in `rc` pre mode.
+    expect(range).toMatch(
+      /^>=\d+\.\d+\.\d+ <\d+\.\d+\.\d+( \|\| >=\d+\.\d+\.\d+-0 <\d+\.\d+\.\d+)?$/,
+    );
   });
 
   it('pins an exact published copy for types, as an npm: alias at the range floor', () => {

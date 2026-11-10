@@ -1,0 +1,95 @@
+---
+title: Migrating to 1.0
+description: Move an app from @adonis-agora/media 0.x to 1.0. The public API is unchanged; 1.0 requires Node.js 24 or later and accepts the 1.x line of the other @adonis-agora packages.
+icon: ArrowUpCircle
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@adonis-agora/media` 1.0 keeps the 0.30 API as it is. Every import, config option, subpath and ace command works the same, so most apps upgrade by changing the version and nothing else. The same goes for `@adonis-agora/media-react` 1.0 and `@adonis-agora/media-dashboard` 9.x.
+
+---
+
+## Requirements
+
+- **Node.js 24 or later.** `engines.node` is `>=24`, the same line AdonisJS 7 requires.
+- **AdonisJS 7** (`@adonisjs/core` `^7.3.0`), unchanged.
+- **`@adonisjs/drive` `^3.0.0` or `^4.0.0`**, unchanged.
+
+If your app already runs on AdonisJS 7, it already runs on Node 24 or later.
+
+---
+
+## Upgrade
+
+1.0 is published first as a release candidate under the `rc` tag:
+
+```sh
+npm i @adonis-agora/media@rc @adonis-agora/media-react@rc
+```
+
+Once 1.0.0 is final, install it as usual:
+
+```sh
+npm i @adonis-agora/media@^1.0.0 @adonis-agora/media-react@^1.0.0
+```
+
+If you register the standalone console package, update it alongside:
+
+```sh
+npm i @adonis-agora/media-dashboard@latest
+```
+
+---
+
+## Breaking changes
+
+There are no API changes. Code like this works on 1.0 exactly as it did on 0.30:
+
+```ts title="app/controllers/avatars_controller.ts"
+import { createReadStream } from 'node:fs'
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
+
+export default class AvatarsController {
+  async update({ request, response, auth }: HttpContext) {
+    const user = auth.getUserOrFail()
+
+    const avatar = request.file('avatar', { size: '2mb', extnames: ['jpg', 'jpeg', 'png', 'webp'] })
+    if (!avatar) return response.badRequest({ error: 'An "avatar" file is required' })
+
+    const att = await media.attachments.createFromFile(
+      {
+        fileName: avatar.clientName,
+        mimeType: avatar.type!,
+        contents: createReadStream(avatar.tmpPath!),
+      },
+      { variants: [{ name: 'thumb', width: 100 }] },
+    )
+
+    user.avatarData = att.toJSON()
+    await user.save()
+
+    return response.ok(user)
+  }
+}
+```
+
+---
+
+## Other @adonis-agora packages
+
+The optional integrations now accept both 0.x and 1.x of the packages they work with, so you can move each one to 1.0 on its own schedule:
+
+| Peer                           | Accepted range       |
+| ------------------------------ | -------------------- |
+| `@adonis-agora/authz`          | `>=0.16.0 <2.0.0`    |
+| `@adonis-agora/authkit-client` | `>=0.18.0 <2.0.0`    |
+| `@adonis-agora/authkit-server` | `>=0.60.0 <2.0.0`    |
+| `@adonis-agora/telescope`      | `>=0.4.0 <2.0.0`     |
+
+`@adonis-agora/media-dashboard` accepts `@adonis-agora/media` `>=0.18.0 <2.0.0`, including the 1.0 release candidates.
+
+<Callout type="info">
+  While 1.0 is a release candidate, package managers match a prerelease such as `1.0.0-rc.0` only against ranges that name a 1.0.0 prerelease, so installing the `rc` of one `@adonis-agora` package next to another can print a peer warning (npm may refuse with `ERESOLVE`; pass `--legacy-peer-deps` while testing). It goes away once 1.0.0 is final.
+</Callout>
