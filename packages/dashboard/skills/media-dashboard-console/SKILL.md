@@ -2,7 +2,7 @@
 name: media-dashboard-console
 description: >-
   The media management console for @adonis-agora/media — config/media_dashboard.ts via
-  @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, actions gate, disks,
+  @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, authorize gate, actions gate, disks,
   middleware, enabled), the embedded dashboard_provider, built-in session auth (Mode A
   auth.session minting from app auth, Mode B auth.login credentials screen, revalidate,
   secret/ttl, signSessionCookie/verifySessionCookie/resolveConsoleAuth), DashboardService
@@ -68,6 +68,10 @@ when your app's auth is not cookie-shaped:
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
 export default defineConfig({
+  // `authorize` runs before `middleware` and `auth`: an auth-guarded console still needs it
+  // in production, or every page/API request is refused (`403`) — `() => true` keeps `auth`
+  // as the gate.
+  authorize: () => true,
   auth: {
     secret: env.get('MEDIA_CONSOLE_SECRET'), // required — missing/empty is a boot error
     ttl: '8h',
@@ -90,7 +94,8 @@ export default defineConfig({
 
 Configure both modes and the login screen offers both (learned from the `401` body of
 `GET /me`). The auth routes (`/me`, `/login`, `/session`, `/logout`) are deliberately mounted
-OUTSIDE both gates — they create the session the guard checks for.
+outside the `authorize`, `middleware`, and session gates — they mint the session the guards
+check for, but in production that session still has to pass `authorize`.
 
 Source: `docs/dashboard/authentication.mdx`.
 
@@ -180,8 +185,11 @@ export default defineConfig({
 
 Mechanism: `actions: true` enables copy/move/delete, recursive folder sweeps, record
 deletion, upload aborts and uploads — recursive delete/move are destructive and
-irreversible. Without `authorize` the console is open in development and refuses every
-request (`403`) in production; `authorize` (plus `middleware`/`auth`) decides who gets in.
+irreversible. Without `authorize` the console is open in development and refuses every page
+and API request (`403`) in production, with a warning at boot (the `auth` login routes stay
+mounted, but a session they mint does not get past the gate); `authorize` runs before
+`middleware`/`auth`, so a console guarded only by those needs `authorize` too (for example
+`authorize: () => true` to keep them as the gate).
 Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn).
 
 ### [HIGH] Configuring dashboard auth with neither a session nor a login hook
