@@ -15,17 +15,6 @@ export {
   type UploadMeta,
   xhrPartUploader,
 } from './client.js';
-// The embeddable "open dashboard" widget — mint a console session from your own app's auth and
-// navigate to `@adonis-agora/media-dashboard`. Ported from the NestJS sibling console's
-// `src/react/*` so both ecosystems ship the same building block.
-export {
-  ConsoleSessionError,
-  mediaDashboardSessionUrl,
-  mediaDashboardUrl,
-  mintMediaDashboardSession,
-  type OpenConsoleOptions,
-  openMediaDashboard,
-} from './console-session.js';
 // `next/image` for stored images: srcSet from the collection's presets, intrinsic size and the
 // blur-up placeholder, all from `media.library.image(id)` on the server.
 export {
@@ -43,10 +32,6 @@ export {
 } from './media-image.js';
 export { MediaPicture, type MediaPictureProps, type MediaPictureSource } from './media-picture.js';
 export * from './media-uploader.js';
-export {
-  OpenMediaDashboardButton,
-  type OpenMediaDashboardButtonProps,
-} from './open-console-button.js';
 export {
   ensureMediaUploaderStyles,
   MEDIA_UPLOADER_STYLE_ID,
@@ -66,8 +51,3 @@ export {
   useMediaStream,
 } from './use-media-stream.js';
 export * from './use-media-upload.js';
-export {
-  openMediaDashboardMutationOptions,
-  type UseOpenConsoleResult,
-  useOpenMediaDashboard,
-} from './use-open-console.js';

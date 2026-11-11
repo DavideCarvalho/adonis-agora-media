@@ -33,7 +33,7 @@ import { defineConfig } from '@adonis-agora/media/dashboard'
 ```
 
 See [`@adonis-agora/media`'s Dashboard section](../adonis#dashboard) for the full config reference —
-`defineConfig`, `DashboardService`, the session-auth helpers and `ObjectInsightProvider` all live under
+`defineConfig`, `DashboardService`, the `authorize` contract and `ObjectInsightProvider` all live under
 `@adonis-agora/media/dashboard` now.
 
 ## Configuration

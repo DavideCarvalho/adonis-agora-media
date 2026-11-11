@@ -47,7 +47,7 @@ npm uninstall @adonis-agora/media-dashboard
 Without `authorize`, the media console used to be open to every request unless `middleware` or
 `auth` closed it. In 1.0 it is open only outside production. In production its pages and API answer
 `403` until `config/media_dashboard.ts` sets `authorize`, and a warning at boot says so.
-`authorize` runs before `middleware` and `auth`, so a console guarded only by those is refused too.
+`authorize` runs before `middleware`, so a console guarded only by `middleware` is refused too.
 
 Before:
 
@@ -84,7 +84,7 @@ export default defineConfig({
 
 Apps that already set `authorize` need no change. `authorize` now also accepts a class with an
 `authorize(ctx)` method, built through the container, or a lazy import of one, and a
-`{ redirectTo: '/login' }` answer. See [Console authentication](/docs/media/dashboard/authentication).
+`{ redirectTo: '/login' }` answer. See [Console access](/docs/media/dashboard/authentication).
 
 ### Console refusals answer lowercase JSON
 
@@ -128,6 +128,71 @@ After:
 
 ```ts
 import type { ConsoleAuthorize } from '@adonis-agora/media/dashboard'
+```
+
+### The console's own login (`auth`) is removed
+
+The console no longer has a login of its own. The `auth` option of `config/media_dashboard.ts` is
+removed, with no alias, and with it:
+
+- the console's login screen and its **sign out** button;
+- the `GET <apiBasePath>/me`, `POST <apiBasePath>/login`, `POST <apiBasePath>/session` and
+  `POST <apiBasePath>/logout` routes, and the `media_dashboard_session` cookie;
+- the `secret`, `ttl`, `session`, `login` and `revalidate` hooks;
+- the exports `resolveConsoleAuth`, `signSessionCookie`, `verifySessionCookie` and the types
+  `ConsoleAuthOptions`, `ResolvedConsoleAuth`, `ConsoleSession`, `ConsoleSessionUser`,
+  `ConsoleSessionUserInfo`, `AuthMode`, `SessionHook`, `LoginHook`, `RevalidateHook`, `MeResponse`
+  and `LoginBody` (from `@adonis-agora/media/dashboard` and `@adonis-agora/media-dashboard`);
+- the console launcher in `@adonis-agora/media-react`: `OpenMediaDashboardButton`,
+  `useOpenMediaDashboard`, `openMediaDashboardMutationOptions`, `openMediaDashboard`,
+  `mintMediaDashboardSession`, `mediaDashboardSessionUrl`, `mediaDashboardUrl`,
+  `ConsoleSessionError` and their types. A plain link to the console's `basePath` replaces it.
+
+Operators sign in through your app. Gate the console in `authorize`, and return
+`{ redirectTo: '/login' }` for a signed-out visitor: a page navigation is redirected there, and the
+console follows the same `redirectTo` when one of its API calls answers `401` (without one, it
+reloads the page). Remove the secret and password variables you added for `auth` from `start/env.ts`.
+
+Before:
+
+```ts title="config/media_dashboard.ts"
+import env from '#start/env'
+import User from '#models/user'
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: () => true,
+  auth: {
+    secret: env.get('MEDIA_DASHBOARD_SECRET'),
+    ttl: '8h',
+    login: async (username, password) => {
+      const user = await User.verifyCredentials(username, password).catch(() => null)
+      if (!user?.isAdmin) return null
+      return { id: String(user.id), name: user.fullName }
+    },
+  },
+})
+```
+
+```tsx
+<OpenMediaDashboardButton headers={() => ({ Authorization: `Bearer ${token()}` })} />
+```
+
+After:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: async (ctx) => {
+    if (!(await ctx.auth.check())) return { redirectTo: '/login' }
+    return ctx.auth.user!.isAdmin === true
+  },
+})
+```
+
+```tsx
+<a href="/media/dashboard">Open Media console</a>
 ```
 
 ### The standalone console provider is removed

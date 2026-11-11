@@ -77,7 +77,10 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
     expect(calls).toContainEqual({ method: 'get', path: '/' });
     expect(calls).toContainEqual({ method: 'get', path: '/assets/:file' });
     expect(calls).toContainEqual({ method: 'get', path: '/topology' });
-    expect(calls).toContainEqual({ method: 'get', path: '/me' });
+    // No console login: sign-in is the app's own.
+    for (const path of ['/me', '/login', '/session', '/logout']) {
+      expect(calls.some((call) => call.path === path)).toBe(false);
+    }
   });
 
   it('reads config/media_dashboard.ts (the literal file-name key) and applies its middleware', async () => {
@@ -341,8 +344,8 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
     Object.assign(app, appExtra);
     await new MediaDashboardProvider(app as never).boot();
     await bootedHandlers[0]?.();
-    // Groups are created in mount order: auth routes (no middleware), API, SPA.
-    const [, api, spa] = groups;
+    // Groups are created in mount order: API, SPA.
+    const [api, spa] = groups;
     type Gate = (ctx: unknown, next: () => Promise<void>) => Promise<void>;
     return { api: api?.middleware[0] as Gate, spa: spa?.middleware[0] as Gate };
   }
@@ -481,12 +484,11 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       },
     );
 
-    it("{ allowed: false, reason: 'unauthenticated' } denies with 401 — and not the login-screen 401", async () => {
+    it("{ allowed: false, reason: 'unauthenticated' } denies with 401", async () => {
       const authorize = () => ({ allowed: false, reason: 'unauthenticated' });
       const api = await run(authorize, 'api');
       expect(api.next).not.toHaveBeenCalled();
       expect(api.recorded.status).toBe(401);
-      // NOT `{ auth: { modes } }`: that body is the console session guard's "show the login screen".
       expect(api.recorded.body).toEqual({ error: 'unauthenticated' });
 
       const spa = await run(authorize, 'spa');

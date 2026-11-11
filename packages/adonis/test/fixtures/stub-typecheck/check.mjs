@@ -105,11 +105,10 @@ const COMMENTED_EXAMPLES = {
     suffix: 'all-options',
     blocks: [
       ['  // enabled: true,', '  // middleware: middleware.auth(),      // runs after authorize'],
-      ['  // auth: {', '  // },'],
     ],
     /**
-     * The two symbols the dashboard examples borrow from the host app, so the check stays on what this
-     * package owns — the shape of `auth`, `disks`, `actions` — instead of failing on `#start/kernel`,
+     * The symbols the dashboard examples borrow from the host app, so the check stays on what this
+     * package owns — the shape of `authorize`, `disks`, `actions` — instead of failing on `#start/kernel`,
      * which a scratch app has no reason to provide.
      *
      * `auth(): never` deliberately leaves that one VALUE unchecked: what a host's middleware returns is
@@ -121,7 +120,6 @@ const COMMENTED_EXAMPLES = {
      * `authorize` example is checked against the real `HttpContext`.
      */
     preamble: [
-      'declare const env: { get(key: string): string }',
       'declare const middleware: { auth(): never }',
       "declare module '@adonisjs/core/http' { interface HttpContext { auth: { user?: { isAdmin: boolean } } } }",
       '',

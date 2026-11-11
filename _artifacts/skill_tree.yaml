@@ -50,12 +50,11 @@ skills:
     package: "@adonis-agora/media-react"
     path: packages/react/skills/media-react-uploads/SKILL.md
     covers: [useMediaUpload, MediaUploader, createMediaUploadClient, xhrPartUploader,
-             MediaHttpError, UploadMeta, storageKey resume, OpenMediaDashboardButton]
+             MediaHttpError, UploadMeta, storageKey resume]
 
   - name: media-dashboard-console
     type: core
     package: "@adonis-agora/media-dashboard"
     path: packages/dashboard/skills/media-dashboard-console/SKILL.md
-    covers: [media_dashboard defineConfig, actions gate, middleware, auth session/login,
-             revalidate, signSessionCookie, DashboardService, DashboardError,
-             objectInsights]
+    covers: [media_dashboard defineConfig, actions gate, authorize, middleware,
+             DashboardService, DashboardError, objectInsights]

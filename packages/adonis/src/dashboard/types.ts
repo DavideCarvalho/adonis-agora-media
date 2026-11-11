@@ -262,19 +262,3 @@ export interface ObjectInsight {
 export interface ObjectInsightsResponse {
   insights: ObjectInsight[];
 }
-
-/** A signed-in console user, carried by the session cookie and returned by `/me`. */
-export interface ConsoleSessionUserInfo {
-  id: string;
-  name?: string;
-  roles: string[];
-}
-
-/** Response of `GET /me`: the console SPA renders the login screen or the console from this. */
-export type MeResponse = { authRequired: false } | { user: ConsoleSessionUserInfo };
-
-/** Body for `POST /login`. */
-export interface LoginBody {
-  username: string;
-  password: string;
-}

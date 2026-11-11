@@ -3,7 +3,6 @@ import type {
   AccessDeniedOption as GenericAccessDeniedOption,
   AccessDeniedRenderer as GenericAccessDeniedRenderer,
 } from './access_denied_page.js';
-import type { ConsoleAuthOptions } from './auth.js';
 import type { ConsoleAuthorize } from './console_authorize.js';
 import type { ObjectInsightProvider } from './object_insights.js';
 import type { ObjectUrlStrategy } from './object_urls.js';
@@ -61,14 +60,14 @@ export interface MediaDashboardConfig {
    * Answer `true` / `{ allowed: true }` to allow; `false` / `{ allowed: false }` for `403`;
    * `{ allowed: false, reason: 'unauthenticated' }` for `401`; `{ redirectTo: '/login' }` to send
    * a page navigation there (API calls get `401`). A check that throws is a `403`. Runs before
-   * `middleware` and composes with the built-in `auth` login (all must pass). API refusals answer
+   * `middleware` (both must pass). Sign-in is your app's own: the console has no login. API refusals answer
    * `{ error: 'forbidden' }` / `{ error: 'unauthenticated' }` JSON (plus `redirectTo` for a
    * redirect); page navigations get the {@link accessDenied} page with the same status. For machine
    * access, use `authorizeByToken({ token })`.
    *
    * Omitted: the console is open outside production and answers `403` to every page and API
    * request in production, with a warning at boot. Set `authorize: () => true` to keep it open in
-   * production when `middleware` or `auth` already guard it.
+   * production when `middleware` already guards it.
    */
   authorize?: ConsoleAuthorize;
   /**
@@ -82,14 +81,6 @@ export interface MediaDashboardConfig {
    * `authorize` still wins: the provider never overwrites a `location` header.
    */
   accessDenied?: AccessDeniedOption;
-  /**
-   * Gate the console's JSON API behind a built-in session-cookie login, mirroring the NestJS sibling
-   * console. Omit to leave the API open (front it with your own `middleware`). When set, the SPA
-   * renders a login screen until a valid cookie exists; supply a `login(username, password)` and/or
-   * `session(request)` hook that returns a session user (or `null` to deny) — see
-   * {@link ConsoleAuthOptions}. Independent of, and composable with, `middleware`.
-   */
-  auth?: ConsoleAuthOptions;
   /**
    * Host-supplied context about a disk object, rendered in the console's preview — see
    * {@link ObjectInsightProvider}. The console can only describe a file as storage sees it; this is
