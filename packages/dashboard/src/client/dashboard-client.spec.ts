@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DashboardClient } from './dashboard-client';
+import { csrfHeader, DashboardClient } from './dashboard-client';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -64,6 +64,17 @@ describe('DashboardClient', () => {
       const init = fetchImpl.mock.calls[0][1] as RequestInit;
       expect(init.headers).toMatchObject({ 'x-xsrf-token': 'tok=1' });
       expect(init.redirect).toBe('manual');
+    } finally {
+      // biome-ignore lint/suspicious/noDocumentCookie: clean up the planted cookie
+      document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    }
+  });
+
+  it('sends a malformed XSRF-TOKEN as is instead of throwing', () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: the test plants a malformed cookie
+    document.cookie = 'XSRF-TOKEN=bad%ZZ';
+    try {
+      expect(csrfHeader()).toEqual({ 'x-xsrf-token': 'bad%ZZ' });
     } finally {
       // biome-ignore lint/suspicious/noDocumentCookie: clean up the planted cookie
       document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT';

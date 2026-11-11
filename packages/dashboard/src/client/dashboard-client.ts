@@ -64,7 +64,12 @@ export function csrfHeader(): Record<string, string> {
   const match = /(?:^|;\s*)XSRF-TOKEN=([^;]*)/.exec(document.cookie);
   const token = match?.[1];
   if (!token) return {};
-  return { 'x-xsrf-token': decodeURIComponent(token) };
+  try {
+    return { 'x-xsrf-token': decodeURIComponent(token) };
+  } catch {
+    // A malformed escape (`%ZZ`) must not break every console action: send the raw value.
+    return { 'x-xsrf-token': token };
+  }
 }
 
 /**
