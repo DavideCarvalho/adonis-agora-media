@@ -1,7 +1,6 @@
-import { AuthScreen } from './AuthScreen';
 import type { Tab } from './hash-route';
 import { toHash, useHashRoute } from './hash-route';
-import { useLogout, useMe, useTopology } from './queries';
+import { useTopology } from './queries';
 import { Button, Dot } from './ui';
 import { CollectionsView } from './views/CollectionsView';
 import { LibraryBrowseView } from './views/LibraryBrowseView';
@@ -40,12 +39,7 @@ function LogoMark({ className }: { className?: string }) {
 
 export function App() {
   const route = useHashRoute();
-  const me = useMe();
-  const logout = useLogout();
-  const authed = me.data?.state === 'authenticated';
-  const topology = useTopology({ enabled: me.data !== undefined && me.data.state !== 'login' });
-
-  if (me.data?.state === 'login') return <AuthScreen modes={me.data.modes} />;
+  const topology = useTopology();
 
   const stat = (label: string, on: boolean) => (
     <span
@@ -93,17 +87,6 @@ export function App() {
                 <Dot tone="ok" pulse />
                 live
               </span>
-              {authed && (
-                <Button
-                  tone="ghost"
-                  onClick={() => logout.mutate()}
-                  className="ml-1 text-[10px] uppercase tracking-wider"
-                >
-                  {me.data?.state === 'authenticated' && me.data.user.name
-                    ? `sign out · ${me.data.user.name}`
-                    : 'sign out'}
-                </Button>
-              )}
             </div>
           )}
         </header>

@@ -104,25 +104,24 @@ const COMMENTED_EXAMPLES = {
   'config/media_dashboard.stub': {
     suffix: 'all-options',
     blocks: [
-      [
-        '  // enabled: true,',
-        '  // middleware: middleware.auth(),      // gate the whole console — SPA + API',
-      ],
-      ['  // auth: {', '  // },'],
+      ['  // enabled: true,', '  // middleware: middleware.auth(),      // runs after authorize'],
     ],
     /**
-     * The two symbols the dashboard examples borrow from the host app, so the check stays on what this
-     * package owns — the shape of `auth`, `disks`, `actions` — instead of failing on `#start/kernel`,
+     * The symbols the dashboard examples borrow from the host app, so the check stays on what this
+     * package owns — the shape of `authorize`, `disks`, `actions` — instead of failing on `#start/kernel`,
      * which a scratch app has no reason to provide.
      *
      * `auth(): never` deliberately leaves that one VALUE unchecked: what a host's middleware returns is
      * the host's business, and typing it as this package's own `DashboardMiddleware` would only assert
      * the check against itself. The `middleware` KEY is still verified — an option that no longer
      * exists on the config type fails excess-property checking regardless of its value.
+     *
+     * `ctx.auth` comes from `@adonisjs/auth` in a real app; the augmentation stands in for it so the
+     * `authorize` example is checked against the real `HttpContext`.
      */
     preamble: [
-      'declare const env: { get(key: string): string }',
       'declare const middleware: { auth(): never }',
+      "declare module '@adonisjs/core/http' { interface HttpContext { auth: { user?: { isAdmin: boolean } } } }",
       '',
     ].join('\n'),
   },

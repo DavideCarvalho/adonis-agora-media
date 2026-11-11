@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { csrfHeader, DashboardClient } from './dashboard-client';
+import { csrfHeader, DashboardClient, followUnauthenticated } from './dashboard-client';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -130,48 +130,48 @@ describe('DashboardClient', () => {
     expect(client.objectRawUrl('s3', 'a b.txt')).toBe('/api/object/raw?disk=s3&key=a+b.txt');
   });
 
-  describe('me()', () => {
-    it('reports "open" when the server has no user and no auth-required marker', async () => {
-      const fetchImpl = vi.fn(async () => jsonResponse({ authRequired: false }));
-      const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-      await expect(client.me()).resolves.toEqual({ state: 'open' });
+  describe('401 handling', () => {
+    it('goes where authorize asked when the 401 carries a redirectTo', async () => {
+      const fetchImpl = vi.fn(async () =>
+        jsonResponse({ error: 'unauthenticated', redirectTo: '/login' }, 401),
+      );
+      const onUnauthenticated = vi.fn();
+      const client = new DashboardClient({ apiBase: '/api', fetchImpl, onUnauthenticated });
+      await expect(client.topology()).rejects.toThrow('Not signed in');
+      expect(onUnauthenticated).toHaveBeenCalledWith('/login');
     });
 
-    it('reports "authenticated" with the session user', async () => {
-      const fetchImpl = vi.fn(async () => jsonResponse({ user: { id: 'u1', roles: ['admin'] } }));
-      const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-      await expect(client.me()).resolves.toEqual({
-        state: 'authenticated',
-        user: { id: 'u1', roles: ['admin'] },
-      });
+    it('passes no target on a bare 401, so the default reloads the page', async () => {
+      const fetchImpl = vi.fn(async () => jsonResponse({ error: 'unauthenticated' }, 401));
+      const onUnauthenticated = vi.fn();
+      const client = new DashboardClient({ apiBase: '/api', fetchImpl, onUnauthenticated });
+      await expect(client.copy({ disk: 's3', from: 'a', to: 'b' })).rejects.toThrow(
+        'Not signed in',
+      );
+      expect(onUnauthenticated).toHaveBeenCalledWith(undefined);
     });
 
-    it('reports "login" with the offered modes on a 401', async () => {
-      const fetchImpl = vi.fn(async () => jsonResponse({ auth: { modes: ['login'] } }, 401));
-      const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-      await expect(client.me()).resolves.toEqual({ state: 'login', modes: ['login'] });
+    it('leaves a 403 as an ordinary error', async () => {
+      const fetchImpl = vi.fn(async () => jsonResponse({ error: 'forbidden' }, 403));
+      const onUnauthenticated = vi.fn();
+      const client = new DashboardClient({ apiBase: '/api', fetchImpl, onUnauthenticated });
+      await expect(client.disks()).rejects.toThrow('forbidden');
+      expect(onUnauthenticated).not.toHaveBeenCalled();
     });
-  });
 
-  it('login() posts credentials and throws a friendly message on 401', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({}, 401));
-    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-    await expect(client.login('a', 'b')).rejects.toThrow('Invalid credentials');
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/api/login');
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
-      username: 'a',
-      password: 'b',
+    it('followUnauthenticated assigns the redirectTo, else reloads', () => {
+      const assign = vi.fn();
+      const reload = vi.fn();
+      vi.stubGlobal('window', { location: { assign, reload } });
+      try {
+        followUnauthenticated('/login');
+        expect(assign).toHaveBeenCalledWith('/login');
+        followUnauthenticated(undefined);
+        expect(reload).toHaveBeenCalledOnce();
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
-  });
-
-  it('logout() posts to /logout', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({}, 204));
-    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-    await client.logout();
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/api/logout');
-    expect(init).toMatchObject({ method: 'POST' });
   });
 
   it('mediaRecord() and collectionsSummary() hit their read routes', async () => {

@@ -2,13 +2,12 @@
 name: media-dashboard-console
 description: >-
   The media management console for @adonis-agora/media — config/media_dashboard.ts via
-  @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, actions gate, disks,
-  middleware, enabled), the embedded dashboard_provider, built-in session auth (Mode A
-  auth.session minting from app auth, Mode B auth.login credentials screen, revalidate,
-  secret/ttl, signSessionCookie/verifySessionCookie/resolveConsoleAuth), DashboardService
-  + DashboardError + MediaManagerLike programmatic API, and objectInsights providers.
-  Use when mounting or gating the console, wiring console login, building custom admin
-  routes over storage, or adding object insights.
+  @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, authorize gate, actions gate, disks,
+  middleware, enabled), the embedded dashboard_provider, sign-in through the app via
+  authorize ({ redirectTo }), authorizeByToken, DashboardService + DashboardError +
+  MediaManagerLike programmatic API, and objectInsights providers.
+  Use when mounting or gating the console, sending signed-out operators to the app's login,
+  building custom admin routes over storage, or adding object insights.
 license: MIT
 metadata:
   type: core
@@ -46,7 +45,8 @@ export default defineConfig({
   basePath: '/media/dashboard',
   actions: true,                 // copy/move/delete — read-only when false (the default)
   disks: ['s3', 'backups'],
-  middleware: middleware.auth(), // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(), // runs after authorize
 })
 ```
 
@@ -58,38 +58,26 @@ Source: `docs/dashboard/index.mdx`.
 
 ## Core patterns
 
-### Pattern 1 — built-in session auth (Mode A / Mode B)
+### Pattern 1 — sign-in through your app
 
-`auth` gives the console its own signed cookie so a plain browser navigation works even
-when your app's auth is not cookie-shaped:
+The console has no login of its own. `authorize` decides, and a signed-out visitor is sent to
+your app's login with `{ redirectTo }`:
 
 ```ts title="config/media_dashboard.ts"
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
 export default defineConfig({
-  auth: {
-    secret: env.get('MEDIA_CONSOLE_SECRET'), // required — missing/empty is a boot error
-    ttl: '8h',
-    // Mode A: mint from your app's own auth on the raw request
-    async session(request) {
-      const token = request.headers.authorization?.replace('Bearer ', '')
-      if (!token) return null
-      const user = await verifyAccessToken(token)
-      return user?.roles.includes('admin') ? { id: String(user.id), roles: user.roles } : null
-    },
-    // Mode B: validate credentials from the built-in login screen (optional)
-    // async login(username, password) { ... },
-    async revalidate(user) { // checked at sliding renewal; false ⇒ cookie cleared, 401
-      const admin = await Admin.find(Number(user.id))
-      return admin !== null && !admin.suspended
-    },
+  authorize: async (ctx) => {
+    if (!(await ctx.auth.check())) return { redirectTo: '/login' }
+    return ctx.auth.user!.isAdmin === true
   },
-}
+})
 ```
 
-Configure both modes and the login screen offers both (learned from the `401` body of
-`GET /me`). The auth routes (`/me`, `/login`, `/session`, `/logout`) are deliberately mounted
-OUTSIDE both gates — they create the session the guard checks for.
+A page navigation gets a `302` there; an API call gets
+`401 { error: 'unauthenticated', redirectTo }`, and the SPA follows that `redirectTo` (or
+reloads the page when the `401` carries none). There are no `/me`, `/login`, `/session` or
+`/logout` routes and no `auth` option.
 
 Source: `docs/dashboard/authentication.mdx`.
 
@@ -164,7 +152,7 @@ Source: `docs/dashboard/index.mdx` (Object insights).
 Wrong:
 
 ```ts
-export default defineConfig({ actions: true }) // no middleware, no auth
+export default defineConfig({ actions: true }) // no authorize, no middleware
 ```
 
 Correct:
@@ -172,35 +160,22 @@ Correct:
 ```ts
 export default defineConfig({
   actions: true,
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
   middleware: middleware.auth(),
-  auth: { secret: env.get('MEDIA_CONSOLE_SECRET'), login: checkAdminPassword },
 })
 ```
 
 Mechanism: `actions: true` enables copy/move/delete, recursive folder sweeps, record
 deletion, upload aborts and uploads — recursive delete/move are destructive and
-irreversible. The routes are mounted regardless of `enabled`; only `middleware`/`auth`
-keep them from being open to the internet.
-Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn).
-
-### [HIGH] Configuring dashboard auth with neither a session nor a login hook
-
-Wrong:
-
-```ts
-auth: { secret: env.get('MEDIA_CONSOLE_SECRET') } // no way to mint a session
-```
-
-Correct:
-
-```ts
-auth: { secret: env.get('MEDIA_CONSOLE_SECRET'), session: mySessionHook }
-```
-
-Mechanism: at least one of `session`/`login` must be present — configuring `auth` with
-neither is a boot error by design (a gate nothing can mint a session for would lock the
-console permanently). A hook that THROWS is treated as denial, never a 500.
-Source: `docs/dashboard/authentication.mdx` (The two modes table).
+irreversible. Without `authorize` the console is open outside production and refuses every page
+and API request (`403`) in production, with a warning at boot; `authorize` runs before
+`middleware`, so a console guarded only by `middleware` needs `authorize` too (for example
+`authorize: () => true` to keep it as the gate). API refusals answer `{ error: 'forbidden' }`
+(`403`) or `{ error: 'unauthenticated' }` (`401`) JSON. For scripts, use
+`authorize: authorizeByToken({ token: env.get('CONSOLE_TOKEN') })` (Bearer header only; an
+empty token throws at config time).
+Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn),
+`docs/dashboard/authentication.mdx`.
 
 ### [HIGH] Assuming deleteMediaRecord removes the underlying object
 
@@ -251,4 +226,4 @@ Source: `docs/dashboard/index.mdx` (Object insights).
 
 See also: `media-stores-delivery/SKILL.md` — the ExtendedDisk operations and
 `MediaStore.list` the console consumes; `media-react-uploads/SKILL.md` — the upload client
-and console launcher it embeds.
+it embeds.

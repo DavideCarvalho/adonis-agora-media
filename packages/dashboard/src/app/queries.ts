@@ -233,27 +233,3 @@ export function useDeleteMediaRecord() {
     },
   });
 }
-
-export function useMe() {
-  const { client } = useDashboard();
-  return useQuery({ queryKey: ['me'], queryFn: () => client.me() });
-}
-
-export function useLogin() {
-  const { client } = useDashboard();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ username, password }: { username: string; password: string }) =>
-      client.login(username, password),
-    onSuccess: () => qc.invalidateQueries(),
-  });
-}
-
-export function useLogout() {
-  const { client } = useDashboard();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => client.logout(),
-    onSuccess: () => qc.invalidateQueries(),
-  });
-}

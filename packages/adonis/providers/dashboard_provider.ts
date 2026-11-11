@@ -8,28 +8,12 @@ import {
   resolveAccessDeniedPage,
 } from '../src/dashboard/access_denied_page.js';
 import {
-  parseCookieHeader,
-  SESSION_COOKIE_NAME,
-  serializeSetCookie,
-} from '../src/dashboard/cookie.js';
-import type {
-  AccessDeniedOption,
-  AuthorizeResult,
-  MediaDashboardConfig,
-} from '../src/dashboard/define_config.js';
-import {
-  type ConsoleSession,
-  type ConsoleSessionUser,
-  DashboardError,
-  DashboardService,
-  type LoginBody,
-  type MeResponse,
-  type ResolvedConsoleAuth,
-  resolveConsoleAuth,
-  signSessionCookie,
-  verifySessionCookie,
-} from '../src/dashboard/index.js';
+  type ConsoleAuthorizeDecision,
+  resolveConsoleAuthorize,
+} from '../src/dashboard/console_authorize.js';
+import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
 import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
+import { DashboardError, DashboardService } from '../src/dashboard/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
 import { MediaManager } from '../src/media_manager.js';
 
@@ -46,12 +30,9 @@ function spaDirectory(): string {
   return spaDir;
 }
 
-/** Cookie `Path` for the built-in session — deliberately `/`, not scoped to `apiBase`: the SPA's
- *  `basePath` and its `apiBase` are independently configurable and can live at unrelated paths, and a
- *  cookie scoped to just one would be withheld on a full-page navigation to the other. The cookie is
- *  HttpOnly + HMAC-signed + short-lived, so the broader scope is a reasonable trade. Matches the
- *  NestJS sibling console's own `cookiePath: '/'` for the identical reason. */
-const SESSION_COOKIE_PATH = '/';
+/** Logged once at boot when `authorize` is omitted. Same wording in every Agora console. */
+const NO_AUTHORIZE_WARNING =
+  '[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.';
 
 /**
  * Mounts the media-management console INTO `@adonis-agora/media` itself: a React SPA plus a JSON
@@ -98,43 +79,44 @@ export default class MediaDashboardProvider {
         ? config.middleware
         : [config.middleware]
       : [];
-    // Access-decision hook — the dashboard-gate contract shared by every @adonis-agora console
-    // (see `AuthorizeResult`). Runs BEFORE `middleware` and composes with the built-in `auth`
-    // session guard (all must pass). The hook may answer a bare boolean or an `AuthorizeDecision`;
-    // `decideAuthorize` normalizes both, so a `{ allowed: false }` object (truthy!) DENIES.
-    // A denied request honors an answer the hook wrote itself (a `location` header — a redirect to
-    // the app login — or a queued body); otherwise it is `401` for `reason: 'unauthenticated'` and
-    // `403` for everything else (bare `false`, no reason, `'forbidden'`, a throw — fail closed) —
-    // as `{ error }` JSON for an API request, and as the built-in access-denied page (or the host's
-    // `accessDenied` version of it) with the same status for a PAGE navigation (the SPA shell, its
-    // assets). The `401` WITH `{ auth: { modes } }` stays the SESSION guard's alone: that body is
-    // what tells the SPA to show its login screen. A hook's `401` carries `{ error: 'Unauthorized' }`
-    // instead — "the host app says you are not signed in" — so it can never be mistaken for "sign in
-    // to this console" (and `/me`, the route the SPA reads its login state from, is never behind
-    // `authorize`).
+    // Access check — the `ConsoleAuthorize` contract shared by every @adonis-agora console. Runs
+    // BEFORE `middleware` (both must pass). Sign-in is the app's own: the console has no login.
+    // Omitted: open outside production, every page/API request refused (`403`) in production.
+    // A denied request honors an answer the check wrote itself (a `location` header or a queued
+    // body); `{ redirectTo }` is a `302` for a page navigation and a `401` for the API; otherwise
+    // `401` for `reason: 'unauthenticated'` and `403` for everything else (fail closed) —
+    // `{ error: 'unauthenticated' | 'forbidden' }` JSON for the API, the access-denied page (or the
+    // host's `accessDenied`) for a page.
+    const decide = this.#resolveAuthorize(config);
     const authorizeGate = (mode: 'api' | 'page') =>
-      config.authorize
+      decide
         ? [
             async (ctx: HttpContext, next: () => Promise<void>) => {
-              const denial = await decideAuthorize(() => config.authorize!(ctx));
-              if (denial === null) return next();
+              const decision = await decide(ctx);
+              if (decision.allowed) return next();
+              // An answer the check wrote stands on its own — the handler must NOT run after it
+              // (it would queue a JSON body onto a 302).
+              if (responseAnswered(ctx)) return;
               if (mode === 'api') {
-                // An answer the hook wrote stands on its own — the handler must NOT run after it
-                // (it would queue a JSON body onto a 302).
-                if (responseAnswered(ctx)) return;
-                ctx.response
-                  .status(denial.status)
-                  .send({ error: denial.status === 401 ? 'Unauthorized' : 'Forbidden' });
+                ctx.response.status(decision.status).send({
+                  error: decision.reason,
+                  ...('redirectTo' in decision ? { redirectTo: decision.redirectTo } : {}),
+                });
                 return;
               }
-              await denyPage(ctx, { basePath, accessDenied: config.accessDenied, ...denial });
+              if ('redirectTo' in decision) {
+                ctx.response.redirect(decision.redirectTo);
+                return;
+              }
+              await denyPage(ctx, {
+                basePath,
+                accessDenied: config.accessDenied,
+                status: decision.status,
+                reason: decision.reason,
+              });
             },
           ]
         : [];
-    // Built-in session-cookie login (Mode A/B), independent of `middleware` — see
-    // `src/dashboard/auth.ts`. `null` when unconfigured, in which case every gate below is a no-op
-    // and the API stays open.
-    const auth = resolveConsoleAuth(config.auth);
     const objectInsights = config.objectInsights ?? [];
 
     const service = async () =>
@@ -150,8 +132,7 @@ export default class MediaDashboardProvider {
         objectInsights,
       );
 
-    this.#mountAuthRoutes(router, apiBase, auth);
-    this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware], auth);
+    this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware]);
     this.#mountSpa(router, basePath, { apiBase, uploadsBase, tusBase, actions }, [
       ...authorizeGate('page'),
       ...middleware,
@@ -159,70 +140,29 @@ export default class MediaDashboardProvider {
   }
 
   /**
-   * Mints/clears the console session cookie: `GET /me`, `POST /login`, `POST /session`,
-   * `POST /logout`. Deliberately NOT gated by `middleware` NOR the session guard below — these
-   * routes CREATE the session the guard checks for (mirroring the NestJS sibling console's
-   * `MediaConsoleAuthController`, which is likewise excluded from both its own session guard and any
-   * host-supplied `guards`). A host `session` hook reads its OWN auth directly off the raw request,
-   * so it needs no help from `middleware` here. When `auth` is unset, `/me` reports
-   * `authRequired: false` and login/session/logout 404 (nothing to mint or clear).
+   * The per-request access check, or `null` for none. Without `authorize` the console is open
+   * outside production and refuses every page/API request in production; either way it says so once
+   * at boot (routes are registered once per process).
    */
-  #mountAuthRoutes(router: HttpRouterService, apiBase: string, auth: ResolvedConsoleAuth | null) {
-    const group = router.group(() => {
-      router
-        .get('/me', async (ctx: HttpContext) => {
-          if (!auth) {
-            const body: MeResponse = { authRequired: false };
-            return ctx.response.status(200).json(body);
-          }
-          const session = sessionFromRequest(ctx, auth);
-          // The UNauthenticated SPA learns which login mode(s) to offer from this 401 body.
-          if (!session) return ctx.response.status(401).json({ auth: { modes: auth.modes } });
-          const body: MeResponse = { user: userInfoFromSession(session) };
-          return ctx.response.status(200).json(body);
-        })
-        .as('media.dashboard.me');
+  #resolveAuthorize(
+    config: MediaDashboardConfig,
+  ): ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null {
+    if (config.authorize) return resolveConsoleAuthorize(config.authorize);
+    this.#warn(NO_AUTHORIZE_WARNING);
+    if (this.app.inProduction !== true) return null;
+    return async () => ({ allowed: false, status: 403, reason: 'forbidden' });
+  }
 
-      router
-        .post('/login', async (ctx: HttpContext) => {
-          if (!auth?.login) return ctx.response.status(404).send('');
-          const raw = ctx.request.body() as Partial<LoginBody>;
-          if (typeof raw.username !== 'string' || typeof raw.password !== 'string') {
-            return ctx.response
-              .status(400)
-              .json({ error: 'body must include string username and password' });
-          }
-          const user = await runAuthHook(() =>
-            auth.login?.(raw.username as string, raw.password as string),
-          );
-          // Uniform 401 for unknown user / bad password — no user-enumeration.
-          if (!user) return ctx.response.status(401).json({ error: 'invalid credentials' });
-          issueSessionCookie(ctx, user, auth);
-          const body: MeResponse = { user: userInfoFromUser(user) };
-          return ctx.response.status(200).json(body);
-        })
-        .as('media.dashboard.login');
-
-      router
-        .post('/session', async (ctx: HttpContext) => {
-          if (!auth?.session) return ctx.response.status(404).send('');
-          const user = await runAuthHook(() => auth.session?.(ctx.request.request));
-          if (!user) return ctx.response.status(401).json({ error: 'unauthorized' });
-          issueSessionCookie(ctx, user, auth);
-          const body: MeResponse = { user: userInfoFromUser(user) };
-          return ctx.response.status(200).json(body);
-        })
-        .as('media.dashboard.session');
-
-      router
-        .post('/logout', async (ctx: HttpContext) => {
-          // Best-effort: even without auth configured, clearing is harmless.
-          clearSessionCookie(ctx);
-          return ctx.response.status(204).send('');
-        })
-        .as('media.dashboard.logout');
-    });
-    group.prefix(apiBase);
+  /** Warn through the app logger when one is bound, else the console. Never throws. */
+  #warn(message: string): void {
+    void Promise.resolve()
+      .then(() => this.app.container.make('logger'))
+      .then((logger) => {
+        const warn = (logger as { warn?: unknown } | undefined)?.warn;
+        if (typeof warn === 'function') warn.call(logger, message);
+        else console.warn(message);
+      })
+      .catch(() => console.warn(message));
   }
 
   #mountApi(
@@ -230,7 +170,6 @@ export default class MediaDashboardProvider {
     apiBase: string,
     service: () => Promise<DashboardService>,
     middleware: unknown[],
-    auth: ResolvedConsoleAuth | null,
   ) {
     const json = (
       handler: (svc: DashboardService, ctx: HttpContext) => Promise<unknown>,
@@ -484,11 +423,10 @@ export default class MediaDashboardProvider {
         .as('media.dashboard.folder.move');
     });
     group.prefix(apiBase);
-    // Host `middleware` first (e.g. an admin check), then the built-in session guard (when `auth` is
-    // configured) — a request must pass both. The mutating routes above are further gated at the
-    // service layer by `actions` (unconditionally mounted; `DashboardService` 403s when disabled), so
+    // `authorize`, then host `middleware`. The mutating routes above are further gated at the service
+    // layer by `actions` (unconditionally mounted; `DashboardService` 403s when disabled), so
     // read-only hosts can leave them mounted without enabling `actions`.
-    applyMiddleware(group, auth ? [...middleware, sessionGuardMiddleware(auth)] : middleware);
+    applyMiddleware(group, middleware);
   }
 
   #mountSpa(
@@ -601,37 +539,12 @@ function applyMiddleware(
   (group.use as (m: unknown) => unknown)(middleware);
 }
 
-/* Authorize decision --------------------------------------------------------------------------- */
+/* Authorize denial ---------------------------------------------------------------------------- */
 
 /** How the gate answers a refusal: the HTTP status and the matching access-denied reason. */
 interface AuthorizeDenial {
   status: 401 | 403;
   reason: 'unauthenticated' | 'forbidden';
-}
-
-/**
- * Run the `authorize` hook and normalize its {@link AuthorizeResult} — `null` when the request may
- * proceed, the {@link AuthorizeDenial} otherwise. ONLY `true` and `{ allowed: true }` allow: a
- * decision object is truthy, so a plain `if (await authorize(ctx))` would have let
- * `{ allowed: false }` through. `reason: 'unauthenticated'` is a `401`; everything else that is not
- * an allow — `false`, `{ allowed: false }` with no or a `'forbidden'` reason, a malformed value, a
- * throw — is a `403` (fail closed).
- */
-async function decideAuthorize(
-  run: () => AuthorizeResult | Promise<AuthorizeResult>,
-): Promise<AuthorizeDenial | null> {
-  let result: AuthorizeResult;
-  try {
-    result = await run();
-  } catch {
-    return { status: 403, reason: 'forbidden' };
-  }
-  if (result === true) return null;
-  if (typeof result === 'object' && result !== null) {
-    if (result.allowed === true) return null;
-    if (result.reason === 'unauthenticated') return { status: 401, reason: 'unauthenticated' };
-  }
-  return { status: 403, reason: 'forbidden' };
 }
 
 /* Access-denied page -------------------------------------------------------------------------- */
@@ -689,117 +602,4 @@ function responseAnswered(ctx: HttpContext): boolean {
 function cspNonce(ctx: HttpContext): string | undefined {
   const nonce = (ctx.response as unknown as { nonce?: unknown }).nonce;
   return typeof nonce === 'string' && nonce !== '' ? nonce : undefined;
-}
-
-/* Session-cookie helpers ---------------------------------------------------------------------- */
-
-/** Run a host hook (login/session) defensively: a throw is a denial (null), never a 500. */
-async function runAuthHook(
-  run: () => Promise<ConsoleSessionUser | null> | ConsoleSessionUser | null | undefined,
-): Promise<ConsoleSessionUser | null> {
-  try {
-    return (await run()) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function sessionFromRequest(ctx: HttpContext, auth: ResolvedConsoleAuth): ConsoleSession | null {
-  const cookieValue = parseCookieHeader(ctx.request.header('cookie'))[SESSION_COOKIE_NAME];
-  if (cookieValue === undefined) return null;
-  return verifySessionCookie(cookieValue, { secret: auth.secret });
-}
-
-function userInfoFromSession(session: ConsoleSession): {
-  id: string;
-  name?: string;
-  roles: string[];
-} {
-  return {
-    id: session.sub,
-    ...(session.name !== undefined ? { name: session.name } : {}),
-    roles: session.roles,
-  };
-}
-
-function userInfoFromUser(user: ConsoleSessionUser): {
-  id: string;
-  name?: string;
-  roles: string[];
-} {
-  return {
-    id: user.id,
-    ...(user.name !== undefined ? { name: user.name } : {}),
-    roles: user.roles ?? [],
-  };
-}
-
-function issueSessionCookie(
-  ctx: HttpContext,
-  user: ConsoleSessionUser,
-  auth: ResolvedConsoleAuth,
-  now?: number,
-): void {
-  const value = signSessionCookie(user, {
-    secret: auth.secret,
-    ttlMs: auth.ttlMs,
-    ...(now !== undefined ? { now } : {}),
-  });
-  ctx.response.append(
-    'set-cookie',
-    serializeSetCookie(SESSION_COOKIE_NAME, value, {
-      path: SESSION_COOKIE_PATH,
-      maxAgeSeconds: Math.floor(auth.ttlMs / 1000),
-      secure: ctx.request.secure(),
-    }),
-  );
-}
-
-function clearSessionCookie(ctx: HttpContext): void {
-  ctx.response.append(
-    'set-cookie',
-    serializeSetCookie(SESSION_COOKIE_NAME, '', {
-      path: SESSION_COOKIE_PATH,
-      maxAgeSeconds: 0,
-      secure: ctx.request.secure(),
-      clear: true,
-    }),
-  );
-}
-
-/**
- * Gates a route group on a valid session cookie. Sliding renewal + revalidation mirrors the NestJS
- * sibling console's `MediaConsoleGuard`: past half the TTL, the host's `revalidate` hook (if any)
- * re-checks the user before a fresh cookie is issued, so a deactivated operator loses access instead
- * of riding a self-renewing cookie.
- */
-function sessionGuardMiddleware(auth: ResolvedConsoleAuth) {
-  return async (ctx: HttpContext, next: () => Promise<void>) => {
-    const session = sessionFromRequest(ctx, auth);
-    // Absent/invalid/expired cookie => 401 with the login modes, same shape as `/me`'s refusal.
-    if (!session) return ctx.response.status(401).json({ auth: { modes: auth.modes } });
-    const now = Date.now();
-    if (now - session.iat > auth.ttlMs / 2) {
-      const user = userInfoFromSession(session);
-      if (auth.revalidate) {
-        const allowed = await runAuthHookBoolean(() => auth.revalidate?.(user));
-        if (!allowed) {
-          clearSessionCookie(ctx);
-          return ctx.response.status(401).json({ auth: { modes: auth.modes } });
-        }
-      }
-      issueSessionCookie(ctx, user, auth, now);
-    }
-    return next();
-  };
-}
-
-async function runAuthHookBoolean(
-  run: () => Promise<boolean> | boolean | undefined,
-): Promise<boolean> {
-  try {
-    return (await run()) ?? false;
-  } catch {
-    return false; // Fail closed.
-  }
 }

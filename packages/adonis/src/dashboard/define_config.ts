@@ -3,7 +3,7 @@ import type {
   AccessDeniedOption as GenericAccessDeniedOption,
   AccessDeniedRenderer as GenericAccessDeniedRenderer,
 } from './access_denied_page.js';
-import type { ConsoleAuthOptions } from './auth.js';
+import type { ConsoleAuthorize } from './console_authorize.js';
 import type { ObjectInsightProvider } from './object_insights.js';
 import type { ObjectUrlStrategy } from './object_urls.js';
 
@@ -21,39 +21,6 @@ export type AccessDeniedOption = GenericAccessDeniedOption<HttpContext>;
 
 /** A minimal middleware handler shape (host auth guard) applied to the console routes. */
 export type DashboardMiddleware = (ctx: HttpContext, next: () => Promise<void>) => unknown;
-
-/**
- * A structured answer from the {@link DashboardAuthorize} hook — the dashboard-gate contract every
- * `@adonis-agora` console (telescope, durable, media, payments, agent) shares verbatim, so a hook
- * such as `@adonis-agora/authz`'s `authorizeByRoles` can tell a console WHY it refused.
- *
- * - `allowed: true` lets the request through (`reason` is ignored).
- * - `allowed: false` denies it. `reason: 'unauthenticated'` answers `401` (nobody is signed in);
- *   `reason: 'forbidden'` — or no reason at all — answers `403` (fail closed).
- */
-export interface AuthorizeDecision {
-  allowed: boolean;
-  reason?: 'unauthenticated' | 'forbidden';
-}
-
-/**
- * What the {@link DashboardAuthorize} hook may return: a bare boolean (`true` allows, `false` is a
- * `403`) or an {@link AuthorizeDecision}. NOTE a decision object is always truthy — the console
- * reads its `allowed` field, so `{ allowed: false }` DENIES.
- */
-export type AuthorizeResult = boolean | AuthorizeDecision;
-
-/**
- * The access-decision hook gating the console (SPA + JSON API), same contract as the
- * `authorize` hooks of the other `@adonis-agora` dashboards (telescope, durable, payments, agent):
- * return `true` / `{ allowed: true }` to allow; `false` / `{ allowed: false }` to deny with `403`;
- * `{ allowed: false, reason: 'unauthenticated' }` to deny with `401`. A hook that throws denies
- * with `403`; a hook that answers the request itself (a redirect) keeps its answer. Runs BEFORE
- * any configured `middleware`, and composes with the built-in `auth` session guard (all must
- * pass). Sync or async. Receives the real AdonisJS `HttpContext`, so it can read the session, a
- * bearer token, an IP allow-list, etc.
- */
-export type DashboardAuthorize = (ctx: HttpContext) => AuthorizeResult | Promise<AuthorizeResult>;
 
 /**
  * Configuration for the `@adonis-agora/media` dashboard, read by `dashboard_provider.ts` from
@@ -86,21 +53,27 @@ export interface MediaDashboardConfig {
   /** Host middleware (auth) applied to the whole console — SPA and API. */
   middleware?: DashboardMiddleware | DashboardMiddleware[];
   /**
-   * Access-decision hook gating the whole console (SPA + API), same contract as the
-   * `authorize` hooks of the other `@adonis-agora` dashboards — see {@link DashboardAuthorize}
-   * and {@link AuthorizeResult}. Runs BEFORE `middleware` and composes with the built-in `auth`
-   * session guard (all must pass). A denied request honors a redirect the hook writes;
-   * otherwise it gets `401` when the hook answered `{ allowed: false, reason: 'unauthenticated' }`
-   * (`{ error: 'Unauthorized' }` JSON on the API) and `403` for every other refusal — `false`,
-   * `{ allowed: false }`, `reason: 'forbidden'`, a thrown error (`{ error: 'Forbidden' }`) — and
-   * the {@link accessDenied} page with the matching status on a page navigation. Omitted: no gate
-   * (the console is open unless `middleware`/`auth` close it).
+   * Who may open the console (SPA + API). Same contract as every other `@adonis-agora` console —
+   * see {@link ConsoleAuthorize}: an inline function, a `ConsoleAuthorizer` class (built through
+   * the container, so `@inject()` works), or a lazy import of one.
+   *
+   * Answer `true` / `{ allowed: true }` to allow; `false` / `{ allowed: false }` for `403`;
+   * `{ allowed: false, reason: 'unauthenticated' }` for `401`; `{ redirectTo: '/login' }` to send
+   * a page navigation there (API calls get `401`). A check that throws is a `403`. Runs before
+   * `middleware` (both must pass). Sign-in is your app's own: the console has no login. API refusals answer
+   * `{ error: 'forbidden' }` / `{ error: 'unauthenticated' }` JSON (plus `redirectTo` for a
+   * redirect); page navigations get the {@link accessDenied} page with the same status. For machine
+   * access, use `authorizeByToken({ token })`.
+   *
+   * Omitted: the console is open outside production and answers `403` to every page and API
+   * request in production, with a warning at boot. Set `authorize: () => true` to keep it open in
+   * production when `middleware` already guards it.
    */
-  authorize?: DashboardAuthorize;
+  authorize?: ConsoleAuthorize;
   /**
    * What a BROWSER sees when `authorize` refuses a page navigation — the SPA shell or its assets.
-   * API requests are unaffected: they keep getting `{ error: 'Forbidden' }` (`403`) or
-   * `{ error: 'Unauthorized' }` (`401`) JSON. Omit it for the built-in page — a dark card in the
+   * API requests are unaffected: they keep getting `{ error: 'forbidden' }` (`403`) or
+   * `{ error: 'unauthenticated' }` (`401`) JSON. Omit it for the built-in page — a dark card in the
    * console's own visual language with the same status as the API, a
    * sentence explaining the refusal and a "Back to app" link. Pass an
    * object to tweak that page (`brand`, `title`, `message`, `homeHref`, `accent`, …), or a function
@@ -108,14 +81,6 @@ export interface MediaDashboardConfig {
    * `authorize` still wins: the provider never overwrites a `location` header.
    */
   accessDenied?: AccessDeniedOption;
-  /**
-   * Gate the console's JSON API behind a built-in session-cookie login, mirroring the NestJS sibling
-   * console. Omit to leave the API open (front it with your own `middleware`). When set, the SPA
-   * renders a login screen until a valid cookie exists; supply a `login(username, password)` and/or
-   * `session(request)` hook that returns a session user (or `null` to deny) — see
-   * {@link ConsoleAuthOptions}. Independent of, and composable with, `middleware`.
-   */
-  auth?: ConsoleAuthOptions;
   /**
    * Host-supplied context about a disk object, rendered in the console's preview — see
    * {@link ObjectInsightProvider}. The console can only describe a file as storage sees it; this is

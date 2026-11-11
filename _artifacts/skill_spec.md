@@ -55,11 +55,11 @@ React package — `packages/react/skills/`:
 6. `media-react-uploads` — `useMediaUpload` (modes, pause/resume semantics, `storageKey`
    cross-reload resume), `MediaUploader` render-prop headless mode,
    `createMediaUploadClient` + session primitives + `xhrPartUploader`, `MediaHttpError`
-   status discipline, header/SigV4 rules, `OpenMediaDashboardButton`.
+   status discipline, header/SigV4 rules.
 
 Dashboard package — `packages/dashboard/skills/`:
 7. `media-dashboard-console` — embedded provider, `actions` gate,
-   `middleware` + built-in `auth` composition (Mode A/B), cookie signing helpers,
+   `authorize` (sign-in through the app, `{ redirectTo }`) + `middleware`,
    `DashboardService`/`DashboardError`, object insights.
 
 ## Highest-value AI-agent guidance (what to get right)

@@ -37,7 +37,8 @@ export default defineConfig({
   basePath: '/media/dashboard',   // where the SPA mounts (default)
   actions: true,                  // enable copy/move/delete (default: false — read-only)
   disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
-  middleware: middleware.auth(),  // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(),  // runs after authorize
 })
 ```
 
@@ -49,32 +50,27 @@ export default defineConfig({
 | `disks` | `string[]` | derived from media config | Disk names the console may browse / act on. |
 | `uploadsPrefix` | `string` | `/media/uploads` | Match `media.uploads.routes.prefix`. |
 | `tusPrefix` | `string` | `/media/uploads/tus` | Match `media.uploads.resumable.routes.prefix`. |
-| `middleware` | handler(s) | — | Host auth applied to the whole console (SPA + API). |
+| `authorize` | `ConsoleAuthorize` | open outside production, `403` in production | Who may open the console (SPA + API): a function, a class or a lazy import. See [Console access](/docs/media/dashboard/authentication). |
+| `accessDenied` | object or function | built-in page | What a browser sees when `authorize` refuses a page navigation. |
+| `middleware` | handler(s) | — | Host middleware applied to the whole console (SPA + API), after `authorize`. |
 | `enabled` | `boolean` | `true` | Mount the console at all. `false` registers the provider — so its config type stays available — without exposing a single route. |
-| `auth` | `ConsoleAuthOptions` | — | Built-in session-cookie login. See [Console authentication](/docs/media/dashboard/authentication). |
 | `objectInsights` | `ObjectInsightProvider[]` | `[]` | Host-supplied annotations rendered in the object preview. See [below](#object-insights). |
 | `objectUrls` | `'auto' \| 'proxy'` | `'auto'` | Where the `url` reported for an object's bytes points — the store (signed), or this console's own `/object/raw`. See [below](#object-urls). |
 
 `enabled: false` is the per-environment switch: keep the provider registered (and `config/media_dashboard.ts` type-checked) in every environment, and let the config decide where the console actually exists. It short-circuits in `boot()`, before any route is registered — not a 403, simply nothing mounted.
 
 <Callout type="warn">
-  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete, folder operations, record deletion, upload aborts and the console upload — gate the console with `middleware`, `auth`, or both before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime config into `index.html` as a JSON data block (`<script type="application/json" id="media-dashboard-config">`) at serve time. A data block is never executed, so a strict Content-Security-Policy (shield's `@nonce`) does not block it.
+  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete, folder operations, record deletion, upload aborts and the console upload — decide who may open the console with `authorize` (plus `middleware` if you like) before you do. Without `authorize`, the console's pages and API answer `403` in production. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime config into `index.html` as a JSON data block (`<script type="application/json" id="media-dashboard-config">`) at serve time. A data block is never executed, so a strict Content-Security-Policy (shield's `@nonce`) does not block it.
 </Callout>
 
 ---
 
 ## Routes
 
-The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`). Everything below runs behind your `middleware` **and**, when `auth` is configured, the built-in session guard — a request must pass both.
-
-**With four deliberate exceptions.** The auth routes are mounted *outside* both gates, because they are what *creates* the session the guard checks for. A `session` hook reads your app's own auth directly off the raw request, so it needs no help from `middleware`; gating the mint behind the guard it mints for would be a closed loop.
+The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`). Every route runs behind `authorize` and then your `middleware`. The console has no login routes: sign-in is your app's own.
 
 | Method | Path | Backed by |
 |--------|------|-----------|
-| `GET` | `/me` | Session probe. `{ authRequired: false }` when `auth` is unset; the signed-in user; or `401` carrying the offered login `modes`. **Ungated.** |
-| `POST` | `/login` | Mode B — credentials → session cookie. `404` when no `login` hook. **Ungated.** |
-| `POST` | `/session` | Mode A — mint from your app's own auth on the raw request. `404` when no `session` hook. **Ungated.** |
-| `POST` | `/logout` | Clears the cookie. `204` always. **Ungated.** |
 | `GET` | `/topology` | capability probe (`{ disks, hasUploads, actions }`) |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
 | `GET` | `/objects?disk&prefix&after&first` | disk `list` ([cursor pagination](#cursor-pagination)) |
@@ -234,13 +230,13 @@ Three properties of the design are worth being explicit about:
 - **Collections** — the media-library records themselves, cross-owner and filterable by collection / owner type / owner id / path prefix. One-click **collection chips** across the top carry each collection's record count and total size (from `/collections/summary`), and clicking a row **drills into the record**: its full metadata plus a signed URL per conversion, with delete when `actions` is on. See [Collections view](/docs/media/dashboard/collections).
 - **Uploads** — live resumable sessions, polled every 2s from the session store. Clicking a row **drills into the session**: its full state plus every recorded part, and an abort button when `actions` is on. With the `lucid` session store, the tab needs the `media_upload_sessions` / `media_upload_parts` tables that `node ace configure @adonis-agora/media` publishes a migration for; until `node ace migration:run` creates them, it shows `upload sessions table missing` instead of a list.
 - **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.
-- **Login** — when `auth` is configured and no valid session cookie exists, the SPA renders its login screen instead of the console, offering exactly the mode(s) the server advertised. See [Console authentication](/docs/media/dashboard/authentication).
+- **Signed out** — when an API call answers `401`, the console goes to the `redirectTo` your `authorize` returned (your app's login), or reloads the page. See [Console access](/docs/media/dashboard/authentication).
 
 ---
 
 ## Next steps
 
-- [Console authentication](/docs/media/dashboard/authentication) — the built-in session-cookie login, in both modes
+- [Console access](/docs/media/dashboard/authentication) — `authorize`, sign-in through your app, and the access-denied page
 - [Programmatic API](/docs/media/dashboard/programmatic) — `DashboardService` and the JSON contract types
 - [Collections view](/docs/media/dashboard/collections) — the cross-owner `MediaStore.list` behind the console
 - [S3 disk](/docs/media/storage/s3-disk) — the extended operations the Library view drives

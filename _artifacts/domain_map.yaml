@@ -31,7 +31,7 @@ primary_packages:
   - name: '@adonis-agora/media-react'
     dir: packages/react
     role: Browser companion — useMediaUpload, MediaUploader, framework-free
-      createMediaUploadClient (./client), console launcher (OpenMediaDashboardButton).
+      createMediaUploadClient (./client).
   - name: '@adonis-agora/media-dashboard'
     dir: packages/dashboard
     role: Management console SPA build source + console API types. The console
@@ -195,14 +195,13 @@ domains:
     surface:
       - 'useMediaUpload({mode}) -> upload/pause/resume/abort/reset, status, progress, resumable'
       - 'MediaUploader (render prop headless); createMediaUploadClient (./client, framework-free)'
-      - 'OpenMediaDashboardButton / useOpenMediaDashboard / openMediaDashboard; ConsoleSessionError redirect trap'
 
   - id: dashboard-console
     title: Management console (embedded)
     package: '@adonis-agora/media-dashboard'
     surface:
-      - 'config/media_dashboard.ts: basePath, apiBasePath, actions, disks, middleware, enabled, auth, objectInsights'
-      - 'auth.session (Mode A) / auth.login (Mode B) / revalidate; signSessionCookie / verifySessionCookie / resolveConsoleAuth'
+      - 'config/media_dashboard.ts: basePath, apiBasePath, actions, disks, authorize, middleware, enabled, objectInsights'
+      - 'authorize (inline / class / lazy import, { redirectTo } to the app login); authorizeByToken'
       - 'DashboardService + DashboardError + MediaManagerLike; JSON contract types (@adonis-agora/media-dashboard/types)'
 
 skills:
@@ -254,15 +253,14 @@ skills:
     type: core
     packages: ['@adonis-agora/media-react']
     covers: [useMediaUpload, MediaUploader, createMediaUploadClient, xhrPartUploader,
-             MediaHttpError, UploadMeta, storageKey resume, OpenMediaDashboardButton,
-             ConsoleSessionError]
+             MediaHttpError, UploadMeta, storageKey resume]
   - name: media-dashboard-console
     slug: media-dashboard-console
     domain: dashboard-console
     type: core
     packages: ['@adonis-agora/media-dashboard']
-    covers: [media_dashboard config, actions gate, middleware, auth session/login modes,
-             signSessionCookie, DashboardService, DashboardError, objectInsights]
+    covers: [media_dashboard config, actions gate, authorize, middleware,
+             DashboardService, DashboardError, objectInsights]
 
 failure_modes:
   - mistake: expecting a silent in-memory fallback for an unconfigured store
@@ -463,7 +461,7 @@ cross_references:
     reason: The console browses through ExtendedDisk operations and MediaStore.list; capability gaps explain empty views.
   - from: media-react-uploads
     to: media-dashboard-console
-    reason: The console embeds the same upload client; OpenMediaDashboardButton mints the console session.
+    reason: The console embeds the same upload client.
 
 gaps:
   - skill: all

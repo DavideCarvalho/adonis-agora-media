@@ -7,9 +7,7 @@ import type {
   DeleteBody,
   DiskListResponse,
   FolderBody,
-  LoginBody,
   MediaDetailResponse,
-  MeResponse,
   ObjectDetailResponse,
   ObjectInsightsResponse,
   ObjectListResponse,
@@ -101,7 +99,38 @@ function readConfigBlock(): Partial<DashboardBootstrap> {
 export interface DashboardClientOptions {
   apiBase?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * What to do when the API answers `401` (the console's `authorize` wants a signed-in user).
+   * Defaults to {@link followUnauthenticated}: go to the `redirectTo` the answer carries, else reload
+   * the page so the server answers the navigation itself.
+   */
+  onUnauthenticated?: (redirectTo: string | undefined) => void;
 }
+
+/**
+ * The default `401` handling: follow the `redirectTo` that `authorize` asked for (your app's sign-in
+ * page), else reload the console page so the server answers the navigation (its access-denied page,
+ * or its own redirect).
+ */
+export function followUnauthenticated(redirectTo: string | undefined): void {
+  if (typeof window === 'undefined') return;
+  if (redirectTo) window.location.assign(redirectTo);
+  else window.location.reload();
+}
+
+/** The `redirectTo` a `401` body carries when the console's `authorize` asked for a redirect. */
+async function readRedirectTo(res: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await res.json();
+    if (typeof body !== 'object' || body === null) return undefined;
+    const target = (body as { redirectTo?: unknown }).redirectTo;
+    return typeof target === 'string' && target !== '' ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const UNAUTHENTICATED_MESSAGE = 'Not signed in; redirecting.';
 
 function withQuery(base: string, params: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams();
@@ -112,14 +141,6 @@ function withQuery(base: string, params: Record<string, string | number | undefi
   return qs ? `${base}?${qs}` : base;
 }
 
-/** A signed-in console user, or a prompt to log in, or "no auth configured" (open console) — the
- *  SPA's own gate, distinct from the server's {@link MeResponse} (which has no `login` case: a 401 IS
- *  the login case, resolved here). */
-export type ConsoleAuthState =
-  | { state: 'open' }
-  | { state: 'authenticated'; user: { id: string; name?: string; roles: string[] } }
-  | { state: 'login'; modes: string[] };
-
 /**
  * Framework-free fetch client for the dashboard JSON API. Every call consumes the *real* provider
  * routes (which delegate to `@adonis-agora/media` managers) — there is no mock layer. Ambient session
@@ -128,10 +149,18 @@ export type ConsoleAuthState =
 export class DashboardClient {
   private readonly apiBase: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly onUnauthenticated: (redirectTo: string | undefined) => void;
 
   constructor(options: DashboardClientOptions = {}) {
     this.apiBase = (options.apiBase ?? readBootstrap().apiBase).replace(/\/+$/, '');
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.onUnauthenticated = options.onUnauthenticated ?? followUnauthenticated;
+  }
+
+  /** A `401`: hand the `redirectTo` (if any) to {@link DashboardClientOptions.onUnauthenticated}. */
+  private async unauthenticated(res: Response): Promise<never> {
+    this.onUnauthenticated(await readRedirectTo(res));
+    throw new Error(UNAUTHENTICATED_MESSAGE);
   }
 
   private async get<T>(
@@ -160,6 +189,7 @@ export class DashboardClient {
 
   private async parse<T>(res: Response): Promise<T> {
     if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
+    if (res.status === 401) return this.unauthenticated(res);
     if (!res.ok) {
       let message = `request failed (${res.status})`;
       try {
@@ -283,6 +313,7 @@ export class DashboardClient {
       redirect: 'manual',
     });
     if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
+    if (res.status === 401) return this.unauthenticated(res);
     if (!res.ok) throw new Error(`request failed (${res.status})`);
     if (!res.body) {
       const text = await res.text();
@@ -330,54 +361,5 @@ export class DashboardClient {
   /** Deletes a stored `MediaRecord` (actions-gated; does not touch its underlying disk object). */
   deleteMediaRecord(id: string): Promise<void> {
     return this.post('/media-record/delete', { id });
-  }
-
-  /** Who am I? Resolves the console's gate: open (no auth), authenticated, or "show login". */
-  async me(): Promise<ConsoleAuthState> {
-    const res = await this.fetchImpl(`${this.apiBase}/me`, {
-      credentials: 'same-origin',
-      redirect: 'manual',
-      headers: { accept: 'application/json' },
-    });
-    if (res.status === 401) {
-      const body: unknown = await res.json().catch(() => null);
-      const modes =
-        typeof body === 'object' && body !== null && 'auth' in body
-          ? ((body as { auth?: { modes?: string[] } }).auth?.modes ?? ['login'])
-          : ['login'];
-      return { state: 'login', modes };
-    }
-    const body = await this.parse<MeResponse>(res);
-    return 'user' in body ? { state: 'authenticated', user: body.user } : { state: 'open' };
-  }
-
-  /** Submit credentials to the built-in login; sets the session cookie on success (else throws). */
-  async login(username: string, password: string): Promise<void> {
-    const body: LoginBody = { username, password };
-    const res = await this.fetchImpl(`${this.apiBase}/login`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      redirect: 'manual',
-      headers: { 'content-type': 'application/json', accept: 'application/json', ...csrfHeader() },
-      body: JSON.stringify(body),
-    });
-    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
-    if (!res.ok) {
-      throw new Error(
-        res.status === 401 ? 'Invalid credentials' : `request failed (${res.status})`,
-      );
-    }
-  }
-
-  /** Clears the session cookie. */
-  async logout(): Promise<void> {
-    const res = await this.fetchImpl(`${this.apiBase}/logout`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      redirect: 'manual',
-      headers: { accept: 'application/json', ...csrfHeader() },
-    });
-    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
-    if (!res.ok) throw new Error(`request failed (${res.status})`);
   }
 }

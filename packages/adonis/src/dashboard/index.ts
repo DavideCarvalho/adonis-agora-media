@@ -12,24 +12,23 @@ export {
   renderAccessDeniedPage,
   resolveAccessDeniedPage,
 } from './access_denied_page.js';
+// The access contract shared by every Agora console.
 export type {
-  AuthMode,
-  ConsoleAuthOptions,
-  ConsoleSession,
-  ConsoleSessionUser,
-  LoginHook,
-  ResolvedConsoleAuth,
-  RevalidateHook,
-  SessionHook,
-} from './auth.js';
-// Built-in session-cookie login.
-export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
+  AuthorizeByTokenOptions,
+  ConsoleAuthorize,
+  ConsoleAuthorizeDecision,
+  ConsoleAuthorizeResult,
+  ConsoleAuthorizer,
+  ConsoleAuthorizerClass,
+} from './console_authorize.js';
+export {
+  authorizeByToken,
+  normalizeConsoleAuthorizeResult,
+  resolveConsoleAuthorize,
+} from './console_authorize.js';
 export type {
   AccessDeniedOption,
   AccessDeniedRenderer,
-  AuthorizeDecision,
-  AuthorizeResult,
-  DashboardAuthorize,
   DashboardMiddleware,
   MediaDashboardConfig,
 } from './define_config.js';
@@ -50,7 +49,6 @@ export type {
   CollectionListResponse,
   CollectionSummary,
   CollectionsSummaryResponse,
-  ConsoleSessionUserInfo,
   CopyMoveBody,
   CursorPage,
   CursorPageInfo,
@@ -60,11 +58,9 @@ export type {
   DiskInfo,
   DiskListResponse,
   FolderBody,
-  LoginBody,
   MediaDetailResponse,
   MediaEntry,
   MediaVariant,
-  MeResponse,
   ObjectDetailResponse,
   ObjectEntry,
   ObjectFolder,

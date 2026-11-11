@@ -31,7 +31,7 @@ The package uses **subpath exports** (the Agora idiom), so heavy backends stay o
 | `@adonis-agora/media/services/main` | the app-bound `MediaManager` singleton — `import media from '@adonis-agora/media/services/main'`, importable at any time (it resolves lazily on first use) |
 | `@adonis-agora/media/media_provider` | the service provider (binds `MediaManager`, mounts optional upload/TUS routes) |
 | `@adonis-agora/media/dashboard_provider` | the embedded management-console provider (React SPA + JSON API) |
-| `@adonis-agora/media/dashboard` | `defineConfig` + types for `config/media_dashboard.ts`, `DashboardService`, the session-auth helpers, `ObjectInsightProvider` |
+| `@adonis-agora/media/dashboard` | `defineConfig` + types for `config/media_dashboard.ts`, `DashboardService`, the `authorize` contract (`authorizeByToken`), `ObjectInsightProvider` |
 | `@adonis-agora/media/configure` | `node ace configure` hook |
 | `@adonis-agora/media/single-file` | `storeSingleFile` / `removeSingleFile` / `storeSingleFileWith` / `removeSingleFileWith` / `isSingleFileStoreAvailable` — lets other packages delegate single-file uploads (e.g. avatars) to media without a hard dependency |
 | `@adonis-agora/media/stores/lucid` | the Lucid `MediaStore` (`@adonisjs/lucid` peer) |
@@ -319,7 +319,8 @@ export default defineConfig({
   basePath: '/media/dashboard',   // where the SPA mounts (default)
   actions: true,                  // enable copy/move/delete (default: false — read-only)
   disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
-  middleware: middleware.auth(),  // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(), // runs after authorize
 })
 ```
 

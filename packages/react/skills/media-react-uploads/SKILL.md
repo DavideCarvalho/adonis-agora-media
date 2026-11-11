@@ -7,9 +7,8 @@ description: >-
   createMediaUploadClient from @adonis-agora/media-react/client (uploadTus/uploadDirect/
   uploadProxy, session primitives, xhrPartUploader part transport, MediaHttpError,
   chunkSize/concurrency/retries options), UploadMeta rules (key is proxy-only), typed
-  TComplete results, and the console launcher (OpenMediaDashboardButton,
-  useOpenMediaDashboard, ConsoleSessionError redirect trap). Use when building upload UIs
-  against @adonis-agora/media server routes or opening the media console from an app.
+  TComplete results. Use when building upload UIs against @adonis-agora/media server
+  routes.
 license: MIT
 metadata:
   type: core
@@ -19,7 +18,6 @@ metadata:
 sources:
   - "DavideCarvalho/adonis-media:docs/react/index.mdx"
   - "DavideCarvalho/adonis-media:docs/react/client.mdx"
-  - "DavideCarvalho/adonis-media:docs/react/console-launcher.mdx"
   - "DavideCarvalho/adonis-media:packages/react/src/use-media-upload.ts"
   - "DavideCarvalho/adonis-media:packages/react/src/client.ts"
 ---

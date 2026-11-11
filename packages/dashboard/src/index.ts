@@ -1,6 +1,6 @@
 /**
  * `@adonis-agora/media-dashboard`'s public surface: the console's wire-format API types. The console
- * itself (provider, `defineConfig`, `DashboardService`, session auth) ships in `@adonis-agora/media`
+ * itself (provider, `defineConfig`, `DashboardService`, `authorize`) ships in `@adonis-agora/media`
  * under `./dashboard_provider` and `./dashboard`; this package is the SPA's build-time source.
  */
 export type {
@@ -8,7 +8,6 @@ export type {
   CollectionListResponse,
   CollectionSummary,
   CollectionsSummaryResponse,
-  ConsoleSessionUserInfo,
   CopyMoveBody,
   CursorPage,
   CursorPageInfo,
@@ -18,11 +17,9 @@ export type {
   DiskInfo,
   DiskListResponse,
   FolderBody,
-  LoginBody,
   MediaDetailResponse,
   MediaEntry,
   MediaVariant,
-  MeResponse,
   ObjectDetailResponse,
   ObjectEntry,
   ObjectFolder,

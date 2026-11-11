@@ -1,18 +1,27 @@
 ---
-title: Console Authentication
-description: The built-in session-cookie login for the media console — Mode A mints a session from your app's own auth, Mode B accepts credentials at a login screen. Plus the exported signing helpers and how the guard slides a live session forward.
+title: Console Access
+description: Who may open the media console — the shared `authorize` option, how it signs out to your app's own login, and what happens when it is unset (open outside production, closed in production).
 icon: KeyRound
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The console is served at a literal path (`/media/dashboard` by default), which means a plain browser navigation to it carries none of your app's identity. You have three ways to close that gap.
+The console has no login of its own. Operators sign in through your app, and the console asks
+`authorize` whether the signed-in request may open it. `authorize` is the same access option every
+`@adonis-agora` console takes (telescope, durable, payments, agent, the authkit admin). It runs
+**before** `middleware` (both must pass) and comes in three forms.
 
-The first is `authorize` — an access-decision hook with the same contract as the other
-`@adonis-agora` dashboards (telescope, durable, payments, agent). It runs **before** `middleware`
-and composes with the built-in `auth` session guard (all must pass). Use it to gate the whole
-console on your app's session/roles in one line:
+An inline function, which receives the `HttpContext`:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+})
+```
+
+A helper that returns one, such as `authorizeByRoles` from `@adonis-agora/authz`:
 
 ```ts title="config/media_dashboard.ts"
 import { defineConfig } from '@adonis-agora/media/dashboard'
@@ -23,47 +32,111 @@ export default defineConfig({
 })
 ```
 
-The hook receives the real `HttpContext`, so it can read the session, a bearer
-token, an IP allow-list — anything your app already trusts. It returns an `AuthorizeResult`
-(both types are exported from `@adonis-agora/media/dashboard`):
+A class in its own file, passed directly or as a lazy import. It is built through the container,
+so `@inject()` dependencies work, and the same class works for every Agora console:
 
-```ts
-export interface AuthorizeDecision {
-  allowed: boolean
-  reason?: 'unauthenticated' | 'forbidden'
+```ts title="app/policies/console_access.ts"
+import { inject } from '@adonisjs/core'
+import type { HttpContext } from '@adonisjs/core/http'
+import type { ConsoleAuthorizer } from '@adonis-agora/media/dashboard'
+import AuditService from '#services/audit_service'
+
+@inject()
+export default class ConsoleAccess implements ConsoleAuthorizer {
+  constructor(private audit: AuditService) {}
+
+  async authorize(ctx: HttpContext) {
+    const user = ctx.auth.user
+    if (!user) return { redirectTo: '/login' }
+    await this.audit.record('media-console.open', user.id)
+    return user.isAdmin
+  }
 }
-export type AuthorizeResult = boolean | AuthorizeDecision
-// authorize: (ctx) => AuthorizeResult | Promise<AuthorizeResult>
 ```
 
-| The hook returns | API request | Page navigation |
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: () => import('#policies/console_access'),
+  // or: import ConsoleAccess from '#policies/console_access' and pass `authorize: ConsoleAccess`
+})
+```
+
+The check answers with a `ConsoleAuthorizeResult` (exported from `@adonis-agora/media/dashboard`
+with `ConsoleAuthorize`, `ConsoleAuthorizer` and `authorizeByToken`):
+
+| The check returns | API request | Page navigation |
 | --- | --- | --- |
 | `true` / `{ allowed: true }` | passes | passes |
-| `{ allowed: false, reason: 'unauthenticated' }` | `401 { error: 'Unauthorized' }` | the [access-denied page](#the-access-denied-page), `401` "Sign in required" |
-| `{ allowed: false, reason: 'forbidden' }` | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
-| `false` / `{ allowed: false }` (no reason) | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
-| throws | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
+| `{ redirectTo: '/login' }` | `401 { error: 'unauthenticated', redirectTo: '/login' }` | `302` to that path |
+| `{ allowed: false, reason: 'unauthenticated' }` | `401 { error: 'unauthenticated' }` | the [access-denied page](#the-access-denied-page), `401` "Sign in required" |
+| `{ allowed: false, reason: 'forbidden' }` | `403 { error: 'forbidden' }` | the access-denied page, `403` |
+| `false` / `{ allowed: false }` (no reason) | `403 { error: 'forbidden' }` | the access-denied page, `403` |
+| throws | `403 { error: 'forbidden' }` | the access-denied page, `403` |
 
-A refusal without a reason is a `403` — the hook knew who was asking and said no — and a
-decision object is read by its `allowed` field, so `{ allowed: false }` denies even though the
-object itself is truthy. The `401` with `{ auth: { modes } }` belongs to the session guard
-alone — it is what tells the SPA to show **its own** login screen. A hook's `401` carries
-`{ error: 'Unauthorized' }` instead: it means "your app says nobody is signed in", which the
-console's login cannot fix, so it is never confused with it (and `/me`, where the SPA reads its
-login state, is never behind `authorize`). Point the page's "Sign in" button at your app's login
-with `accessDenied: { loginHref: '/login' }`. Two refinements are shared with the other
-dashboards:
+### Machine access with a token
 
-- **An answer the hook writes wins.** If `authorize` sets a `location` header
-  (typically `ctx.response.redirect(...)`) — or queues a body — before denying, the guard
-  leaves that answer alone instead of overwriting it with the `401`/`403` — the
-  hook for sending an unauthenticated visitor to your own login page.
-- **A throwing hook fails closed.** If `authorize` throws, the request is denied
-  (`403`) — a buggy hook never accidentally opens the console.
+For scripts and monitoring, `authorizeByToken` allows a request that sends
+`Authorization: Bearer <token>` and answers `401` to anything else. It reads the header only. An
+empty or missing token throws when the config loads, so a forgotten env var never opens the console.
 
-The second is `middleware` — front the whole console with your own AdonisJS guard. That works, and if your app already has a session cookie the browser sends on every request, it may be all you need.
+```ts title="config/media_dashboard.ts"
+import env from '#start/env'
+import { authorizeByToken, defineConfig } from '@adonis-agora/media/dashboard'
 
-The third is `auth`: a **self-contained session for the console itself**, signed by the console, carried in its own cookie, with a login screen the SPA renders when the cookie is missing. It exists because the first two options cover only the case where your app's auth is already cookie-shaped and already scoped to the path the console lives at. Token auth in a header, a separate admin realm, an SPA that holds its credentials in memory — none of those survive a full-page navigation.
+export default defineConfig({
+  authorize: authorizeByToken({ token: env.get('CONSOLE_TOKEN') }),
+})
+```
+
+```sh
+curl -H "Authorization: Bearer $CONSOLE_TOKEN" https://app.example.com/media/dashboard/api/disks
+```
+
+### Sending signed-out visitors to your login
+
+Return `{ redirectTo }` for a request with no signed-in user. A page navigation is redirected there,
+and when one of the console's API calls answers `401` mid-session (the user signed out in another
+tab), the console follows the same `redirectTo`. A `401` without one makes the console reload the
+page, so the server answers the navigation itself.
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: async (ctx) => {
+    if (!(await ctx.auth.check())) return { redirectTo: '/login' }
+    return ctx.auth.user!.isAdmin === true
+  },
+})
+```
+
+### Without `authorize`
+
+When `authorize` is not set, the console is open outside production (`node ace serve`, tests),
+and in production it answers `403` to every page and API request. Either way, it logs this once
+at boot:
+
+```txt
+[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.
+```
+
+Set `authorize` before you deploy. If `middleware` already decides who gets in, open the first gate
+explicitly:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import { middleware } from '#start/kernel'
+
+export default defineConfig({
+  authorize: () => true,
+  middleware: middleware.admin(),
+})
+```
+
+An answer the check writes itself (for example `ctx.response.redirect(...)` before returning
+`false`) is left as it is.
 
 ### The access-denied page
 
@@ -103,192 +176,8 @@ export default defineConfig({
 ```
 
 <Callout type="info" title="They compose">
-  `authorize`, `middleware` and `auth` are independent gates on the same routes. Configure
-  multiple and a request must pass all of them — `authorize` first, then `middleware`, then
-  the console's session guard.
-</Callout>
-
----
-
-## The two modes
-
-```ts title="config/media_dashboard.ts"
-import { defineConfig } from '@adonis-agora/media/dashboard'
-
-export default defineConfig({
-  auth: {
-    secret: env.get('MEDIA_CONSOLE_SECRET'), // required
-    ttl: '8h',                               // default '8h'
-    session: async (request) => { … },       // Mode A
-    login: async (username, password) => { … }, // Mode B
-    revalidate: async (user) => { … },        // optional
-  },
-})
-```
-
-| Key | Type | Default | What it does |
-|---|---|---|---|
-| `secret` | `string` | — | **Required.** HMAC-SHA256 signing key. Missing or empty ⇒ boot error. |
-| `ttl` | `string` | `'8h'` | Cookie lifetime as `<number><s\|m\|h\|d>`. An unparseable value falls back to 8h. |
-| `session` | `(request) => user \| null` | — | **Mode A.** Validate your app's own auth on the raw request. |
-| `login` | `(username, password) => user \| null` | — | **Mode B.** Validate credentials from the built-in login screen. |
-| `revalidate` | `(user) => boolean` | — | Re-check a *live* session when the cookie slides forward. Not a mode — it cannot mint. |
-
-Both hooks return a `ConsoleSessionUser` (`{ id, name?, roles? }`) or `null` to deny. At least one of `session` / `login` must be present; configuring `auth` with neither is a **boot error**, deliberately — a gate nothing can mint a session for would lock the console permanently, and finding that out at boot beats finding it out in production.
-
-<Tabs items={['Mode A — mint from your app', 'Mode B — login screen']}>
-<Tab value="Mode A — mint from your app">
-
-Your app is already authenticated. An XHR from inside it — which *does* carry that identity — posts to `POST <apiBasePath>/session`, your hook decides, and the console answers with its own cookie. The navigation that follows rides it.
-
-```ts title="config/media_dashboard.ts"
-auth: {
-  secret: env.get('MEDIA_CONSOLE_SECRET'),
-  async session(request) {
-    // `request` is the raw Node request — read whatever your app authenticates with
-    const token = (request as IncomingMessage).headers.authorization?.replace('Bearer ', '')
-    if (!token) return null
-
-    const user = await verifyAccessToken(token)
-    if (!user || !user.roles.includes('admin')) return null
-
-    return { id: String(user.id), name: user.name, roles: user.roles }
-  },
-}
-```
-
-The browser half is a one-liner from [`@adonis-agora/media-react`](/docs/media/react/console-launcher):
-
-```tsx
-import { OpenMediaDashboardButton } from '@adonis-agora/media-react'
-
-<OpenMediaDashboardButton headers={() => ({ Authorization: `Bearer ${token()}` })} />
-```
-
-This is the mode to reach for when your app already knows who the user is. The console never learns a password, never grows a second user table, and the decision about who may open it stays one function in your codebase.
-
-</Tab>
-<Tab value="Mode B — login screen">
-
-No app-side identity to borrow — the console asks for credentials itself. The SPA renders its login screen, posts to `POST <apiBasePath>/login`, and your hook decides.
-
-```ts title="config/media_dashboard.ts"
-auth: {
-  secret: env.get('MEDIA_CONSOLE_SECRET'),
-  ttl: '2h',
-  async login(username, password) {
-    const admin = await Admin.findBy('email', username)
-    if (!admin) return null
-    if (!(await hash.verify(admin.password, password))) return null
-
-    return { id: String(admin.id), name: admin.fullName, roles: ['admin'] }
-  },
-}
-```
-
-Refusals are uniform: unknown user and wrong password both return `401 { error: 'invalid credentials' }`, with no way to tell them apart — no user enumeration through the console.
-
-</Tab>
-</Tabs>
-
-Configure both and the login screen offers both: the SPA learns which modes exist from the `401` body of `GET /me` (`{ auth: { modes: ['session', 'login'] } }`) and renders accordingly.
-
----
-
-## How the session actually works
-
-The cookie is **stateless**: `base64url(payload).base64url(hmac)`, signed with HMAC-SHA256 over `node:crypto` — no JWT dependency, no server-side session table. The payload is a `ConsoleSession`:
-
-```ts
-interface ConsoleSession {
-  sub: string      // the user id
-  name?: string
-  roles: string[]  // free-form; the console does not interpret them
-  iat: number      // issued-at, epoch ms
-  exp: number      // expiry, epoch ms
-}
-```
-
-It is written as `media_dashboard_session`, `HttpOnly`, `SameSite=Lax`, `Secure` over https, with `Path=/`. The broad path is deliberate: `basePath` and `apiBasePath` are independently configurable and can live at unrelated paths, and a cookie scoped to one would be withheld on a full-page navigation to the other. The cookie is HttpOnly, signed and short-lived, so the wider scope is a reasonable trade.
-
-Verification rejects anything tampered, malformed or expired, and **never throws** — every failure path returns `null`. The signature comparison is constant-time, and a wrong-length signature is caught before the comparison rather than throwing out of it. Expiry allows a 30-second grace so a marginally-skewed clock doesn't bounce a valid cookie.
-
-### Sliding renewal
-
-Past the halfway point of its TTL, the guard re-issues the cookie on the next request, so an admin working continuously is never logged out mid-session. That renewal is also the hook point for `revalidate`:
-
-```ts
-auth: {
-  secret: env.get('MEDIA_CONSOLE_SECRET'),
-  session: (request) => …,
-  async revalidate(user) {
-    const admin = await Admin.find(Number(user.id))
-    return admin !== null && !admin.suspended
-  },
-}
-```
-
-Return `false` and the cookie is cleared and the request `401`s — which is how you revoke access to a stateless session without a revocation list. Note the boundary: revalidation happens **at renewal**, not on every request, so a revoked user keeps access for up to half the TTL. Set a shorter `ttl` if that window matters. A `revalidate` that throws is treated as a denial — fail closed.
-
-### Failure behaviour
-
-- Both host hooks are run defensively: a hook that **throws** is a denial (`null`), never a `500`. Your database being down does not turn into a stack trace on a login screen.
-- With `auth` unset, `GET /me` reports `{ authRequired: false }` and `/login` / `/session` return `404` — there is nothing to mint. The console is then open, and `middleware` is your only gate.
-- `POST /logout` always clears the cookie and returns `204`, even with `auth` unset. Clearing a cookie that isn't there is harmless.
-
----
-
-## The exported helpers
-
-Everything above is in `@adonis-agora/media/dashboard`, framework-free — no AdonisJS import anywhere in `auth.ts`. Use them to mint or verify a console session outside the provider's own routes:
-
-```ts
-import {
-  resolveConsoleAuth,
-  signSessionCookie,
-  verifySessionCookie,
-} from '@adonis-agora/media/dashboard'
-import type {
-  ConsoleAuthOptions,
-  ConsoleSession,
-  ConsoleSessionUser,
-  ResolvedConsoleAuth,
-} from '@adonis-agora/media/dashboard'
-```
-
-| Export | Signature | Use |
-|---|---|---|
-| `resolveConsoleAuth` | `(options?) => ResolvedConsoleAuth \| null` | Validate + normalize the `auth` option: parses `ttl` to ms, collects the available `modes`, throws on a missing secret or no hook. `null` when unconfigured. |
-| `signSessionCookie` | `(user, { secret, ttlMs, now? }) => string` | Mint a cookie value. `now` is injectable for deterministic tests. |
-| `verifySessionCookie` | `(value, { secret, now? }) => ConsoleSession \| null` | Verify one. Never throws. |
-
-A realistic use: minting a console session from a route of your own, so an operator arrives at the console already signed in from an internal tool.
-
-```ts title="start/routes.ts"
-import { signSessionCookie } from '@adonis-agora/media/dashboard'
-
-router.get('/admin/open-media', async ({ auth, response }) => {
-  const user = auth.getUserOrFail()
-  await bouncer.authorize('openMediaConsole')
-
-  const value = signSessionCookie(
-    { id: String(user.id), name: user.fullName, roles: ['admin'] },
-    { secret: env.get('MEDIA_CONSOLE_SECRET'), ttlMs: 8 * 60 * 60 * 1000 },
-  )
-
-  response.append(
-    'set-cookie',
-    `media_dashboard_session=${encodeURIComponent(value)}; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax; Secure`,
-  )
-  return response.redirect('/media/dashboard')
-}).use(middleware.auth())
-```
-
-<Callout type="warn" title="One secret, one meaning">
-  The secret is the whole gate. Anyone who can compute the HMAC can mint a session for any user id
-  and any roles. Keep it in the environment, keep it out of the config file's literal text, and
-  rotate it by changing the value — every outstanding cookie stops verifying immediately, which is
-  the fastest logout available.
+  `authorize` and `middleware` are independent gates on the same routes. Configure both and a
+  request must pass both, `authorize` first.
 </Callout>
 
 ---
@@ -296,5 +185,4 @@ router.get('/admin/open-media', async ({ auth, response }) => {
 ## Next steps
 
 - [Dashboard](/docs/media/dashboard) — the console's config, routes and views
-- [Console launcher](/docs/media/react/console-launcher) — the React side of Mode A, in three tiers
 - [Programmatic API](/docs/media/dashboard/programmatic) — `DashboardService` and the JSON contract types
