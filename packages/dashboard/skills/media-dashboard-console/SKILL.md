@@ -185,11 +185,11 @@ export default defineConfig({
 
 Mechanism: `actions: true` enables copy/move/delete, recursive folder sweeps, record
 deletion, upload aborts and uploads — recursive delete/move are destructive and
-irreversible. Without `authorize` the console is open in development and refuses every page
+irreversible. Without `authorize` the console is open outside production and refuses every page
 and API request (`403`) in production, with a warning at boot (the `auth` login routes stay
 mounted, but a session they mint does not get past the gate); `authorize` runs before
 `middleware`/`auth`, so a console guarded only by those needs `authorize` too (for example
-`authorize: () => true` to keep them as the gate). Refusals answer `{ error: 'forbidden' }`
+`authorize: () => true` to keep them as the gate). API refusals answer `{ error: 'forbidden' }`
 (`403`) or `{ error: 'unauthenticated' }` (`401`) JSON. For scripts, use
 `authorize: authorizeByToken({ token: env.get('CONSOLE_TOKEN') })` (Bearer header only; an
 empty token throws at config time).
