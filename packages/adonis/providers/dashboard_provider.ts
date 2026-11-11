@@ -100,7 +100,7 @@ export default class MediaDashboardProvider {
       : [];
     // Access check — the `ConsoleAuthorize` contract shared by every @adonis-agora console. Runs
     // BEFORE `middleware` and composes with the built-in `auth` session guard (all must pass).
-    // Omitted: open outside production, every request refused (`403`) in production.
+    // Omitted: open outside production, every page/API request refused (`403`) in production.
     // A denied request honors an answer the check wrote itself (a `location` header or a queued
     // body); `{ redirectTo }` is a `302` for a page navigation and a `401` for the API; otherwise
     // `401` for `reason: 'unauthenticated'` and `403` for everything else (fail closed) — `{ error }`
@@ -165,7 +165,7 @@ export default class MediaDashboardProvider {
 
   /**
    * The per-request access check, or `null` for none. Without `authorize` the console is open
-   * outside production; in production it refuses everything and says so at boot (routes are
+   * outside production; in production it refuses every page/API request and says so at boot (routes are
    * registered once per process, so the warning is logged once).
    */
   #resolveAuthorize(
@@ -174,7 +174,7 @@ export default class MediaDashboardProvider {
     if (config.authorize) return resolveConsoleAuthorize(config.authorize);
     if (this.app.inProduction !== true) return null;
     this.#warn(
-      '[@adonis-agora/media] The media console has no `authorize` in config/media_dashboard.ts, so it refuses every request (403) in production. Set `authorize` to choose who may open it.',
+      '[@adonis-agora/media] The media console has no `authorize` in config/media_dashboard.ts, so its pages and API answer 403 in production. Set `authorize` to choose who may open it.',
     );
     return async () => ({ allowed: false, status: 403, reason: 'forbidden' });
   }

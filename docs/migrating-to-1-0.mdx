@@ -4,7 +4,7 @@ description: Move an app from @adonis-agora/media 0.x to 1.0. The media and Reac
 icon: ArrowUpCircle
 ---
 
-`@adonis-agora/media` 1.0 keeps the 0.30 media API as it is, and so does `@adonis-agora/media-react` 1.0. The changes are all in the console: it refuses every request in production until `config/media_dashboard.ts` sets `authorize`, `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
+`@adonis-agora/media` 1.0 keeps the 0.30 media API as it is, and so does `@adonis-agora/media-react` 1.0. The changes are all in the console: its pages and API answer `403` in production until `config/media_dashboard.ts` sets `authorize`, `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
 
 ---
 
@@ -45,8 +45,8 @@ npm uninstall @adonis-agora/media-dashboard
 ### The console is closed in production until you set `authorize`
 
 Without `authorize`, the media console used to be open to every request unless `middleware` or
-`auth` closed it. In 1.0 it is open only outside production. In production it answers `403` to
-every request and logs a warning at boot until `config/media_dashboard.ts` sets `authorize`.
+`auth` closed it. In 1.0 it is open only outside production. In production its pages and API answer
+`403` and it logs a warning at boot until `config/media_dashboard.ts` sets `authorize`.
 `authorize` runs before `middleware` and `auth`, so a console guarded only by those is refused too.
 
 Before:

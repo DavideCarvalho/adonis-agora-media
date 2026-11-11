@@ -65,7 +65,7 @@ export interface MediaDashboardConfig {
    * `{ error: 'Forbidden' }` / `{ error: 'Unauthorized' }` JSON; page navigations get the
    * {@link accessDenied} page with the same status.
    *
-   * Omitted: the console is open outside production and refuses every request (`403`) in
+   * Omitted: the console is open outside production and answers `403` to every page and API request in
    * production, with a warning at boot. Set `authorize: () => true` to keep it open in production
    * when `middleware` or `auth` already guard it.
    */

@@ -10,7 +10,7 @@ import { defineConfig } from '@adonis-agora/media/dashboard'
  * @adonis-agora/media manager; this config only places the console and picks which disks are browsable.
  *
  * 'authorize' decides who may open the console. Until you set it, the console is open in development
- * and refuses every request (403) in production. It takes a function, a class with an
+ * and its pages and API answer 403 in production. It takes a function, a class with an
  * 'authorize(ctx)' method, or a lazy import of one: () => import('#policies/console_access').
  *
  * The console is a READ-ONLY browser by default. Flip 'actions' on to enable copy/move/delete.

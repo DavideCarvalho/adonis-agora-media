@@ -80,7 +80,8 @@ with `ConsoleAuthorize` and `ConsoleAuthorizer`):
 ### Without `authorize`
 
 When `authorize` is not set, the console is open outside production (`node ace serve`, tests),
-and in production it refuses every request with `403` and logs a warning at boot. Set `authorize`
+and in production it answers `403` to every page and API request and logs a warning at boot
+(the `auth` login routes stay mounted, but a session they mint does not get past it). Set `authorize`
 before you deploy. If `middleware` or `auth` already decides who gets in, open the first gate
 explicitly:
 
