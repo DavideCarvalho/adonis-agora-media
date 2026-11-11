@@ -1,5 +1,24 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.0
+
+### Major Changes
+
+- [#281](https://github.com/DavideCarvalho/adonis-agora-media/pull/281) [`94f8af1`](https://github.com/DavideCarvalho/adonis-agora-media/commit/94f8af12bb87bf614a8ff0262958dd6120708851) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Remove the standalone console provider. The console ships in `@adonis-agora/media`; register its provider instead.
+  
+  - **Removed:** the `@adonis-agora/media-dashboard/media_dashboard_provider` subpath and the `MediaDashboardProvider` export from `@adonis-agora/media-dashboard`. Replace `() => import('@adonis-agora/media-dashboard/media_dashboard_provider')` with `() => import('@adonis-agora/media/dashboard_provider')` in `adonisrc.ts`. `config/media_dashboard.ts` is unchanged.
+  - The package now only exports the console's API types (`.` and `./types`).
+  - The console reads its runtime config only from the JSON data block the provider injects; a `window.__MEDIA_DASHBOARD__` global is no longer read.
+  - The `@adonis-agora/media` and `@adonisjs/core` peers are removed: the package no longer imports either, so installing it requires neither.
+
+### Patch Changes
+
+- [#281](https://github.com/DavideCarvalho/adonis-agora-media/pull/281) [`94f8af1`](https://github.com/DavideCarvalho/adonis-agora-media/commit/94f8af12bb87bf614a8ff0262958dd6120708851) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console fixes:
+  
+  - The console now sends shield's CSRF token (`x-xsrf-token`, from the `XSRF-TOKEN` cookie) on every POST, including uploads from the Upload tab, so actions work in apps that use `@adonisjs/shield`. A redirected or non-2xx response now shows as an error instead of a silent success.
+  - The Uploads tab shows `upload sessions table missing — run the media migration (node ace migration:run)` (HTTP 503) instead of a 500 when the `lucid` upload-session store's tables do not exist.
+  - `FolderBody` is exported from `@adonis-agora/media/dashboard` and `@adonis-agora/media-dashboard`.
+
 ## 9.0.0
 
 ### Major Changes

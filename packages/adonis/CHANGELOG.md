@@ -1,5 +1,22 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.0
+
+### Major Changes
+
+- [#281](https://github.com/DavideCarvalho/adonis-agora-media/pull/281) [`94f8af1`](https://github.com/DavideCarvalho/adonis-agora-media/commit/94f8af12bb87bf614a8ff0262958dd6120708851) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Release 1.0. Every export, option, subpath and ace command of `@adonis-agora/media` and `@adonis-agora/media-react` from 0.x works unchanged (see "Migrating to 1.0" in the docs). One behaviour is gone: the embedded console no longer reads a `window.__MEDIA_DASHBOARD__` global, only the JSON data block the provider injects.
+  
+  - Node.js 24 or later is required (`engines.node: ">=24"`, unchanged).
+  - `@adonis-agora/media` accepts `@adonis-agora/authz`, `@adonis-agora/authkit-client`, `@adonis-agora/authkit-server` and `@adonis-agora/telescope` 1.x, including the 1.0 release candidates (`<lower> <2.0.0 || >=1.0.0-rc.0 <2.0.0`, lower bounds unchanged).
+
+### Patch Changes
+
+- [#281](https://github.com/DavideCarvalho/adonis-agora-media/pull/281) [`94f8af1`](https://github.com/DavideCarvalho/adonis-agora-media/commit/94f8af12bb87bf614a8ff0262958dd6120708851) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console fixes:
+  
+  - The console now sends shield's CSRF token (`x-xsrf-token`, from the `XSRF-TOKEN` cookie) on every POST, including uploads from the Upload tab, so actions work in apps that use `@adonisjs/shield`. A redirected or non-2xx response now shows as an error instead of a silent success.
+  - The Uploads tab shows `upload sessions table missing — run the media migration (node ace migration:run)` (HTTP 503) instead of a 500 when the `lucid` upload-session store's tables do not exist.
+  - `FolderBody` is exported from `@adonis-agora/media/dashboard` and `@adonis-agora/media-dashboard`.
+
 ## 0.30.0
 
 ### Minor Changes
