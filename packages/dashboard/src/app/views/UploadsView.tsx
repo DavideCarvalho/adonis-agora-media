@@ -37,7 +37,7 @@ function UploadDetail({ uploadId }: { uploadId: string }) {
         ← back
       </button>
       {detail.isLoading && <Empty>Loading upload…</Empty>}
-      {detail.isError && <Empty>Failed to load upload.</Empty>}
+      {detail.isError && <Empty>Failed to load upload: {(detail.error as Error)?.message}</Empty>}
       {detail.data && (
         <div className="mt-2">
           <Panel className="p-4">

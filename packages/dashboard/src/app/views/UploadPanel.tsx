@@ -1,6 +1,7 @@
 import { useMediaUpload } from '@adonis-agora/media-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
+import { csrfHeader } from '../../client/dashboard-client';
 import { useDashboard } from '../context';
 import { useDisks } from '../queries';
 import { Bar, Empty, Panel, useToasts } from '../ui';
@@ -35,6 +36,8 @@ export function UploadPanel() {
     baseUrl: '',
     tusPath: bootstrap.tusBase,
     uploadsPath: bootstrap.uploadsBase,
+    // shield guards the core upload routes too; resolved per request so a rotated token is picked up.
+    getHeaders: csrfHeader,
   });
 
   const handleFiles = async (files: File[]) => {

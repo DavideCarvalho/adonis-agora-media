@@ -18,7 +18,7 @@ import type {
   UploadListResponse,
 } from '../types.js';
 
-/** Runtime config injected into the page by the provider (or defaulted for standalone dev). */
+/** Runtime config injected into the page by the provider (or defaulted for local dev). */
 export interface DashboardBootstrap {
   /** Base URL of the JSON API, e.g. `/media/dashboard/api`. */
   apiBase: string;
@@ -41,21 +41,43 @@ const DEFAULT_BOOTSTRAP: DashboardBootstrap = {
 export const CONFIG_ELEMENT_ID = 'media-dashboard-config';
 
 /**
- * Read the provider-injected bootstrap, falling back to conventional defaults for standalone dev.
+ * Read the provider-injected bootstrap, falling back to conventional defaults for local dev.
  *
- * It arrives as a `<script type="application/json">` DATA block, not as a `window.__MEDIA_DASHBOARD__`
- * global set by an inline script. The difference is the whole bug it fixes: a host
- * Content-Security-Policy of `script-src 'self' 'nonce-…'` (shield's `@nonce`) refuses an un-nonced
- * inline script without a word, so the global was never set, the defaults below took over, and a
- * console mounted anywhere else answered 404 to all of its own requests while rendering perfectly.
- * A data block is never executed, so no policy can refuse it. The global is still honoured, AFTER
- * the block, so a test or a hand-embedding host can set it.
+ * It arrives as a `<script type="application/json">` data block. A data block is never executed, so
+ * a host Content-Security-Policy (shield's `@nonce`) cannot refuse it the way it refuses an
+ * un-nonced inline script.
  */
 export function readBootstrap(): DashboardBootstrap {
-  const global = (globalThis as { __MEDIA_DASHBOARD__?: Partial<DashboardBootstrap> })
-    .__MEDIA_DASHBOARD__;
-  return { ...DEFAULT_BOOTSTRAP, ...global, ...readConfigBlock() };
+  return { ...DEFAULT_BOOTSTRAP, ...readConfigBlock() };
 }
+
+/**
+ * The host app's CSRF token, when it sets one.
+ *
+ * `@adonisjs/shield` guards every state-changing route of the app the console is mounted in and
+ * publishes the token as an `XSRF-TOKEN` cookie; a browser client echoes it back in
+ * `x-xsrf-token`. Without it shield rejects every console POST (a redirect, not a JSON error).
+ * Absent cookie means no header, which is right for a host without shield.
+ */
+export function csrfHeader(): Record<string, string> {
+  if (typeof document === 'undefined') return {};
+  const match = /(?:^|;\s*)XSRF-TOKEN=([^;]*)/.exec(document.cookie);
+  const token = match?.[1];
+  if (!token) return {};
+  return { 'x-xsrf-token': decodeURIComponent(token) };
+}
+
+/**
+ * A response that was redirected instead of answered. The console's API never redirects, so a
+ * redirect means the host app turned the request away before it reached the console (shield's CSRF
+ * check, or an auth middleware sending the browser to a login page).
+ */
+function isRedirect(res: Response): boolean {
+  return res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400) || res.redirected;
+}
+
+const REDIRECT_MESSAGE =
+  'The host app redirected this request instead of answering it (a CSRF check or an auth middleware refused it). Reload the page and try again.';
 
 function readConfigBlock(): Partial<DashboardBootstrap> {
   if (typeof document === 'undefined') return {};
@@ -114,6 +136,7 @@ export class DashboardClient {
     const res = await this.fetchImpl(withQuery(`${this.apiBase}${path}`, params), {
       method: 'GET',
       credentials: 'same-origin',
+      redirect: 'manual',
       headers: { accept: 'application/json' },
     });
     return this.parse<T>(res);
@@ -123,13 +146,15 @@ export class DashboardClient {
     const res = await this.fetchImpl(`${this.apiBase}${path}`, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      redirect: 'manual',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...csrfHeader() },
       body: JSON.stringify(body),
     });
     await this.parse<unknown>(res);
   }
 
   private async parse<T>(res: Response): Promise<T> {
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
     if (!res.ok) {
       let message = `request failed (${res.status})`;
       try {
@@ -218,7 +243,8 @@ export class DashboardClient {
       {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'content-type': 'application/octet-stream' },
+        redirect: 'manual',
+        headers: { 'content-type': 'application/octet-stream', ...csrfHeader() },
         body: file,
       },
     );
@@ -247,7 +273,11 @@ export class DashboardClient {
     key: string,
     maxBytes: number,
   ): Promise<{ text: string; bytesRead: number }> {
-    const res = await this.fetchImpl(this.objectRawUrl(disk, key), { credentials: 'same-origin' });
+    const res = await this.fetchImpl(this.objectRawUrl(disk, key), {
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
     if (!res.ok) throw new Error(`request failed (${res.status})`);
     if (!res.body) {
       const text = await res.text();
@@ -301,6 +331,7 @@ export class DashboardClient {
   async me(): Promise<ConsoleAuthState> {
     const res = await this.fetchImpl(`${this.apiBase}/me`, {
       credentials: 'same-origin',
+      redirect: 'manual',
       headers: { accept: 'application/json' },
     });
     if (res.status === 401) {
@@ -321,9 +352,11 @@ export class DashboardClient {
     const res = await this.fetchImpl(`${this.apiBase}/login`, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      redirect: 'manual',
+      headers: { 'content-type': 'application/json', accept: 'application/json', ...csrfHeader() },
       body: JSON.stringify(body),
     });
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
     if (!res.ok) {
       throw new Error(
         res.status === 401 ? 'Invalid credentials' : `request failed (${res.status})`,
@@ -333,9 +366,13 @@ export class DashboardClient {
 
   /** Clears the session cookie. */
   async logout(): Promise<void> {
-    await this.fetchImpl(`${this.apiBase}/logout`, {
+    const res = await this.fetchImpl(`${this.apiBase}/logout`, {
       method: 'POST',
       credentials: 'same-origin',
+      redirect: 'manual',
+      headers: { accept: 'application/json', ...csrfHeader() },
     });
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
+    if (!res.ok) throw new Error(`request failed (${res.status})`);
   }
 }

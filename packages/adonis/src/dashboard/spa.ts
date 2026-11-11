@@ -54,15 +54,10 @@ export const CONFIG_ELEMENT_ID = 'media-dashboard-config';
  * Rewrite the built `index.html` for serving: point Vite's placeholder base at `basePath` and hand
  * the SPA its runtime bootstrap.
  *
- * The bootstrap goes in as a JSON DATA BLOCK (`<script type="application/json">`), not as an inline
- * script assigning `window.__MEDIA_DASHBOARD__`. A data block is never executed, so no
- * Content-Security-Policy can refuse it; an inline script IS, and a host with
- * `script-src 'self' 'nonce-…'` (`@adonisjs/shield`'s `@nonce`, the recommended setup) silently
- * dropped ours. The global was then undefined, the SPA fell back to its `/media/dashboard/api`
- * default, and on any other mount path EVERY request from a console that had rendered perfectly
- * well answered 404 — the module script Vite emits is a same-origin file, so the page itself kept
- * loading and the failure looked like a routing bug rather than a policy one. The global is still
- * read by the SPA as a fallback, but this is no longer how the provider speaks.
+ * The bootstrap goes in as a JSON DATA BLOCK (`<script type="application/json">`), the only place
+ * the SPA reads it from. A data block is never executed, so no Content-Security-Policy can refuse it;
+ * an inline script is, and a host with `script-src 'self' 'nonce-…'` (`@adonisjs/shield`'s `@nonce`)
+ * drops it silently.
  */
 export function renderIndexHtml(
   html: string,

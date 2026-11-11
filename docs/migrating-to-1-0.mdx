@@ -4,7 +4,7 @@ description: Move an app from @adonis-agora/media 0.x to 1.0. The media and Reac
 icon: ArrowUpCircle
 ---
 
-`@adonis-agora/media` 1.0 keeps the 0.30 API as it is, and so does `@adonis-agora/media-react` 1.0. Every import, config option, subpath and ace command works the same. The one breaking change is in `@adonis-agora/media-dashboard` 10: its standalone provider is removed, and the console is registered from `@adonis-agora/media`.
+`@adonis-agora/media` 1.0 keeps the 0.30 API as it is, and so does `@adonis-agora/media-react` 1.0. Every import, config option, subpath and ace command works the same. Two things changed: `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
 
 ---
 
@@ -71,6 +71,28 @@ import type { DiskInfo, ObjectListResponse } from '@adonis-agora/media-dashboard
 ```
 
 It no longer has peer dependencies, so installing it no longer requires `@adonis-agora/media` or `@adonisjs/core`.
+
+### The console no longer reads `window.__MEDIA_DASHBOARD__`
+
+The provider passes the console its runtime config as a JSON data block in `index.html`, and that block is now the only source. If you served the console's HTML yourself and set the global, emit the block instead.
+
+Before:
+
+```html
+<script>
+  window.__MEDIA_DASHBOARD__ = { apiBase: '/ops/media/api' }
+</script>
+```
+
+After:
+
+```html
+<script type="application/json" id="media-dashboard-config">
+  { "apiBase": "/ops/media/api" }
+</script>
+```
+
+Apps that let the provider serve the console need no change.
 
 ### Everything else works unchanged
 

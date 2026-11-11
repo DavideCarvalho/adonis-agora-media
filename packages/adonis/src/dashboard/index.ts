@@ -59,6 +59,7 @@ export type {
   DiskCapabilities,
   DiskInfo,
   DiskListResponse,
+  FolderBody,
   LoginBody,
   MediaDetailResponse,
   MediaEntry,

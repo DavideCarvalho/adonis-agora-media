@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MediaManagerLike } from '../../src/dashboard/service.js';
-import { DashboardError, DashboardService } from '../../src/dashboard/service.js';
+import {
+  DashboardError,
+  DashboardService,
+  UPLOAD_SESSIONS_TABLE_MISSING,
+} from '../../src/dashboard/service.js';
 
 /** A fake extended (S3-like) disk with spied ops so the service's real-surface calls are asserted. */
 function fakeDisk(overrides: Record<string, unknown> = {}) {
@@ -232,6 +236,62 @@ describe('DashboardService', () => {
       createdAt: '2026-07-13T09:00:00.000Z',
     });
     expect(res.uploads[1]).toMatchObject({ id: 'u2', percent: null, size: null, multipart: false });
+  });
+
+  it.each([
+    [
+      'postgres',
+      Object.assign(new Error('relation "media_upload_sessions" does not exist'), {
+        code: '42P01',
+      }),
+    ],
+    [
+      'mysql',
+      Object.assign(new Error("Table 'app.media_upload_sessions' doesn't exist"), {
+        code: 'ER_NO_SUCH_TABLE',
+        errno: 1146,
+      }),
+    ],
+    [
+      'sqlite',
+      new Error(
+        'select * from `media_upload_sessions` - SQLITE_ERROR: no such table: media_upload_sessions',
+      ),
+    ],
+    [
+      'mssql',
+      Object.assign(new Error("Invalid object name 'media_upload_sessions'."), { number: 208 }),
+    ],
+  ])(
+    'turns a missing upload-sessions table (%s) into a 503 with a fix',
+    async (_dialect, cause) => {
+      const resumable = {
+        list: vi.fn(async () => {
+          throw cause;
+        }),
+      };
+      const svc = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+        diskNames: ['s3'],
+        actions: false,
+      });
+      const error = await svc.uploads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DashboardError);
+      expect(error).toMatchObject({ status: 503, message: UPLOAD_SESSIONS_TABLE_MISSING });
+    },
+  );
+
+  it('lets other upload-store errors through unchanged', async () => {
+    const boom = new Error('connection refused');
+    const resumable = {
+      list: vi.fn(async () => {
+        throw boom;
+      }),
+    };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    await expect(svc.uploads()).rejects.toBe(boom);
   });
 
   it('returns empty uploads when no resumable store is configured', async () => {

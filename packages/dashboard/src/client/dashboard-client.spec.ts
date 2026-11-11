@@ -52,6 +52,54 @@ describe('DashboardClient', () => {
     });
   });
 
+  it('echoes the XSRF-TOKEN cookie as x-xsrf-token on POSTs', async () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: the test plants the cookie shield would set
+    document.cookie = 'XSRF-TOKEN=tok%3D1';
+    try {
+      const fetchImpl = vi.fn(
+        async () => ({ ok: true, status: 204, json: async () => ({}) }) as Response,
+      );
+      const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+      await client.createFolder({ disk: 's3', prefix: 'a/' });
+      const init = fetchImpl.mock.calls[0][1] as RequestInit;
+      expect(init.headers).toMatchObject({ 'x-xsrf-token': 'tok=1' });
+      expect(init.redirect).toBe('manual');
+    } finally {
+      // biome-ignore lint/suspicious/noDocumentCookie: clean up the planted cookie
+      document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    }
+  });
+
+  it('sends no x-xsrf-token without the cookie', async () => {
+    const fetchImpl = vi.fn(
+      async () => ({ ok: true, status: 204, json: async () => ({}) }) as Response,
+    );
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await client.remove({ disk: 's3', keys: ['a'] });
+    const init = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(init.headers).not.toHaveProperty('x-xsrf-token');
+  });
+
+  it('turns a redirected response into an error instead of a silent success', async () => {
+    const opaque = vi.fn(
+      async () =>
+        ({ ok: false, status: 0, type: 'opaqueredirect', json: async () => ({}) }) as Response,
+    );
+    await expect(
+      new DashboardClient({ apiBase: '/api', fetchImpl: opaque }).copy({
+        disk: 's3',
+        from: 'a',
+        to: 'b',
+      }),
+    ).rejects.toThrow(/redirected/);
+    const followed = vi.fn(
+      async () => ({ ok: true, status: 200, redirected: true, json: async () => ({}) }) as Response,
+    );
+    await expect(
+      new DashboardClient({ apiBase: '/api', fetchImpl: followed }).disks(),
+    ).rejects.toThrow(/redirected/);
+  });
+
   it('surfaces the server error message on non-2xx', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ error: 'disk is required' }, 400));
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });

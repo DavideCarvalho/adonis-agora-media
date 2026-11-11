@@ -53,7 +53,8 @@ export default defineConfig({
 ```
 
 Mount the SPA under any path without rebuilding — the provider rewrites Vite's asset base and injects
-the runtime bootstrap (`window.__MEDIA_DASHBOARD__`) into `index.html` at serve time.
+the runtime config into `index.html` at serve time, as a JSON data block
+(`<script type="application/json" id="media-dashboard-config">`) that a strict CSP does not block.
 
 ## Routes
 
