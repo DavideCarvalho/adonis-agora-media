@@ -1,0 +1,143 @@
+---
+title: Migrating to 1.0
+description: Move an app from @adonis-agora/media 0.x to 1.0. The media and React APIs are unchanged; the standalone @adonis-agora/media-dashboard provider is gone, so register the console from @adonis-agora/media.
+icon: ArrowUpCircle
+---
+
+`@adonis-agora/media` 1.0 keeps the 0.30 API as it is, and so does `@adonis-agora/media-react` 1.0. Every import, config option, subpath and ace command works the same. Two things changed: `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
+
+---
+
+## Requirements
+
+- **Node.js 24 or later.** `engines.node` is `>=24`, the same line AdonisJS 7 requires. 1.0 is tested on Node 24 and 26.
+- **AdonisJS 7** (`@adonisjs/core` `^7.3.0`), unchanged.
+- **`@adonisjs/drive` `^3.0.0` or `^4.0.0`**, unchanged.
+
+If your app already runs on AdonisJS 7, it already runs on Node 24 or later.
+
+---
+
+## Upgrade
+
+1.0 is published first as a release candidate under the `rc` tag:
+
+```sh
+npm i @adonis-agora/media@rc @adonis-agora/media-react@rc
+```
+
+Once 1.0.0 is final, install it as usual:
+
+```sh
+npm i @adonis-agora/media@^1.0.0 @adonis-agora/media-react@^1.0.0
+```
+
+If `@adonis-agora/media-dashboard` is in your `package.json` only to register its provider, remove it after the change below:
+
+```sh
+npm uninstall @adonis-agora/media-dashboard
+```
+
+---
+
+## Breaking changes
+
+### The standalone console provider is removed
+
+`@adonis-agora/media-dashboard` no longer ships a provider: the `@adonis-agora/media-dashboard/media_dashboard_provider` subpath and the `MediaDashboardProvider` export are gone. The console ships in `@adonis-agora/media`; register its provider instead. `config/media_dashboard.ts` stays as it is.
+
+Before:
+
+```ts title="adonisrc.ts"
+providers: [
+  () => import('@adonis-agora/media/media_provider'),
+  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
+]
+```
+
+After:
+
+```ts title="adonisrc.ts"
+providers: [
+  () => import('@adonis-agora/media/media_provider'),
+  () => import('@adonis-agora/media/dashboard_provider'),
+]
+```
+
+`@adonis-agora/media-dashboard` still exports the console's API types, so a browser bundle can keep importing them:
+
+```ts
+import type { DiskInfo, ObjectListResponse } from '@adonis-agora/media-dashboard/types'
+```
+
+It no longer has peer dependencies, so installing it no longer requires `@adonis-agora/media` or `@adonisjs/core`.
+
+### The console no longer reads `window.__MEDIA_DASHBOARD__`
+
+The provider passes the console its runtime config as a JSON data block in `index.html`, and that block is now the only source. If you served the console's HTML yourself and set the global, emit the block instead.
+
+Before:
+
+```html
+<script>
+  window.__MEDIA_DASHBOARD__ = { apiBase: '/ops/media/api' }
+</script>
+```
+
+After:
+
+```html
+<script type="application/json" id="media-dashboard-config">
+  { "apiBase": "/ops/media/api" }
+</script>
+```
+
+Apps that let the provider serve the console need no change.
+
+### Everything else works unchanged
+
+Code like this works on 1.0 exactly as it did on 0.30:
+
+```ts title="app/controllers/avatars_controller.ts"
+import { createReadStream } from 'node:fs'
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
+
+export default class AvatarsController {
+  async update({ request, response, auth }: HttpContext) {
+    const user = auth.getUserOrFail()
+
+    const avatar = request.file('avatar', { size: '2mb', extnames: ['jpg', 'jpeg', 'png', 'webp'] })
+    if (!avatar) return response.badRequest({ error: 'An "avatar" file is required' })
+
+    const att = await media.attachments.createFromFile(
+      {
+        fileName: avatar.clientName,
+        mimeType: avatar.type!,
+        contents: createReadStream(avatar.tmpPath!),
+      },
+      { variants: [{ name: 'thumb', width: 100 }] },
+    )
+
+    user.avatarData = att.toJSON()
+    await user.save()
+
+    return response.ok(user)
+  }
+}
+```
+
+---
+
+## Other @adonis-agora packages
+
+The optional integrations now accept both 0.x and 1.x of the packages they work with, so you can move each one to 1.0 on its own schedule:
+
+| Peer                           | Accepted range       |
+| ------------------------------ | -------------------- |
+| `@adonis-agora/authz`          | `>=0.16.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0` |
+| `@adonis-agora/authkit-client` | `>=0.18.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0` |
+| `@adonis-agora/authkit-server` | `>=0.60.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0` |
+| `@adonis-agora/telescope`      | `>=0.4.0 <2.0.0 \|\| >=1.0.0-rc.0 <2.0.0`  |
+
+The second clause in each range admits the 1.0 release candidates, so you can mix `rc` packages without peer warnings.

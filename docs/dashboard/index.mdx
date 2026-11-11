@@ -11,7 +11,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Nothing about storage is reimplemented: the console consumes the **real** media surface — disk `list` / `stat` / `copy` / `move` / `deleteMany` (from the [S3 disk](/docs/media/storage/s3-disk)'s extended operations) and the resumable [`UploadSessionStore.list()`](/docs/media/uploads/resumable-tus) — through provider-registered routes, and reuses [`@adonis-agora/media-react`](/docs/media/react) for the upload UI.
 
 <Callout type="info" title="Ships embedded — no separate install">
-  The console is built into `@adonis-agora/media` itself. `node ace configure @adonis-agora/media` registers its provider for you — nothing else to add. `@adonis-agora/media-dashboard` still exists as a standalone package (its build is the console's source, and its own provider still works as a thin delegate) for hosts that prefer registering it explicitly — see [Standalone install](#standalone-install-legacy) below.
+  The console is built into `@adonis-agora/media` itself. `node ace configure @adonis-agora/media` registers its provider for you — nothing else to add.
 </Callout>
 
 ---
@@ -58,7 +58,7 @@ export default defineConfig({
 `enabled: false` is the per-environment switch: keep the provider registered (and `config/media_dashboard.ts` type-checked) in every environment, and let the config decide where the console actually exists. It short-circuits in `boot()`, before any route is registered — not a 403, simply nothing mounted.
 
 <Callout type="warn">
-  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete, folder operations, record deletion, upload aborts and the console upload — gate the console with `middleware`, `auth`, or both before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime bootstrap (`window.__MEDIA_DASHBOARD__`) into `index.html` at serve time.
+  The console is a read-only browser by default. Flipping `actions: true` enables copy / move / delete, folder operations, record deletion, upload aborts and the console upload — gate the console with `middleware`, `auth`, or both before you do. Mounting the SPA under any `basePath` needs no rebuild: the provider rewrites Vite's asset base and injects the runtime config into `index.html` as a JSON data block (`<script type="application/json" id="media-dashboard-config">`) at serve time. A data block is never executed, so a strict Content-Security-Policy (shield's `@nonce`) does not block it.
 </Callout>
 
 ---
@@ -232,31 +232,11 @@ Three properties of the design are worth being explicit about:
 - **Library** — the disk browser. A lazy, collapsible **folder tree** in the left rail (each disk is a root; expanding a node fetches only that level, and every node is a drop target for drag-to-move), the object list in the main pane with cursor-paginated `list`, and create / copy / move / delete for folders and objects across buckets (see [Folder operations](#folder-operations)).
 - **Lightbox** — clicking an object opens a modal preview that renders by content type: images, video, audio, PDFs, and text/JSON/CSV/TSV (tabular formats as a real table); anything else falls back to an "open original" link. The [object insights](#object-insights) your app registered render alongside the preview.
 - **Collections** — the media-library records themselves, cross-owner and filterable by collection / owner type / owner id / path prefix. One-click **collection chips** across the top carry each collection's record count and total size (from `/collections/summary`), and clicking a row **drills into the record**: its full metadata plus a signed URL per conversion, with delete when `actions` is on. See [Collections view](/docs/media/dashboard/collections).
-- **Uploads** — live resumable sessions, polled every 2s from the session store. Clicking a row **drills into the session**: its full state plus every recorded part, and an abort button when `actions` is on.
+- **Uploads** — live resumable sessions, polled every 2s from the session store. Clicking a row **drills into the session**: its full state plus every recorded part, and an abort button when `actions` is on. With the `lucid` session store, the tab needs the `media_upload_sessions` / `media_upload_parts` tables that `node ace configure @adonis-agora/media` publishes a migration for; until `node ace migration:run` creates them, it shows `upload sessions table missing` instead of a list.
 - **Upload** — drag-drop / picker, resumable TUS uploads into the chosen disk.
 - **Login** — when `auth` is configured and no valid session cookie exists, the SPA renders its login screen instead of the console, offering exactly the mode(s) the server advertised. See [Console authentication](/docs/media/dashboard/authentication).
 
 ---
-
-## Standalone install (legacy)
-
-`@adonis-agora/media-dashboard` is still published and still works, for hosts that already register
-it directly or prefer the console as its own explicit, separately-versioned install:
-
-```sh
-pnpm add @adonis-agora/media-dashboard
-```
-
-```ts title="adonisrc.ts"
-providers: [
-  () => import('@adonis-agora/media/media_provider'),
-  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'),
-]
-```
-
-Its provider is a thin delegate to the embedded one above — no logic of its own — so both entry points
-stay identical in behavior, and `config/media_dashboard.ts` is read from the same `media_dashboard` key
-either way. **Register only one of the two providers.**
 
 ## Next steps
 

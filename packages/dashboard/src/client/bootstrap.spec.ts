@@ -3,10 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CONFIG_ELEMENT_ID, readBootstrap } from './dashboard-client.js';
 
 /**
- * Where `readBootstrap()` gets its values from: the provider's JSON data block first, the
- * `window.__MEDIA_DASHBOARD__` global second, the standalone-dev defaults last. The block exists
- * because a host CSP with `script-src 'self' 'nonce-…'` refuses the inline script the global used
- * to arrive in, and the console then 404s on every request while rendering perfectly.
+ * Where `readBootstrap()` gets its values from: the provider's JSON data block, else the local-dev
+ * defaults. Nothing else: a `window.__MEDIA_DASHBOARD__` global is ignored.
  */
 
 function injectConfig(config: Record<string, unknown>): void {
@@ -33,16 +31,8 @@ describe('readBootstrap', () => {
     });
   });
 
-  it('lets the block win over the window global', () => {
-    (globalThis as { __MEDIA_DASHBOARD__?: unknown }).__MEDIA_DASHBOARD__ = { apiBase: '/stale' };
-    injectConfig({ apiBase: '/fresh/api' });
-    expect(readBootstrap().apiBase).toBe('/fresh/api');
-  });
-
-  it('falls through to the global, then the defaults', () => {
+  it('ignores a window global and falls back to the defaults without a block', () => {
     (globalThis as { __MEDIA_DASHBOARD__?: unknown }).__MEDIA_DASHBOARD__ = { apiBase: '/g/api' };
-    expect(readBootstrap().apiBase).toBe('/g/api');
-    Reflect.deleteProperty(globalThis, '__MEDIA_DASHBOARD__');
     expect(readBootstrap().apiBase).toBe('/media/dashboard/api');
   });
 

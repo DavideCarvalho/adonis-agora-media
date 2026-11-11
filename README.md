@@ -19,7 +19,7 @@ inline blur-up preview + dimensions + dominant colour for images — all persist
 |---|---|
 | [`@adonis-agora/media`](./packages/adonis) [![npm](https://img.shields.io/npm/v/@adonis-agora/media)](https://www.npmjs.com/package/@adonis-agora/media) | The core library: `MediaLibrary`, `AttachmentManager`, `MediaStore` SPI (in-memory + Lucid), `ImageProcessor` SPI (sharp), the `Transformer` SPI (HLS video + metadata probe), the bundled `disks.s3()` driver, proxy/direct/resumable uploads, configurable delivery, the embedded management console, provider + `defineConfig`, testing kit |
 | [`@adonis-agora/media-react`](./packages/react) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-react)](https://www.npmjs.com/package/@adonis-agora/media-react) | Rendering: `MediaImage` / `MediaPicture` (`next/image` for stored images: srcset, blur-up, lazy loading, layouts, art direction), `placeholderStyle`, `mediaImageLoader`. Uploads: `useMediaUpload`, `MediaUploader`, framework-free `createMediaUploadClient` (TUS / direct-S3 / proxy) |
-| [`@adonis-agora/media-dashboard`](./packages/dashboard) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-dashboard)](https://www.npmjs.com/package/@adonis-agora/media-dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is now the SPA's build-time source + a standalone install for hosts that prefer it |
+| [`@adonis-agora/media-dashboard`](./packages/dashboard) [![npm](https://img.shields.io/npm/v/@adonis-agora/media-dashboard)](https://www.npmjs.com/package/@adonis-agora/media-dashboard) | Management console (React SPA): browse buckets, watch resumable uploads, copy/move/delete objects. **Ships embedded in `@adonis-agora/media`** (`./dashboard_provider`) — this package is the SPA's build-time source and exports the console's API types |
 
 The core package uses **subpath exports** (the Agora idiom), so heavy backends stay optional:
 
@@ -286,8 +286,7 @@ in `config/media.ts`; the provider mounts the routes under `/media/uploads` and 
 The bundled `disks.s3()` driver adds extended operations (copy/move/deleteMany/list/size/stat) and
 native multipart over the optional AWS SDK peer. Drive it from the browser with
 [`@adonis-agora/media-react`](./packages/react), and manage it all from the dashboard — embedded in
-`@adonis-agora/media` (`node ace configure` wires it up for free), with
-[`@adonis-agora/media-dashboard`](./packages/dashboard) as its standalone/advanced install.
+`@adonis-agora/media` (`node ace configure` wires it up for free).
 
 ## Roadmap (deferred)
 

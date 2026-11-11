@@ -3,8 +3,7 @@ name: media-dashboard-console
 description: >-
   The media management console for @adonis-agora/media — config/media_dashboard.ts via
   @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, actions gate, disks,
-  middleware, enabled), the embedded dashboard_provider vs the standalone
-  @adonis-agora/media-dashboard delegate provider, built-in session auth (Mode A
+  middleware, enabled), the embedded dashboard_provider, built-in session auth (Mode A
   auth.session minting from app auth, Mode B auth.login credentials screen, revalidate,
   secret/ttl, signSessionCookie/verifySessionCookie/resolveConsoleAuth), DashboardService
   + DashboardError + MediaManagerLike programmatic API, and objectInsights providers.
@@ -27,8 +26,8 @@ sources:
 
 The console is a React SPA plus JSON API for browsing buckets, watching resumable uploads,
 and copy/move/delete across buckets. It ships **embedded** in `@adonis-agora/media`
-(`./dashboard_provider`); `@adonis-agora/media-dashboard` is its standalone build source +
-a thin delegate provider for hosts that prefer an explicit install.
+(`./dashboard_provider`); `@adonis-agora/media-dashboard` is its build source and exports the
+console's API types.
 
 ## Setup
 
@@ -224,31 +223,6 @@ Mechanism: `DashboardService.deleteMediaRecord` deletes the metadata row and not
 the disk object stays where it is, unlike `media.library.delete` which also removes every
 conversion file.
 Source: `docs/dashboard/programmatic.mdx` (Actions table).
-
-### [MEDIUM] Registering both the embedded and standalone console providers
-
-Wrong:
-
-```ts
-providers: [
-  () => import('@adonis-agora/media/dashboard_provider'),
-  () => import('@adonis-agora/media-dashboard/media_dashboard_provider'), // duplicate
-]
-```
-
-Correct:
-
-```ts
-providers: [
-  () => import('@adonis-agora/media/media_provider'),
-  () => import('@adonis-agora/media/dashboard_provider'),
-]
-```
-
-Mechanism: the standalone provider is a thin delegate to the embedded one — registering both
-mounts the console twice. Register exactly one of the two; both read the same
-`media_dashboard` config key.
-Source: `docs/dashboard/index.mdx` (Standalone install legacy).
 
 ### [MEDIUM] Running expensive lookups in an objectInsights resolver
 

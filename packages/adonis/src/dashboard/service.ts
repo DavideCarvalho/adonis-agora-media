@@ -100,6 +100,38 @@ export class DashboardError extends Error {
   }
 }
 
+/** Shown by the console when the Lucid upload-session store's tables do not exist yet. */
+export const UPLOAD_SESSIONS_TABLE_MISSING =
+  'upload sessions table missing — run the media migration (node ace migration:run)';
+
+/**
+ * Whether `error` is the database saying a table does not exist: Postgres `42P01`, MySQL/MariaDB
+ * `ER_NO_SUCH_TABLE` (1146), SQLite `no such table`, SQL Server 208 (`Invalid object name`).
+ */
+export function isMissingTableError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, errno, number, message } = error as {
+    code?: unknown;
+    errno?: unknown;
+    number?: unknown;
+    message?: unknown;
+  };
+  if (code === '42P01' || code === 'ER_NO_SUCH_TABLE' || errno === 1146 || number === 208) {
+    return true;
+  }
+  return typeof message === 'string' && /no such table|invalid object name/i.test(message);
+}
+
+/** Run an upload-session store call, turning a missing table into a 503 the console can show. */
+async function withUploadSessionTables<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isMissingTableError(error)) throw new DashboardError(UPLOAD_SESSIONS_TABLE_MISSING, 503);
+    throw error;
+  }
+}
+
 /**
  * All dashboard read/action logic, expressed over a structural {@link MediaManagerLike}. It reads the
  * *real* `@adonis-agora/media` surface — disk `list`/`stat`/`getSignedUrl`/`copy`/`move`/`deleteMany`
@@ -259,20 +291,22 @@ export class DashboardService {
   /** In-progress resumable uploads, projected from the session store (empty when unconfigured). */
   async uploads(filter: { disk?: string; prefix?: string } = {}): Promise<UploadListResponse> {
     if (!this.manager.hasResumable) return { uploads: [] };
-    const sessions = await this.manager.resumable.list({
-      ...(filter.disk !== undefined ? { disk: filter.disk } : {}),
-      ...(filter.prefix !== undefined ? { keyPrefix: filter.prefix } : {}),
-    });
+    const sessions = await withUploadSessionTables(() =>
+      this.manager.resumable.list({
+        ...(filter.disk !== undefined ? { disk: filter.disk } : {}),
+        ...(filter.prefix !== undefined ? { keyPrefix: filter.prefix } : {}),
+      }),
+    );
     return { uploads: sessions.map(toUploadInfo) };
   }
 
   /** Full detail (+ recorded parts) of one resumable upload session. */
   async uploadDetail(id: string): Promise<UploadDetailResponse> {
     if (!this.manager.hasResumable) throw new DashboardError('no upload store configured', 404);
-    const sessions = await this.manager.resumable.list();
+    const sessions = await withUploadSessionTables(() => this.manager.resumable.list());
     const session = sessions.find((candidate) => candidate.id === id);
     if (!session) throw new DashboardError(`unknown upload: ${id}`, 404);
-    const parts = await this.manager.resumable.listParts(id);
+    const parts = await withUploadSessionTables(() => this.manager.resumable.listParts(id));
     return { upload: toUploadInfo(session), parts };
   }
 
@@ -283,7 +317,7 @@ export class DashboardService {
   async abortUpload(id: string): Promise<void> {
     this.assertActions();
     if (!this.manager.hasResumable) throw new DashboardError('no upload store configured', 404);
-    await this.manager.resumable.abort(id);
+    await withUploadSessionTables(() => this.manager.resumable.abort(id));
   }
 
   /**

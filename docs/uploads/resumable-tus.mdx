@@ -102,6 +102,14 @@ new TusUploadHandler({
 
 `configure` publishes a migration for the TUS `lucid` store alongside the media migration. It creates two portable tables — `media_upload_sessions` (offset / length / metadata / expiry) and `media_upload_parts` (the per-part ETag side-index for assembling native S3 multipart) — with JSON as TEXT and timestamps as epoch-ms integers, so it runs on SQLite / Postgres / MySQL. Import the class from `@adonis-agora/media/upload_sessions/lucid` if you need it by hand.
 
+Run it before you use the `lucid` store:
+
+```sh
+node ace migration:run
+```
+
+Until the tables exist, uploads through the store fail, and the console's **Uploads** tab says `upload sessions table missing — run the media migration (node ace migration:run)` instead of listing sessions.
+
 `uploadSessions.lucid({ connection?, table?, partsTable? })` — `connection` defaults to Lucid's default; `table` defaults to `media_upload_sessions`; `partsTable` defaults to `media_upload_parts`.
 
 ---

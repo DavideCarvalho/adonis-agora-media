@@ -7,8 +7,7 @@ import { stubsRoot } from './stubs/main.js';
  * 1. registers the media service provider in `adonisrc.ts`;
  * 2. registers the dashboard provider — the management console SPA ships embedded in this package
  *    (its built assets are copied in at `pnpm build` time), so this alone is enough to get it; no
- *    separate `@adonis-agora/media-dashboard` install is required (though that package still exists,
- *    standalone, for hosts that prefer registering it directly);
+ *    separate `@adonis-agora/media-dashboard` install is required;
  * 3. publishes `config/media.ts` and `config/media_dashboard.ts`;
  * 4. publishes the Lucid migrations for the optional `lucid` store and the resumable (TUS) session
  *    store (run `node ace migration:run`; delete either if you only use the in-memory equivalents).

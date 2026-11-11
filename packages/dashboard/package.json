@@ -36,11 +36,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./media_dashboard_provider": {
-      "types": "./dist/provider/media_dashboard_provider.d.ts",
-      "import": "./dist/provider/media_dashboard_provider.js",
-      "default": "./dist/provider/media_dashboard_provider.js"
-    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js",
@@ -60,14 +55,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
-  "peerDependencies": {
-    "@adonis-agora/media": ">=0.18.0 <1.0.0",
-    "@adonisjs/core": "^7.3.0"
-  },
   "devDependencies": {
-    "@adonis-agora/media": "npm:@adonis-agora/media@0.18.0",
     "@adonis-agora/media-react": "workspace:*",
-    "@adonisjs/core": "7.6.0",
     "@base-ui/react": "1.9.0",
     "@tailwindcss/postcss": "4.3.5",
     "@tanstack/intent": "0.5.6",

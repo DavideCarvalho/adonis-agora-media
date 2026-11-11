@@ -9,7 +9,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `@adonis-agora/media` already publishes `agora:media:*` lifecycle events onto the diagnostics bus (see [Configuration → Diagnostics](/docs/media/configuration#diagnostics)). When [Telescope](/docs/telescope) is installed, its generic diagnostics watcher records those events automatically — so you get media entries with zero wiring. `mediaTelescopeExtension` goes one step further: it contributes a dedicated **"Media" overview dashboard** built from those recorded events.
 
 <Callout type="info">
-  Telescope is an **optional, never-imported peer** (`>=0.4.0 <1.0.0` — every 0.x from 0.4 on). The extension object structurally (not nominally) satisfies Telescope's `TelescopeExtension` contract, so `@adonis-agora/media` never depends on `@adonis-agora/telescope` — installed or not, the media library behaves identically.
+  Telescope is an **optional, never-imported peer** (`>=0.4.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0` — 0.4 and later, including 1.x). The extension object structurally (not nominally) satisfies Telescope's `TelescopeExtension` contract, so `@adonis-agora/media` never depends on `@adonis-agora/telescope` — installed or not, the media library behaves identically.
 </Callout>
 
 ---
