@@ -189,8 +189,12 @@ irreversible. Without `authorize` the console is open in development and refuses
 and API request (`403`) in production, with a warning at boot (the `auth` login routes stay
 mounted, but a session they mint does not get past the gate); `authorize` runs before
 `middleware`/`auth`, so a console guarded only by those needs `authorize` too (for example
-`authorize: () => true` to keep them as the gate).
-Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn).
+`authorize: () => true` to keep them as the gate). Refusals answer `{ error: 'forbidden' }`
+(`403`) or `{ error: 'unauthenticated' }` (`401`) JSON. For scripts, use
+`authorize: authorizeByToken({ token: env.get('CONSOLE_TOKEN') })` (Bearer header only; an
+empty token throws at config time).
+Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn),
+`docs/dashboard/authentication.mdx`.
 
 ### [HIGH] Configuring dashboard auth with neither a session nor a login hook
 

@@ -354,7 +354,7 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
     await api(fakeCtx(recorded), next);
     expect(next).not.toHaveBeenCalled();
     expect(recorded.status).toBe(403);
-    expect(recorded.body).toEqual({ error: 'Forbidden' });
+    expect(recorded.body).toEqual({ error: 'forbidden' });
   });
 
   it('serves the built-in 403 page on the SPA group', async () => {
@@ -471,7 +471,7 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
         const api = await run(authorize, 'api');
         expect(api.next).not.toHaveBeenCalled();
         expect(api.recorded.status).toBe(403);
-        expect(api.recorded.body).toEqual({ error: 'Forbidden' });
+        expect(api.recorded.body).toEqual({ error: 'forbidden' });
 
         const spa = await run(authorize, 'spa');
         expect(spa.next).not.toHaveBeenCalled();
@@ -487,7 +487,7 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       expect(api.next).not.toHaveBeenCalled();
       expect(api.recorded.status).toBe(401);
       // NOT `{ auth: { modes } }`: that body is the console session guard's "show the login screen".
-      expect(api.recorded.body).toEqual({ error: 'Unauthorized' });
+      expect(api.recorded.body).toEqual({ error: 'unauthenticated' });
 
       const spa = await run(authorize, 'spa');
       expect(spa.next).not.toHaveBeenCalled();
@@ -540,7 +540,10 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       const api = await run(authorize, 'api');
       expect(api.next).not.toHaveBeenCalled();
       expect(api.recorded.status).toBe(401);
-      expect(api.recorded.body).toEqual({ error: 'Unauthorized' });
+      expect(api.recorded.body).toEqual({
+        error: 'unauthenticated',
+        redirectTo: '/login?next=/media/dashboard',
+      });
       expect(api.recorded.headers.location).toBeUndefined();
     });
 
@@ -588,13 +591,18 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
   });
 
   describe('without authorize', () => {
-    it('stays open outside production (no gate is mounted)', async () => {
+    const NO_AUTHORIZE_WARNING =
+      '[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.';
+
+    it('stays open outside production (no gate is mounted) and warns once at boot', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const { api, spa } = await gates({}, { inProduction: false });
+        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(api).toBeUndefined();
         expect(spa).toBeUndefined();
-        expect(warn).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith(NO_AUTHORIZE_WARNING);
       } finally {
         warn.mockRestore();
       }
@@ -613,14 +621,14 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
         const { api, spa } = await gates({}, { inProduction: true });
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(warn).toHaveBeenCalledOnce();
-        expect(String(warn.mock.calls[0]?.[0])).toContain('authorize');
+        expect(warn).toHaveBeenCalledWith(NO_AUTHORIZE_WARNING);
 
         const a: Recorded = { headers: {} };
         const an = vi.fn(async () => {});
         await api(fakeCtx(a), an);
         expect(an).not.toHaveBeenCalled();
         expect(a.status).toBe(403);
-        expect(a.body).toEqual({ error: 'Forbidden' });
+        expect(a.body).toEqual({ error: 'forbidden' });
 
         const p: Recorded = { headers: {} };
         const pn = vi.fn(async () => {});
@@ -647,14 +655,48 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       await bootedHandlers[0]?.();
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(logger.warn).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledWith(NO_AUTHORIZE_WARNING);
     });
 
-    it('an explicit authorize opens it in production', async () => {
+    it('an explicit authorize opens it in production, without the warning', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { api } = await gates({ authorize: () => true }, { inProduction: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
       const r: Recorded = { headers: {} };
       const n = vi.fn(async () => {});
       await api(fakeCtx(r), n);
       expect(n).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('authorizeByToken through the gate', () => {
+    it('allows the Bearer token and answers 401 JSON otherwise', async () => {
+      const { authorizeByToken } = await import('../../src/dashboard/index.js');
+      const { api, spa } = await gates({ authorize: authorizeByToken({ token: 's3cret' }) });
+      const withAuth = (r: Recorded, value?: string) => ({
+        ...fakeCtx(r),
+        request: { header: (name: string) => (name === 'authorization' ? value : undefined) },
+      });
+
+      const ok: Recorded = { headers: {} };
+      const okNext = vi.fn(async () => {});
+      await api(withAuth(ok, 'Bearer s3cret'), okNext);
+      expect(okNext).toHaveBeenCalledOnce();
+
+      const bad: Recorded = { headers: {} };
+      const badNext = vi.fn(async () => {});
+      await api(withAuth(bad, 'Bearer nope'), badNext);
+      expect(badNext).not.toHaveBeenCalled();
+      expect(bad.status).toBe(401);
+      expect(bad.body).toEqual({ error: 'unauthenticated' });
+
+      const page: Recorded = { headers: {} };
+      const pageNext = vi.fn(async () => {});
+      await spa(withAuth(page), pageNext);
+      expect(pageNext).not.toHaveBeenCalled();
+      expect(page.status).toBe(401);
     });
   });
 });

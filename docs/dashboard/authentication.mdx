@@ -66,23 +66,47 @@ export default defineConfig({
 ```
 
 The check answers with a `ConsoleAuthorizeResult` (exported from `@adonis-agora/media/dashboard`
-with `ConsoleAuthorize` and `ConsoleAuthorizer`):
+with `ConsoleAuthorize`, `ConsoleAuthorizer` and `authorizeByToken`):
 
 | The check returns | API request | Page navigation |
 | --- | --- | --- |
 | `true` / `{ allowed: true }` | passes | passes |
-| `{ redirectTo: '/login' }` | `401 { error: 'Unauthorized' }` | `302` to that path |
-| `{ allowed: false, reason: 'unauthenticated' }` | `401 { error: 'Unauthorized' }` | the [access-denied page](#the-access-denied-page), `401` "Sign in required" |
-| `{ allowed: false, reason: 'forbidden' }` | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
-| `false` / `{ allowed: false }` (no reason) | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
-| throws | `403 { error: 'Forbidden' }` | the access-denied page, `403` |
+| `{ redirectTo: '/login' }` | `401 { error: 'unauthenticated', redirectTo: '/login' }` | `302` to that path |
+| `{ allowed: false, reason: 'unauthenticated' }` | `401 { error: 'unauthenticated' }` | the [access-denied page](#the-access-denied-page), `401` "Sign in required" |
+| `{ allowed: false, reason: 'forbidden' }` | `403 { error: 'forbidden' }` | the access-denied page, `403` |
+| `false` / `{ allowed: false }` (no reason) | `403 { error: 'forbidden' }` | the access-denied page, `403` |
+| throws | `403 { error: 'forbidden' }` | the access-denied page, `403` |
+
+### Machine access with a token
+
+For scripts and monitoring, `authorizeByToken` allows a request that sends
+`Authorization: Bearer <token>` and answers `401` to anything else. It reads the header only. An
+empty or missing token throws when the config loads, so a forgotten env var never opens the console.
+
+```ts title="config/media_dashboard.ts"
+import env from '#start/env'
+import { authorizeByToken, defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: authorizeByToken({ token: env.get('CONSOLE_TOKEN') }),
+})
+```
+
+```sh
+curl -H "Authorization: Bearer $CONSOLE_TOKEN" https://app.example.com/media/dashboard/api/disks
+```
 
 ### Without `authorize`
 
 When `authorize` is not set, the console is open outside production (`node ace serve`, tests),
-and in production it answers `403` to every page and API request and logs a warning at boot
-(the `auth` login routes stay mounted, but a session they mint does not get past it). Set `authorize`
-before you deploy. If `middleware` or `auth` already decides who gets in, open the first gate
+and in production it answers `403` to every page and API request (the `auth` login routes stay
+mounted, but a session they mint does not get past it). Either way, it logs this once at boot:
+
+```txt
+[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.
+```
+
+Set `authorize` before you deploy. If `middleware` or `auth` already decides who gets in, open the first gate
 explicitly:
 
 ```ts title="config/media_dashboard.ts"
@@ -95,7 +119,7 @@ export default defineConfig({
 })
 ```
 
-A `401` from `authorize` carries `{ error: 'Unauthorized' }`, which the console's own login screen
+A `401` from `authorize` carries `{ error: 'unauthenticated' }`, which the console's own login screen
 cannot fix, so the SPA does not show its login for it. The `401` with `{ auth: { modes } }` comes
 from the `auth` session guard only. Point the page's "Sign in" button at your app's login with
 `accessDenied: { loginHref: '/login' }`, or return `{ redirectTo }` to send the browser there.

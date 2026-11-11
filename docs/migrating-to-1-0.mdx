@@ -46,7 +46,7 @@ npm uninstall @adonis-agora/media-dashboard
 
 Without `authorize`, the media console used to be open to every request unless `middleware` or
 `auth` closed it. In 1.0 it is open only outside production. In production its pages and API answer
-`403` and it logs a warning at boot until `config/media_dashboard.ts` sets `authorize`.
+`403` until `config/media_dashboard.ts` sets `authorize`, and a warning at boot says so.
 `authorize` runs before `middleware` and `auth`, so a console guarded only by those is refused too.
 
 Before:
@@ -85,6 +85,28 @@ export default defineConfig({
 Apps that already set `authorize` need no change. `authorize` now also accepts a class with an
 `authorize(ctx)` method, built through the container, or a lazy import of one, and a
 `{ redirectTo: '/login' }` answer. See [Console authentication](/docs/media/dashboard/authentication).
+
+### Console refusals answer lowercase JSON
+
+The console API's refusal bodies now match every other Agora console.
+
+Before:
+
+```json
+{ "error": "Forbidden" }
+{ "error": "Unauthorized" }
+```
+
+After:
+
+```json
+{ "error": "forbidden" }
+{ "error": "unauthenticated" }
+{ "error": "unauthenticated", "redirectTo": "/login" }
+```
+
+The last one answers an API call when `authorize` returns `{ redirectTo }`. Update any client that
+matches on the old strings.
 
 ### The console access types are renamed
 

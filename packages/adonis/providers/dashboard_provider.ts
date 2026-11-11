@@ -53,6 +53,10 @@ function spaDirectory(): string {
  *  NestJS sibling console's own `cookiePath: '/'` for the identical reason. */
 const SESSION_COOKIE_PATH = '/';
 
+/** Logged once at boot when `authorize` is omitted. Same wording in every Agora console. */
+const NO_AUTHORIZE_WARNING =
+  '[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.';
+
 /**
  * Mounts the media-management console INTO `@adonis-agora/media` itself: a React SPA plus a JSON
  * API, both under a configurable path and an optional host auth guard. The API delegates to the
@@ -103,8 +107,8 @@ export default class MediaDashboardProvider {
     // Omitted: open outside production, every page/API request refused (`403`) in production.
     // A denied request honors an answer the check wrote itself (a `location` header or a queued
     // body); `{ redirectTo }` is a `302` for a page navigation and a `401` for the API; otherwise
-    // `401` for `reason: 'unauthenticated'` and `403` for everything else (fail closed) — `{ error }`
-    // JSON for the API, the access-denied page (or the host's `accessDenied`) for a page. The `401`
+    // `401` for `reason: 'unauthenticated'` and `403` for everything else (fail closed) —
+    // `{ error: 'unauthenticated' | 'forbidden' }` JSON for the API, the access-denied page (or the host's `accessDenied`) for a page. The `401`
     // WITH `{ auth: { modes } }` stays the SESSION guard's alone: that body is what tells the SPA to
     // show its login screen, and `/me` is never behind `authorize`.
     const decide = this.#resolveAuthorize(config);
@@ -118,9 +122,10 @@ export default class MediaDashboardProvider {
               // (it would queue a JSON body onto a 302).
               if (responseAnswered(ctx)) return;
               if (mode === 'api') {
-                ctx.response
-                  .status(decision.status)
-                  .send({ error: decision.status === 401 ? 'Unauthorized' : 'Forbidden' });
+                ctx.response.status(decision.status).send({
+                  error: decision.reason,
+                  ...('redirectTo' in decision ? { redirectTo: decision.redirectTo } : {}),
+                });
                 return;
               }
               if ('redirectTo' in decision) {
@@ -165,17 +170,15 @@ export default class MediaDashboardProvider {
 
   /**
    * The per-request access check, or `null` for none. Without `authorize` the console is open
-   * outside production; in production it refuses every page/API request and says so at boot (routes are
-   * registered once per process, so the warning is logged once).
+   * outside production and refuses every page/API request in production; either way it says so once
+   * at boot (routes are registered once per process).
    */
   #resolveAuthorize(
     config: MediaDashboardConfig,
   ): ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null {
     if (config.authorize) return resolveConsoleAuthorize(config.authorize);
+    this.#warn(NO_AUTHORIZE_WARNING);
     if (this.app.inProduction !== true) return null;
-    this.#warn(
-      '[@adonis-agora/media] The media console has no `authorize` in config/media_dashboard.ts, so its pages and API answer 403 in production. Set `authorize` to choose who may open it.',
-    );
     return async () => ({ allowed: false, status: 403, reason: 'forbidden' });
   }
 

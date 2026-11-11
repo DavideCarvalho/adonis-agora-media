@@ -26,6 +26,7 @@ export type {
 export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
 // The access contract shared by every Agora console.
 export type {
+  AuthorizeByTokenOptions,
   ConsoleAuthorize,
   ConsoleAuthorizeDecision,
   ConsoleAuthorizeResult,
@@ -33,6 +34,7 @@ export type {
   ConsoleAuthorizerClass,
 } from './console_authorize.js';
 export {
+  authorizeByToken,
   normalizeConsoleAuthorizeResult,
   resolveConsoleAuthorize,
 } from './console_authorize.js';

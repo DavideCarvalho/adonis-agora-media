@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  authorizeByToken,
   normalizeConsoleAuthorizeResult,
   resolveConsoleAuthorize,
 } from '../../src/dashboard/console_authorize.js';
@@ -180,5 +181,54 @@ describe('resolveConsoleAuthorize', () => {
     const decide = resolveConsoleAuthorize(load);
     expect(await decide(ctxWith().ctx)).toEqual(FORBIDDEN);
     expect(await decide(ctxWith().ctx)).toEqual({ allowed: true });
+  });
+});
+
+describe('authorizeByToken', () => {
+  const ctx = (authorization?: string) =>
+    ({
+      request: { header: (name: string) => (name === 'authorization' ? authorization : undefined) },
+    }) as never;
+  const check = authorizeByToken({ token: 's3cret' }) as (c: never) => unknown;
+
+  it('allows a matching Bearer token', () => {
+    expect(check(ctx('Bearer s3cret'))).toEqual({ allowed: true });
+    expect(check(ctx('bearer s3cret'))).toEqual({ allowed: true });
+  });
+
+  it.each([
+    ['no header', undefined],
+    ['a wrong token', 'Bearer nope'],
+    ['a longer token', 'Bearer s3cret-and-more'],
+    ['a prefix of the token', 'Bearer s3c'],
+    ['another scheme', 'Basic s3cret'],
+    ['the bare token', 's3cret'],
+    ['an empty bearer', 'Bearer '],
+  ])('answers unauthenticated for %s', (_label, header) => {
+    expect(check(ctx(header))).toEqual({ allowed: false, reason: 'unauthenticated' });
+  });
+
+  it('reads the header only, not the query string or a custom header', () => {
+    const c = {
+      request: {
+        header: (name: string) => (name === 'x-console-token' ? 's3cret' : undefined),
+        input: () => 's3cret',
+        qs: () => ({ token: 's3cret' }),
+      },
+    } as never;
+    expect(check(c)).toEqual({ allowed: false, reason: 'unauthenticated' });
+  });
+
+  it('normalizes to 401 through resolveConsoleAuthorize', async () => {
+    const decide = resolveConsoleAuthorize(authorizeByToken({ token: 's3cret' }));
+    expect(await decide(ctx('Bearer nope'))).toEqual(UNAUTHENTICATED);
+    expect(await decide(ctx('Bearer s3cret'))).toEqual({ allowed: true });
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['empty', ''],
+  ])('throws at config time for an %s token', (_label, token) => {
+    expect(() => authorizeByToken({ token })).toThrow(/token/);
   });
 });

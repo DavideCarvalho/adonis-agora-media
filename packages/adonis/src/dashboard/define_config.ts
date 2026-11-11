@@ -62,18 +62,19 @@ export interface MediaDashboardConfig {
    * `{ allowed: false, reason: 'unauthenticated' }` for `401`; `{ redirectTo: '/login' }` to send
    * a page navigation there (API calls get `401`). A check that throws is a `403`. Runs before
    * `middleware` and composes with the built-in `auth` login (all must pass). API refusals answer
-   * `{ error: 'Forbidden' }` / `{ error: 'Unauthorized' }` JSON; page navigations get the
-   * {@link accessDenied} page with the same status.
+   * `{ error: 'forbidden' }` / `{ error: 'unauthenticated' }` JSON (plus `redirectTo` for a
+   * redirect); page navigations get the {@link accessDenied} page with the same status. For machine
+   * access, use `authorizeByToken({ token })`.
    *
-   * Omitted: the console is open outside production and answers `403` to every page and API request in
-   * production, with a warning at boot. Set `authorize: () => true` to keep it open in production
-   * when `middleware` or `auth` already guard it.
+   * Omitted: the console is open outside production and answers `403` to every page and API
+   * request in production, with a warning at boot. Set `authorize: () => true` to keep it open in
+   * production when `middleware` or `auth` already guard it.
    */
   authorize?: ConsoleAuthorize;
   /**
    * What a BROWSER sees when `authorize` refuses a page navigation — the SPA shell or its assets.
-   * API requests are unaffected: they keep getting `{ error: 'Forbidden' }` (`403`) or
-   * `{ error: 'Unauthorized' }` (`401`) JSON. Omit it for the built-in page — a dark card in the
+   * API requests are unaffected: they keep getting `{ error: 'forbidden' }` (`403`) or
+   * `{ error: 'unauthenticated' }` (`401`) JSON. Omit it for the built-in page — a dark card in the
    * console's own visual language with the same status as the API, a
    * sentence explaining the refusal and a "Back to app" link. Pass an
    * object to tweak that page (`brand`, `title`, `message`, `homeHref`, `accent`, …), or a function
