@@ -322,18 +322,23 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       send(body: unknown) {
         recorded.body = body;
       },
+      redirect(url: string) {
+        recorded.status = 302;
+        recorded.headers.location = url;
+      },
       ...extra,
     };
     return { response, request: { header: () => undefined } };
   }
 
   /** Boot with `config`, fire "booted", and return the API and SPA groups' first middleware. */
-  async function gates(config: Record<string, unknown>) {
+  async function gates(config: Record<string, unknown>, appExtra: Record<string, unknown> = {}) {
     const { default: MediaDashboardProvider } = await import(
       '../../providers/dashboard_provider.js'
     );
     const { router, groups } = makeFakeRouter();
     const { app, bootedHandlers } = makeFakeApp({ media_dashboard: config }, router);
+    Object.assign(app, appExtra);
     await new MediaDashboardProvider(app as never).boot();
     await bootedHandlers[0]?.();
     // Groups are created in mount order: auth routes (no middleware), API, SPA.
@@ -417,7 +422,7 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
     expect(b.body).toContain('<style nonce="n0nce">');
   });
 
-  describe('the shared dashboard-gate contract (boolean | AuthorizeDecision)', () => {
+  describe('the shared ConsoleAuthorize contract', () => {
     async function run(authorize: unknown, mode: 'api' | 'spa', extra?: Record<string, unknown>) {
       const g = await gates({ authorize });
       const recorded: Recorded = { headers: {} };
@@ -522,6 +527,134 @@ describe('MediaDashboardProvider — authorize denials: JSON for the API, a page
       expect(next).not.toHaveBeenCalled();
       expect(recorded.status).toBeUndefined();
       expect(recorded.body).toBeUndefined();
+    });
+
+    it('{ redirectTo } redirects a page navigation and answers 401 JSON to the API', async () => {
+      const authorize = () => ({ redirectTo: '/login?next=/media/dashboard' });
+      const spa = await run(authorize, 'spa');
+      expect(spa.next).not.toHaveBeenCalled();
+      expect(spa.recorded.status).toBe(302);
+      expect(spa.recorded.headers.location).toBe('/login?next=/media/dashboard');
+      expect(spa.recorded.body).toBeUndefined();
+
+      const api = await run(authorize, 'api');
+      expect(api.next).not.toHaveBeenCalled();
+      expect(api.recorded.status).toBe(401);
+      expect(api.recorded.body).toEqual({ error: 'Unauthorized' });
+      expect(api.recorded.headers.location).toBeUndefined();
+    });
+
+    it('accepts a ConsoleAuthorizer class, built through ctx.containerResolver', async () => {
+      class Access {
+        authorize(ctx: { user?: string }) {
+          return ctx.user === 'admin';
+        }
+      }
+      const make = vi.fn(async (Class: new () => Access) => new Class());
+      for (const [user, allowed] of [
+        ['admin', true],
+        ['guest', false],
+      ] as const) {
+        const g = await gates({ authorize: Access });
+        const r: Recorded = { headers: {} };
+        const n = vi.fn(async () => {});
+        await g.api({ ...fakeCtx(r), user, containerResolver: { make } }, n);
+        expect(n).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        if (!allowed) expect(r.status).toBe(403);
+      }
+      expect(make).toHaveBeenCalledWith(Access);
+    });
+
+    it('accepts a lazy import of a ConsoleAuthorizer class', async () => {
+      class Access {
+        authorize() {
+          return { allowed: false, reason: 'unauthenticated' };
+        }
+      }
+      const load = vi.fn(async () => ({ default: Access }));
+      const g = await gates({ authorize: load });
+      for (let i = 0; i < 2; i++) {
+        const r: Recorded = { headers: {} };
+        const n = vi.fn(async () => {});
+        await g.spa(
+          { ...fakeCtx(r), containerResolver: { make: async (C: new () => Access) => new C() } },
+          n,
+        );
+        expect(n).not.toHaveBeenCalled();
+        expect(r.status).toBe(401);
+      }
+      expect(load).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('without authorize', () => {
+    it('stays open outside production (no gate is mounted)', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { api, spa } = await gates({}, { inProduction: false });
+        expect(api).toBeUndefined();
+        expect(spa).toBeUndefined();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('keeps `middleware` working outside production', async () => {
+      const guard = vi.fn();
+      const { api, spa } = await gates({ middleware: guard }, { inProduction: false });
+      expect(api).toBe(guard);
+      expect(spa).toBe(guard);
+    });
+
+    it('refuses every request in production (403) and warns once at boot', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { api, spa } = await gates({}, { inProduction: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(warn).toHaveBeenCalledOnce();
+        expect(String(warn.mock.calls[0]?.[0])).toContain('authorize');
+
+        const a: Recorded = { headers: {} };
+        const an = vi.fn(async () => {});
+        await api(fakeCtx(a), an);
+        expect(an).not.toHaveBeenCalled();
+        expect(a.status).toBe(403);
+        expect(a.body).toEqual({ error: 'Forbidden' });
+
+        const p: Recorded = { headers: {} };
+        const pn = vi.fn(async () => {});
+        await spa(fakeCtx(p), pn);
+        expect(pn).not.toHaveBeenCalled();
+        expect(p.status).toBe(403);
+        expect(p.body).toContain('<h1>Access denied</h1>');
+        expect(warn).toHaveBeenCalledOnce();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('logs the production warning through the app logger when one is bound', async () => {
+      const logger = { warn: vi.fn() };
+      const { default: MediaDashboardProvider } = await import(
+        '../../providers/dashboard_provider.js'
+      );
+      const { router } = makeFakeRouter();
+      const { app, bootedHandlers, make } = makeFakeApp({ media_dashboard: {} }, router);
+      make.mockImplementation(async (token: unknown) => (token === 'router' ? router : logger));
+      Object.assign(app, { inProduction: true });
+      await new MediaDashboardProvider(app as never).boot();
+      await bootedHandlers[0]?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(logger.warn).toHaveBeenCalledOnce();
+    });
+
+    it('an explicit authorize opens it in production', async () => {
+      const { api } = await gates({ authorize: () => true }, { inProduction: true });
+      const r: Recorded = { headers: {} };
+      const n = vi.fn(async () => {});
+      await api(fakeCtx(r), n);
+      expect(n).toHaveBeenCalledOnce();
     });
   });
 });

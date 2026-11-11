@@ -9,9 +9,11 @@ import { defineConfig } from '@adonis-agora/media/dashboard'
  * 'configure' above). Storage, uploads and everything else come from the already-configured
  * @adonis-agora/media manager; this config only places the console and picks which disks are browsable.
  *
- * The console is a READ-ONLY browser by default. Flip 'actions' on to enable copy/move/delete -- gate
- * the routes with your own 'middleware' (an auth guard) before you do, and/or configure 'auth' for a
- * built-in session-cookie login independent of 'middleware'.
+ * 'authorize' decides who may open the console. Until you set it, the console is open in development
+ * and refuses every request (403) in production. It takes a function, a class with an
+ * 'authorize(ctx)' method, or a lazy import of one: () => import('#policies/console_access').
+ *
+ * The console is a READ-ONLY browser by default. Flip 'actions' on to enable copy/move/delete.
  */
 export default defineConfig({
   // enabled: true,
@@ -19,7 +21,8 @@ export default defineConfig({
   // apiBasePath: '/media/dashboard/api',
   // actions: true,
   // disks: ['s3', 'backups'],           // default: derived from config/media.ts
-  // middleware: middleware.auth(),      // gate the whole console — SPA + API
+  // authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  // middleware: middleware.auth(),      // runs after authorize
 
   // Where the 'url' the console reports for an object points: 'auto' signs a URL straight
   // to the store; 'proxy' routes it through this app's own '<apiBasePath>/object/raw'. Use 'proxy'

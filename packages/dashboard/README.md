@@ -48,7 +48,8 @@ export default defineConfig({
   basePath: '/media/dashboard',   // where the SPA mounts (default)
   actions: true,                  // enable copy/move/delete (default: false, read-only)
   disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
-  middleware: middleware.auth(),  // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(), // runs after authorize
 })
 ```
 
@@ -58,7 +59,7 @@ the runtime config into `index.html` at serve time, as a JSON data block
 
 ## Routes
 
-Registered under `apiBasePath` (default `<basePath>/api`), behind your `middleware`:
+Registered under `apiBasePath` (default `<basePath>/api`), behind `authorize` and your `middleware`:
 
 | Method | Path | Backed by |
 | --- | --- | --- |

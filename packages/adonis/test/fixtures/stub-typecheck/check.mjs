@@ -104,10 +104,7 @@ const COMMENTED_EXAMPLES = {
   'config/media_dashboard.stub': {
     suffix: 'all-options',
     blocks: [
-      [
-        '  // enabled: true,',
-        '  // middleware: middleware.auth(),      // gate the whole console — SPA + API',
-      ],
+      ['  // enabled: true,', '  // middleware: middleware.auth(),      // runs after authorize'],
       ['  // auth: {', '  // },'],
     ],
     /**
@@ -119,10 +116,14 @@ const COMMENTED_EXAMPLES = {
      * the host's business, and typing it as this package's own `DashboardMiddleware` would only assert
      * the check against itself. The `middleware` KEY is still verified — an option that no longer
      * exists on the config type fails excess-property checking regardless of its value.
+     *
+     * `ctx.auth` comes from `@adonisjs/auth` in a real app; the augmentation stands in for it so the
+     * `authorize` example is checked against the real `HttpContext`.
      */
     preamble: [
       'declare const env: { get(key: string): string }',
       'declare const middleware: { auth(): never }',
+      "declare module '@adonisjs/core/http' { interface HttpContext { auth: { user?: { isAdmin: boolean } } } }",
       '',
     ].join('\n'),
   },

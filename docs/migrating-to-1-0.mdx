@@ -1,10 +1,10 @@
 ---
 title: Migrating to 1.0
-description: Move an app from @adonis-agora/media 0.x to 1.0. The media and React APIs are unchanged; the standalone @adonis-agora/media-dashboard provider is gone, so register the console from @adonis-agora/media.
+description: Move an app from @adonis-agora/media 0.x to 1.0. The media and React APIs are unchanged; the console is closed in production until you set authorize, and its standalone provider is gone.
 icon: ArrowUpCircle
 ---
 
-`@adonis-agora/media` 1.0 keeps the 0.30 API as it is, and so does `@adonis-agora/media-react` 1.0. Every import, config option, subpath and ace command works the same. Two things changed: `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
+`@adonis-agora/media` 1.0 keeps the 0.30 media API as it is, and so does `@adonis-agora/media-react` 1.0. The changes are all in the console: it refuses every request in production until `config/media_dashboard.ts` sets `authorize`, `@adonis-agora/media-dashboard` 10 no longer ships its standalone provider (register the console from `@adonis-agora/media`), and the console reads its runtime config only from the data block the provider injects.
 
 ---
 
@@ -41,6 +41,72 @@ npm uninstall @adonis-agora/media-dashboard
 ---
 
 ## Breaking changes
+
+### The console is closed in production until you set `authorize`
+
+Without `authorize`, the media console used to be open to every request unless `middleware` or
+`auth` closed it. In 1.0 it is open only outside production. In production it answers `403` to
+every request and logs a warning at boot until `config/media_dashboard.ts` sets `authorize`.
+`authorize` runs before `middleware` and `auth`, so a console guarded only by those is refused too.
+
+Before:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import { middleware } from '#start/kernel'
+
+export default defineConfig({
+  middleware: middleware.admin(),
+})
+```
+
+After, with the check in `authorize`:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+})
+```
+
+Or keep your middleware and open the first gate explicitly:
+
+```ts title="config/media_dashboard.ts"
+import { defineConfig } from '@adonis-agora/media/dashboard'
+import { middleware } from '#start/kernel'
+
+export default defineConfig({
+  authorize: () => true,
+  middleware: middleware.admin(),
+})
+```
+
+Apps that already set `authorize` need no change. `authorize` now also accepts a class with an
+`authorize(ctx)` method, built through the container, or a lazy import of one, and a
+`{ redirectTo: '/login' }` answer. See [Console authentication](/docs/media/dashboard/authentication).
+
+### The console access types are renamed
+
+The types for `authorize` are now the ones every Agora console shares.
+
+| 0.x | 1.0 |
+| --- | --- |
+| `DashboardAuthorize` | `ConsoleAuthorize` |
+| `AuthorizeResult` | `ConsoleAuthorizeResult` |
+| `AuthorizeDecision` | `ConsoleAuthorizeResult` (its object members) |
+
+Before:
+
+```ts
+import type { DashboardAuthorize } from '@adonis-agora/media/dashboard'
+```
+
+After:
+
+```ts
+import type { ConsoleAuthorize } from '@adonis-agora/media/dashboard'
+```
 
 ### The standalone console provider is removed
 

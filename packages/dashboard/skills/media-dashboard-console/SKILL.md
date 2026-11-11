@@ -46,7 +46,8 @@ export default defineConfig({
   basePath: '/media/dashboard',
   actions: true,                 // copy/move/delete — read-only when false (the default)
   disks: ['s3', 'backups'],
-  middleware: middleware.auth(), // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(), // runs after authorize
 })
 ```
 
@@ -164,7 +165,7 @@ Source: `docs/dashboard/index.mdx` (Object insights).
 Wrong:
 
 ```ts
-export default defineConfig({ actions: true }) // no middleware, no auth
+export default defineConfig({ actions: true }) // no authorize, no middleware, no auth
 ```
 
 Correct:
@@ -172,15 +173,15 @@ Correct:
 ```ts
 export default defineConfig({
   actions: true,
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
   middleware: middleware.auth(),
-  auth: { secret: env.get('MEDIA_CONSOLE_SECRET'), login: checkAdminPassword },
 })
 ```
 
 Mechanism: `actions: true` enables copy/move/delete, recursive folder sweeps, record
 deletion, upload aborts and uploads — recursive delete/move are destructive and
-irreversible. The routes are mounted regardless of `enabled`; only `middleware`/`auth`
-keep them from being open to the internet.
+irreversible. Without `authorize` the console is open in development and refuses every
+request (`403`) in production; `authorize` (plus `middleware`/`auth`) decides who gets in.
 Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn).
 
 ### [HIGH] Configuring dashboard auth with neither a session nor a login hook

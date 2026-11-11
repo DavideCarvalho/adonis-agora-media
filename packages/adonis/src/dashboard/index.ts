@@ -24,12 +24,21 @@ export type {
 } from './auth.js';
 // Built-in session-cookie login.
 export { resolveConsoleAuth, signSessionCookie, verifySessionCookie } from './auth.js';
+// The access contract shared by every Agora console.
+export type {
+  ConsoleAuthorize,
+  ConsoleAuthorizeDecision,
+  ConsoleAuthorizeResult,
+  ConsoleAuthorizer,
+  ConsoleAuthorizerClass,
+} from './console_authorize.js';
+export {
+  normalizeConsoleAuthorizeResult,
+  resolveConsoleAuthorize,
+} from './console_authorize.js';
 export type {
   AccessDeniedOption,
   AccessDeniedRenderer,
-  AuthorizeDecision,
-  AuthorizeResult,
-  DashboardAuthorize,
   DashboardMiddleware,
   MediaDashboardConfig,
 } from './define_config.js';

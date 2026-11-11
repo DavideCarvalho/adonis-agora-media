@@ -319,7 +319,8 @@ export default defineConfig({
   basePath: '/media/dashboard',   // where the SPA mounts (default)
   actions: true,                  // enable copy/move/delete (default: false — read-only)
   disks: ['s3', 'backups'],       // browsable disks (default: derived from media config)
-  middleware: middleware.auth(),  // gate the whole console — SPA + API
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  middleware: middleware.auth(), // runs after authorize
 })
 ```
 
