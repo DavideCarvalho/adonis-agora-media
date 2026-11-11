@@ -9,7 +9,7 @@ import { defineConfig } from '@adonis-agora/media/dashboard'
  * 'configure' above). Storage, uploads and everything else come from the already-configured
  * @adonis-agora/media manager; this config only places the console and picks which disks are browsable.
  *
- * 'authorize' decides who may open the console. Until you set it, the console is open in development
+ * 'authorize' decides who may open the console. Until you set it, the console is open outside production
  * and its pages and API answer 403 in production. It takes a function, a class with an
  * 'authorize(ctx)' method, or a lazy import of one: () => import('#policies/console_access').
  * Sign-in is this app's own: return { redirectTo: '/login' } to send a signed-out visitor there.

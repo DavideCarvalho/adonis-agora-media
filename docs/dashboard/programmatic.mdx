@@ -206,8 +206,6 @@ The second subpath is the one to import from a frontend: it carries only these d
 | `CopyMoveBody` | `{ disk, from, to, toDisk? }` — `toDisk` defaults to the source disk. |
 | `DeleteBody` | `{ disk, keys }` |
 | `FolderBody` | `{ disk, prefix }` |
-| `ConsoleSessionUserInfo` / `MeResponse` | `{ id, name?, roles }` / `{ authRequired: false } \| { user }` |
-| `LoginBody` | `{ username, password }` |
 
 Two projections are worth reading carefully. `MediaEntry.conversions` is a **list of names**, not the conversion objects — the console shows which derivatives exist, and `mediaRecord(id)` is where you get their URLs. And every timestamp crosses as an **ISO-8601 string**, because these shapes travel over JSON; nothing here is a `Date`.
 

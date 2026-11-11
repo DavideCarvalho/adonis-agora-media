@@ -50,7 +50,7 @@ export default defineConfig({
 | `disks` | `string[]` | derived from media config | Disk names the console may browse / act on. |
 | `uploadsPrefix` | `string` | `/media/uploads` | Match `media.uploads.routes.prefix`. |
 | `tusPrefix` | `string` | `/media/uploads/tus` | Match `media.uploads.resumable.routes.prefix`. |
-| `authorize` | `ConsoleAuthorize` | open in dev, `403` in production | Who may open the console (SPA + API): a function, a class or a lazy import. See [Console authentication](/docs/media/dashboard/authentication). |
+| `authorize` | `ConsoleAuthorize` | open outside production, `403` in production | Who may open the console (SPA + API): a function, a class or a lazy import. See [Console access](/docs/media/dashboard/authentication). |
 | `accessDenied` | object or function | built-in page | What a browser sees when `authorize` refuses a page navigation. |
 | `middleware` | handler(s) | — | Host middleware applied to the whole console (SPA + API), after `authorize`. |
 | `enabled` | `boolean` | `true` | Mount the console at all. `false` registers the provider — so its config type stays available — without exposing a single route. |
