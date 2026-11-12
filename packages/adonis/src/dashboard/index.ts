@@ -46,7 +46,12 @@ export type {
   MediaDevToolsOptions,
 } from './dev_tools.js';
 // Developer tools for the app's dev MCP endpoint (`@adonis-agora/agent`), when it has one.
-export { DEV_TOOLS_BINDING, mediaDevTools, registerMediaDevTools } from './dev_tools.js';
+export {
+  DEV_TOOLS_BINDING,
+  MAX_DELETE_KEYS,
+  mediaDevTools,
+  registerMediaDevTools,
+} from './dev_tools.js';
 export type { ObjectInsightContext, ObjectInsightProvider } from './object_insights.js';
 // Host-supplied object annotations.
 export { sanitizeInsight } from './object_insights.js';
