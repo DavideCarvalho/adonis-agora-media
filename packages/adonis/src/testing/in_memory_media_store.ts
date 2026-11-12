@@ -6,6 +6,7 @@ import {
   type MediaCollectionTotals,
   type MediaListOptions,
   type MediaListPage,
+  type MediaOwnerPageOptions,
   type MediaStore,
   type MediaTotalsOptions,
   tenantMatches,
@@ -84,6 +85,22 @@ export class InMemoryMediaStore implements MediaStore {
     };
   }
 
+  async listByOwnerPaged(
+    ownerType: string,
+    ownerId: string,
+    options: MediaOwnerPageOptions = {},
+  ): Promise<MediaListPage> {
+    const collections = options.collections;
+    const all = [...this.records.values()].filter(
+      (r) =>
+        r.ownerType === ownerType &&
+        r.ownerId === ownerId &&
+        (collections === undefined || collections.includes(r.collection)) &&
+        tenantMatches(options.tenantIds, r.tenantId),
+    );
+    return keysetPage(all, options.cursor, options.limit);
+  }
+
   async delete(id: string): Promise<void> {
     this.records.delete(id);
   }
@@ -118,4 +135,34 @@ export class InMemoryMediaStore implements MediaStore {
     const inCollection = await this.listByOwner(ownerType, ownerId, collection);
     return inCollection.reduce((max, r) => Math.max(max, r.order + 1), 0);
   }
+}
+
+/** Newest first (createdAt desc, id desc), resumed strictly after `cursor`. */
+function keysetPage(
+  records: MediaRecord[],
+  cursorValue: string | undefined,
+  limitValue: number | undefined,
+): MediaListPage {
+  const limit = clampMediaListLimit(limitValue);
+  const ordered = records.sort(
+    (a, b) =>
+      b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+  );
+  const cursor = decodeMediaCursor(cursorValue);
+  const after = cursor
+    ? ordered.filter(
+        (r) =>
+          r.createdAt.getTime() < cursor.createdAt ||
+          (r.createdAt.getTime() === cursor.createdAt && r.id < cursor.id),
+      )
+    : ordered;
+  const page = after.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    items: page.map((r) => ({ ...r })),
+    nextCursor:
+      after.length > limit && last
+        ? encodeMediaCursor({ createdAt: last.createdAt.getTime(), id: last.id })
+        : null,
+  };
 }

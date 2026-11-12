@@ -57,7 +57,7 @@ import {
 import { deliverRecord, findUnscoped, imageOfRecord, streamOfRecord } from './internal_symbols.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
-import type { MediaStore } from './media_store.js';
+import type { MediaListPage, MediaOwnerPageOptions, MediaStore } from './media_store.js';
 import { resolveDeclaredMimeType } from './mime_type.js';
 import {
   BROWSER_IMAGE_TYPES,
@@ -1115,6 +1115,50 @@ export class MediaLibrary {
 
   find(id: string): Promise<MediaRecord | null> {
     return this.store.find(id);
+  }
+
+  /**
+   * One page of an owner's files across `collections`, newest first: what a "my files" screen
+   * lists. Pass the previous page's `nextCursor` as `cursor`. With tenancy on, only the active
+   * tenant's files.
+   *
+   * ```ts
+   * const page = await media.library.page('User', user.id, { collections: ['avatar', 'documents'] })
+   * ```
+   */
+  async page(
+    ownerType: string,
+    ownerId: string | number,
+    options: MediaOwnerPageOptions = {},
+  ): Promise<MediaListPage> {
+    const owner = String(ownerId);
+    if (typeof this.store.listByOwnerPaged === 'function') {
+      return this.store.listByOwnerPaged(ownerType, owner, options);
+    }
+    // A store without the paged method: page its cross-owner `list`, keeping the collections asked
+    // for (a page may then come back short; `nextCursor` still walks the rest).
+    const single = options.collections?.length === 1 ? options.collections[0] : undefined;
+    const page = await this.store.list({
+      ownerType,
+      ownerId: owner,
+      ...(single !== undefined ? { collection: single } : {}),
+      ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+      ...(options.tenantIds !== undefined ? { tenantIds: options.tenantIds } : {}),
+    });
+    const collections = options.collections;
+    return collections === undefined
+      ? page
+      : { ...page, items: page.items.filter((r) => collections.includes(r.collection)) };
+  }
+
+  /** Change a file's display `name` (not its stored file name or path). Returns the record. */
+  async rename(id: string, name: string): Promise<MediaRecord> {
+    const record = await this.store.find(id);
+    if (!record) throw new MediaNotFoundError(id);
+    const trimmed = name.trim();
+    if (trimmed === '' || trimmed === record.name) return record;
+    return this.store.save({ ...record, name: trimmed, updatedAt: this.now() });
   }
 
   /** {@link find} across every tenant: for a request a delivery signature already authorized. @internal */

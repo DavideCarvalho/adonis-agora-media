@@ -81,6 +81,22 @@ export function tenantScopedStore(
     ...(store.tenantFiltering === true ? { tenantFiltering: true } : {}),
   };
 
+  const paged = store.listByOwnerPaged?.bind(store);
+  if (paged) {
+    scoped.listByOwnerPaged = async (ownerType, ownerId, pageOptions = {}) => {
+      const scope = options.scope();
+      if (scope === undefined) return paged(ownerType, ownerId, pageOptions);
+      const tenantIds = intersect(pageOptions.tenantIds, scopeIds(scope));
+      const page = await paged(ownerType, ownerId, {
+        ...pageOptions,
+        ...(tenantIds !== undefined ? { tenantIds } : {}),
+      });
+      return store.tenantFiltering === true
+        ? page
+        : { ...page, items: page.items.filter((record) => inScope(scope, record.tenantId)) };
+    };
+  }
+
   // Never count across tenants: a store that cannot filter its totals offers none here, so callers
   // fall back to paging the scoped `list`.
   const totals = store.tenantFiltering === true ? store.collectionTotals?.bind(store) : undefined;

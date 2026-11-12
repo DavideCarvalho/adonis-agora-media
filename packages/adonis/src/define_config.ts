@@ -1,4 +1,5 @@
 import type { MediaIdentityResolver } from './access.js';
+import type { MediaAccountConsoleOptions } from './account_console/extension.js';
 import type { MediaTenancyOption } from './agora/tenancy.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
@@ -301,6 +302,13 @@ export interface MediaConfig {
    * active tenant's files. Needs the `tenant_id` column: `node ace media:publish-migration tenancy`.
    */
   tenancy?: MediaTenancyOption;
+  /**
+   * A "My files" page in the authkit account console (`/account/files`), registered when
+   * `@adonis-agora/authkit-server` (or authkit-client with remote pages) runs in the app. Nothing is
+   * exposed until `collections` lists one; each listed collection gets browse, upload, rename,
+   * delete and download, allowed by its own `access` rules. `false` registers nothing.
+   */
+  accountConsole?: false | MediaAccountConsoleOptions;
 }
 
 /**

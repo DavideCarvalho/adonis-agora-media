@@ -1,0 +1,5 @@
+---
+"@adonis-agora/media": minor
+---
+
+A "My files" page in the authkit account console (`/account/files`), registered automatically when authkit's `'authkit.accountExtensions'` registry is in the app (authkit-server, or authkit-client with remote pages). Nothing is exposed until `accountConsole.collections` in `config/media.ts` lists a collection; each listed collection gets browse, upload, rename, delete (confirmed, sudo) and download (short-lived signed URLs), each allowed by that collection's own `access` rules and switchable per collection. Owner defaults to authkit's mapped subject (`owner` hook to override); with tenancy on, the page follows the active organization. Uploads use a same-origin script (`<path>/upload.js`) and a ticket-authorized endpoint (`POST <path>/uploads`, default `/media/account`); `publicUrl` serves remote IdPs. New `media.library.page(ownerType, ownerId, { collections, cursor, limit })`, `media.library.rename(id, name)`, and the optional store method `MediaStore.listByOwnerPaged` (both bundled stores implement it). No runtime dependency on authkit.

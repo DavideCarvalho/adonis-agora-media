@@ -1,0 +1,131 @@
+---
+title: My files (account console)
+description: "A My files page in the authkit account console: the signed-in user's own files, with upload, rename, delete and download, per collection rules."
+icon: FolderOpen
+---
+
+When `@adonis-agora/authkit-server` runs in the same app, media can add a **My files** page to the
+signed-in user's account console (`/account/files`). Nothing is shown until you list the
+collections it covers.
+
+```ts title="config/media.ts"
+import { authorizers, defineConfig } from '@adonis-agora/media'
+
+export default defineConfig({
+  collections: [
+    {
+      name: 'documents',
+      access: { read: authorizers.owner({ ownerTypes: ['User'] }), write: authorizers.authenticated() },
+    },
+    { name: 'avatar', single: true, access: { read: 'public', write: authorizers.authenticated() } },
+  ],
+  accountConsole: {
+    collections: ['documents', 'avatar'],
+  },
+})
+```
+
+Each listed collection gets a tab with the user's files in it and these operations:
+
+| Operation | Needs | |
+| --- | --- | --- |
+| Browse | the collection's `access.read` | Newest first, paged. |
+| Download | `access.read` | A link valid for 5 minutes (`downloadTtlSeconds`). |
+| Upload | `access.write` | A file picker. The collection's MIME whitelist and content check apply. |
+| Rename | `access.write` | Changes the display name. |
+| Delete | `access.write` | Asks for confirmation and a recent sign-in. |
+
+The rules see the account as the subject: its `id` is the owner (below), with the account's
+`roles`. A collection with no `access` rule shows nothing, as everywhere in media.
+
+Turn single operations off per collection:
+
+```ts title="config/media.ts"
+accountConsole: {
+  collections: [
+    'documents',
+    { name: 'invoices', label: 'Invoices', upload: false, rename: false, delete: false },
+  ],
+},
+```
+
+## Whose files
+
+By default "my files" are the files owned by the app user authkit maps the account to
+(`accountConsole.subject` in `config/authkit.ts`, which defaults to `{ type: 'User', id: account.id }`).
+Map it here instead with `owner`:
+
+```ts title="config/media.ts"
+accountConsole: {
+  collections: ['documents'],
+  owner: (ctx) => ({ type: 'Member', id: ctx.account.id }),
+},
+```
+
+A file that is not the account's own answers "not found" to every action.
+
+With [organizations](/docs/media/tenancy) on, the page shows the files of the active organization,
+and uploads belong to it.
+
+## Uploads
+
+Uploads go straight to the app at `POST /media/account/uploads`, with a short-lived ticket the
+page issues for that account and collection. The page loads its picker from
+`/media/account/upload.js` (same origin, with the page's CSP nonce). Without JavaScript the page
+says so and the rest still works.
+
+| Option | Default | |
+| --- | --- | --- |
+| `collections` | — | The collections the page covers. |
+| `owner` | authkit's subject | `(ctx) => ({ type, id })`. |
+| `pageSize` | `20` | Files per page. |
+| `downloadTtlSeconds` | `300` | Lifetime of a download link. |
+| `maxUploadBytes` | 50 MiB | Largest upload. |
+| `path` | `/media/account` | Where the upload endpoint and its script are mounted. |
+| `publicUrl` | — | This app's https URL, for pages shown by an IdP in another app. |
+
+`accountConsole: false` adds nothing.
+
+## When the IdP runs in another app
+
+If users sign in through an authkit IdP in another app, turn on remote pages in authkit-client
+(`accountConsole: { remote: true }`, see the authkit docs) and set `publicUrl`. The upload picker
+then posts to this app across origins, so exempt the upload path from CSRF (the ticket authorizes
+the request):
+
+```ts title="config/media.ts"
+accountConsole: {
+  collections: ['documents'],
+  publicUrl: 'https://app.example.com',
+},
+```
+
+```ts title="config/shield.ts"
+csrf: {
+  enabled: true,
+  exceptRoutes: ['/.well-known/agora-account-extensions', '/media/account/uploads'],
+},
+```
+
+Download links come from the disk: an S3 disk signs https URLs that work from anywhere.
+
+## Listing a user's files yourself
+
+The page reads through `media.library.page()`, which you can use in your own screens:
+
+```ts title="app/controllers/files_controller.ts"
+import media from '@adonis-agora/media/services/main'
+
+export default class FilesController {
+  async index({ auth, request }: HttpContext) {
+    return media.library.page('User', auth.user!.id, {
+      collections: ['documents', 'avatar'],
+      cursor: request.input('cursor'),
+      limit: 20,
+    })
+  }
+}
+```
+
+It returns `{ items, nextCursor }`, newest first. `media.library.rename(id, name)` changes a file's
+display name.

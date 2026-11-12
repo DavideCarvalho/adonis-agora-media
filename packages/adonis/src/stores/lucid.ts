@@ -8,6 +8,7 @@ import {
   type MediaCollectionTotals,
   type MediaListOptions,
   type MediaListPage,
+  type MediaOwnerPageOptions,
   type MediaStore,
   type MediaTotalsOptions,
 } from '../media_store.js';
@@ -161,10 +162,31 @@ export class LucidMediaStore implements MediaStore {
     return rows.map(fromRow);
   }
 
-  async list(options: MediaListOptions = {}): Promise<MediaListPage> {
+  async listByOwnerPaged(
+    ownerType: string,
+    ownerId: string,
+    options: MediaOwnerPageOptions = {},
+  ): Promise<MediaListPage> {
+    if (options.collections !== undefined && options.collections.length === 0) {
+      return { items: [], nextCursor: null };
+    }
+    return this.list({
+      ownerType,
+      ownerId,
+      ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+      ...(options.tenantIds !== undefined ? { tenantIds: options.tenantIds } : {}),
+      ...(options.collections !== undefined ? { collectionIn: options.collections } : {}),
+    });
+  }
+
+  async list(
+    options: MediaListOptions & { collectionIn?: readonly string[] } = {},
+  ): Promise<MediaListPage> {
     await this.ready();
     const limit = clampMediaListLimit(options.limit);
     let q = this.query();
+    if (options.collectionIn !== undefined) q = q.whereIn('collection', [...options.collectionIn]);
     if (options.ownerType !== undefined) q = q.where('owner_type', options.ownerType);
     if (options.ownerId !== undefined) q = q.where('owner_id', options.ownerId);
     if (options.collection !== undefined) q = q.where('collection', options.collection);
