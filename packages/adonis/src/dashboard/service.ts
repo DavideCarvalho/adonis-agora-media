@@ -678,6 +678,20 @@ export class DashboardService {
     if (prefixes === undefined) return undefined;
     const normalized = prefix.replace(/^\/+/, '');
     if (prefixes.some((p) => normalized.startsWith(p))) return undefined;
+    const empty = {
+      folders: [],
+      files: [],
+      nextCursor: null,
+      prevCursor: null,
+      hasNext: false,
+      hasPrev: false,
+    };
+    // Nothing in scope (no organization, or a pick outside the grant): an empty root, like the
+    // record listings.
+    if (prefixes.length === 0) {
+      if (normalized === '') return empty;
+      throw new DashboardError('not found', 404);
+    }
     const below = prefixes.filter((p) => p.startsWith(normalized));
     if (below.length === 0) throw new DashboardError('not found', 404);
     const folders = Array.from(

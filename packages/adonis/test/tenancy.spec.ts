@@ -185,6 +185,15 @@ describe('MediaLibrary with tenancy', () => {
     expect(all.map((r) => r.tenantId).sort()).toEqual(['acme', 'globex']);
   });
 
+  it("orders a tenant's files without counting other tenants'", async () => {
+    const { lib } = library(on());
+    inTenant('acme');
+    await lib.attach(file());
+    await lib.attach(file());
+    inTenant('globex');
+    expect((await lib.attach(file())).order).toBe(0);
+  });
+
   it('with pathPrefix: false, paths stay as before', async () => {
     const { lib } = library(resolveMediaTenancy({ pathPrefix: false }));
     inTenant('acme');
@@ -309,9 +318,11 @@ describe('console tenant scope', () => {
       allowed: true,
       tenants: '*',
     });
-    expect(normalizeConsoleAuthorizeResult({ allowed: true, tenants: ['a', 3, ''] })).toEqual({
+    expect(
+      normalizeConsoleAuthorizeResult({ allowed: true, tenants: ['a', 3, '', ' a ', ' b'] }),
+    ).toEqual({
       allowed: true,
-      tenants: ['a'],
+      tenants: ['a', 'b'],
     });
   });
 
@@ -366,6 +377,12 @@ describe('console tenant scope', () => {
     await expect(svc.objects('fs', { prefix: 't/globex/' })).rejects.toThrow('not found');
     await expect(svc.remove({ disk: 'fs', keys: ['t/globex/x'] })).rejects.toThrow('not found');
     await expect(svc.objectMeta('fs', 't/acme/y')).resolves.toMatchObject({ key: 't/acme/y' });
+    const none = new DashboardService(scopedManager(manager, []), {
+      diskNames: ['fs'],
+      actions: false,
+      keyPrefixes: [],
+    });
+    expect((await none.objects('fs')).folders).toEqual([]);
   });
 });
 
@@ -440,5 +457,55 @@ describe('LucidMediaStore with the tenant column', () => {
     } finally {
       await db.manager.closeAll();
     }
+  });
+});
+
+describe('signed delivery across tenants', () => {
+  it('only a verified signature widens the lookup; a bogus one stays not found', async () => {
+    (globalThis as Record<symbol, unknown>)[SLOT] = {
+      version: 1,
+      tenancy: () => ({ enabled: true }),
+      tenantFilter: () => filter,
+    };
+    const { resolve } = inMemoryDiskResolver(['fs']);
+    const media = new MediaManager({
+      defaultDisk: 'fs',
+      resolve,
+      store: new InMemoryMediaStore(),
+      emitDiagnostics: false,
+      tenancy: resolveMediaTenancy(undefined),
+      collections: [{ name: 'docs', access: { read: () => false } }],
+      deliverySigning: { secret: 'shh' },
+    });
+    inTenant('acme');
+    const record = await media.library.attach(file());
+    const url = media.library.deliveryUrl(record.id);
+    const query = Object.fromEntries(new URL(url, 'http://x').searchParams);
+    inTenant('globex');
+    const answer = (qs: Record<string, string>) => {
+      const out: { status?: number } = {};
+      const response = {
+        status: (code: number) => {
+          out.status = code;
+          return { json: () => undefined };
+        },
+        header: () => undefined,
+        redirect: () => {
+          out.status = 302;
+        },
+        stream: () => {
+          out.status = 200;
+        },
+      };
+      return media.access
+        .serve(
+          { params: {}, request: { qs: () => qs, header: () => undefined }, response },
+          record.id,
+        )
+        .then(() => out.status);
+    };
+    expect(await answer({ ...query, sig: 'bogus' })).toBe(404);
+    expect(await answer({})).toBe(404);
+    expect([200, 302]).toContain(await answer(query));
   });
 });

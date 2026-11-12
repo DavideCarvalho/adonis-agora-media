@@ -91,10 +91,11 @@ export function normalizeConsoleAuthorizeResult(result: unknown): ConsoleAuthori
   if (record.allowed === true) {
     if (record.tenants === '*') return { allowed: true, tenants: '*' };
     if (Array.isArray(record.tenants)) {
-      return {
-        allowed: true,
-        tenants: record.tenants.filter((t): t is string => typeof t === 'string' && t !== ''),
-      };
+      const tenants = record.tenants
+        .filter((t): t is string => typeof t === 'string')
+        .map((t) => t.trim())
+        .filter((t) => t !== '');
+      return { allowed: true, tenants: [...new Set(tenants)] };
     }
     return { allowed: true };
   }

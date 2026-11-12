@@ -30,8 +30,10 @@ function intersect(
 /**
  * A {@link MediaStore} view confined to a tenant scope: a record outside it reads as missing
  * (`find` → `null`, never "forbidden"), listings and totals only see the scope. Writes go through
- * unchanged; the library stamps new records itself. Records of a shared (public) collection stay
- * visible to every scope.
+ * unchanged; the library stamps new records itself. A record of a shared (public) collection stays
+ * readable from every scope by id (`find`) and in its owner's list (`listByOwner`), which is how an
+ * app serves and renders it; the cross-owner management reads (`list`, totals, paged owner lists)
+ * stay confined to the scope.
  */
 export function tenantScopedStore(
   store: MediaStore,
@@ -44,7 +46,15 @@ export function tenantScopedStore(
   const scoped: MediaStore = {
     save: (record) => store.save(record),
     delete: (id) => store.delete(id),
-    nextOrder: (ownerType, ownerId, collection) => store.nextOrder(ownerType, ownerId, collection),
+    // The order counter only counts the scope's records, so another tenant's files leave no gaps.
+    async nextOrder(ownerType, ownerId, collection) {
+      const scope = options.scope();
+      if (scope === undefined) return store.nextOrder(ownerType, ownerId, collection);
+      const records = await store.listByOwner(ownerType, ownerId, collection);
+      return records
+        .filter((record) => inScope(scope, record.tenantId))
+        .reduce((max, record) => Math.max(max, record.order + 1), 0);
+    },
     async find(id) {
       const scope = options.scope();
       const record = await store.find(id);
