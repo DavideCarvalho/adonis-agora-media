@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.7
+
+### Patch Changes
+
+- [#294](https://github.com/DavideCarvalho/adonis-agora-media/pull/294) [`46cfbec`](https://github.com/DavideCarvalho/adonis-agora-media/commit/46cfbec707862231789e78aa0e5eb0397c737b06) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `stores.lucid({ connection })`: auto-creating the `media` table (and the tenant column) now runs on the configured connection. It used to run on the default connection, so the table was created in the wrong database and the store's first query failed.
+
 ## 1.0.0-rc.6
 
 ### Minor Changes
