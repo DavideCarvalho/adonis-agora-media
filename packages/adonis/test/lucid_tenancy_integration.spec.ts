@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Emitter } from '@adonisjs/core/events';
 import { AppFactory } from '@adonisjs/core/factories/app';
 import { LoggerFactory } from '@adonisjs/core/factories/logger';
@@ -84,19 +85,42 @@ for (const target of targets) {
       ? ['tenant_id(191)', 'owner_type(191)', 'owner_id(191)', 'collection(191)']
       : ['tenant_id(full)', 'owner_type(full)', 'owner_id(full)', 'collection(full)'];
 
-    beforeAll(() => {
+    // The suite works in a namespace of its own (a Postgres schema on the search path, a MySQL
+    // database), still unqualified there, so it never races other suites on the server's default one.
+    const namespace = `mtenancy_${randomBytes(4).toString('hex')}`;
+
+    beforeAll(async () => {
       const app = new AppFactory().create(new URL('./', import.meta.url), () => {}) as any;
+      const url = new URL(target.url as string);
+      if (mysql) url.pathname = `/${namespace}`;
       db = new Database(
         {
           connection: 'main',
-          connections: { main: { client: target.client, connection: target.url } as never },
+          connections: {
+            admin: { client: target.client, connection: target.url } as never,
+            main: {
+              client: target.client,
+              connection: url.toString(),
+              ...(mysql ? {} : { searchPath: [namespace] }),
+            } as never,
+          },
         },
         new LoggerFactory().create(),
         new Emitter(app),
       );
+      await db
+        .connection('admin')
+        .rawQuery(mysql ? `CREATE DATABASE \`${namespace}\`` : `CREATE SCHEMA "${namespace}"`);
     });
 
     afterAll(async () => {
+      await db
+        ?.connection('admin')
+        .rawQuery(
+          mysql
+            ? `DROP DATABASE IF EXISTS \`${namespace}\``
+            : `DROP SCHEMA IF EXISTS "${namespace}" CASCADE`,
+        );
       await db?.manager.closeAll();
     });
 

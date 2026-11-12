@@ -225,9 +225,7 @@ for (const target of targets) {
       expectAllQualified();
     });
 
-    // MySQL is skipped here: the 4-column `tenant_id` index of 255-char strings is longer than
-    // InnoDB's 3072-byte key limit under utf8mb4 (true without a schema too).
-    it.skipIf(mysql)('adds the tenant column in the schema', async () => {
+    it('adds the tenant column in the schema', async () => {
       const name = freshSchema();
       const store = new LucidMediaStore(db, { schema: name, tenantColumn: true });
       await store.save(record({ id: 't', tenantId: 'tenant-1' }));
@@ -240,11 +238,46 @@ for (const target of targets) {
       await runMigrationStub(db, 'create_media_upload_sessions_table.stub', { schema: name });
       const sessions = new LucidUploadSessionStore(db, { schema: name, tenantColumn: true });
       await raw(
-        `ALTER TABLE "${name}"."media_upload_sessions" ADD COLUMN "tenant_id" VARCHAR(255) NULL`,
+        `ALTER TABLE ${quote}${name}${quote}.${quote}media_upload_sessions${quote} ADD COLUMN ${quote}tenant_id${quote} VARCHAR(255) NULL`,
       );
       await sessions.create({ id: 's', disk: 'fs', key: 'k', offset: 0, parts: 0, tenantId: 'x' });
       expect((await sessions.list({ tenantIds: ['x'] })).map((s) => s.id)).toEqual(['s']);
       expectAllQualified();
+    });
+
+    it('runs the tenancy migration into the schema and back out', async () => {
+      const name = freshSchema();
+      await runMigrationStub(db, 'create_media_table.stub', { schema: name });
+      await runMigrationStub(db, 'create_media_upload_sessions_table.stub', { schema: name });
+      await runMigrationStub(db, 'add_media_tenant_id.stub', { schema: name });
+
+      const tenantColumns = async (where: string) =>
+        (
+          await raw(
+            "SELECT table_name AS name FROM information_schema.columns WHERE table_schema = ? AND column_name = 'tenant_id' ORDER BY table_name",
+            [where],
+          )
+        ).map((row) => String(row.name));
+      const tenantIndex = async () =>
+        (
+          await raw(
+            mysql
+              ? 'SELECT sub_part AS part FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ? ORDER BY seq_in_index'
+              : 'SELECT indexname AS part FROM pg_indexes WHERE schemaname = ? AND tablename = ? AND indexname = ?',
+            [name, 'media', 'media_tenant_owner_idx'],
+          )
+        ).map((row) => String(row.part));
+
+      expect(await tenantColumns(name)).toEqual(['media', 'media_upload_sessions']);
+      expect(await tenantColumns(await defaultSchema())).toEqual([]);
+      // MySQL indexes a 191-character prefix of each of the four columns (InnoDB's key limit).
+      expect(await tenantIndex()).toEqual(
+        mysql ? ['191', '191', '191', '191'] : ['media_tenant_owner_idx'],
+      );
+
+      await runMigrationStub(db, 'add_media_tenant_id.stub', { schema: name, direction: 'down' });
+      expect(await tenantColumns(name)).toEqual([]);
+      expect(await tenantIndex()).toEqual([]);
     });
 
     it.skipIf(mysql)('reports a table the role cannot write to', async () => {

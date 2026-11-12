@@ -39,7 +39,9 @@ export default class extends BaseSchema {
    * is added only when missing.
    */
   private async upMysql() {
-    if (!(await this.in(schema).hasColumn('media', 'tenant_id'))) {
+    // A dotted name, not withSchema(): knex's MySQL hasColumn ignores withSchema().
+    const media = schema ? schema + '.media' : 'media'
+    if (!(await this.schema.hasColumn(media, 'tenant_id'))) {
       this.in(schema).alterTable('media', (table) => {
         table.string('tenant_id').nullable()
       })
@@ -48,7 +50,7 @@ export default class extends BaseSchema {
       this.db
         .knexRawQuery('CREATE INDEX ?? ON ?? (??(191), ??(191), ??(191), ??(191))', [
           'media_tenant_owner_idx',
-          schema ? `${schema}.media` : 'media',
+          media,
           'tenant_id',
           'owner_type',
           'owner_id',
