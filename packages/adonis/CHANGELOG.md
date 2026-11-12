@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.4
+
+### Minor Changes
+
+- [#288](https://github.com/DavideCarvalho/adonis-agora-media/pull/288) [`a2d73fd`](https://github.com/DavideCarvalho/adonis-agora-media/commit/a2d73fded8a53f62c60a60d4029a8e2234fafa4a) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Organizations as tenants. When tenancy is on in `config/context.ts` (new `tenancy` option in `config/media.ts`: `'inherit'` by default, `false` opts out, plus `kinds`, `nullRows` and `pathPrefix`), new files and upload sessions are stamped with the active tenant and stored under `t/<tenantId>/`, and every app-facing read (`find`, `list`, `url`, `image`, `deliver`, the delivery and stream routes, upload sessions) only sees the active tenant's files; another tenant's file is not found. Public collections and signed delivery URLs stay readable from every tenant. New nullable `tenant_id` column via `node ace media:publish-migration tenancy` (also published by `configure`, and added automatically with `autoCreateSchema`); without it and with tenancy on, queries fail with `E_MEDIA_TENANCY_SCHEMA`. New `node ace media:tenancy:backfill --owner-type=Organization`, `authorizers.sameTenant()`, `tenantId` on `attach`/`attachExisting`, `MediaStore.listTenants`, `tenantIds` on `MediaStore.list`/`collectionTotals`. New `@adonis-agora/media/commands` barrel (`configure` registers it; add it to `adonisrc.ts` `commands` on an existing app). Console: `authorize` may return `{ allowed: true, tenants: '*' | string[] }`; an Organization picker in the header (`?tenant=`, out-of-scope picks see nothing and are logged), an Organization column, and tenant-prefixed disk browsing for confined viewers; `GET <apiBase>/tenants`. Nothing changes while tenancy is off.
+
 ## 1.0.0-rc.3
 
 ### Minor Changes
