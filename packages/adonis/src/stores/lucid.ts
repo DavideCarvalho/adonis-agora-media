@@ -136,8 +136,10 @@ export class LucidMediaStore implements MediaStore {
    * so the auto-create path and a migration-based one run identical DDL.
    */
   async ensureSchema(): Promise<void> {
-    await createMediaTables(this.db, { table: this.table });
-    if (this.tenantColumn) await ensureMediaTenantColumn(this.db, { table: this.table });
+    // On the store's own connection: the `Database` facade would run the DDL on the default one.
+    const client = this.client();
+    await createMediaTables(client, { table: this.table });
+    if (this.tenantColumn) await ensureMediaTenantColumn(client, { table: this.table });
   }
 
   async save(record: MediaRecord): Promise<MediaRecord> {
