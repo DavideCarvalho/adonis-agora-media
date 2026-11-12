@@ -1,0 +1,39 @@
+---
+title: Health check
+description: "node ace agora:doctor — what media checks, and how to run it in CI."
+icon: Stethoscope
+---
+
+`node ace agora:doctor` checks the configuration of every installed `@adonis-agora` lib in one
+report. `node ace media:doctor` runs media's checks only. `node ace configure @adonis-agora/media`
+registers the commands; on an existing app add `@adonis-agora/media/commands` to `commands` in
+`adonisrc.ts`.
+
+```sh
+node ace agora:doctor           # human report
+node ace agora:doctor --deep    # also checks that touch the database
+node ace agora:doctor --json --strict   # in CI: exit 1 on any warning or error
+node ace agora:doctor --no-boot # when the app does not boot
+```
+
+Exit codes: `0` nothing is an error, `1` an error (or a warning with `--strict`), `2` the doctor
+could not run.
+
+## Media's checks
+
+| Id | What | Status |
+| --- | --- | --- |
+| `media.disks` | Every disk media writes to (`disk`, each collection's `disk`, the upload routes' `disk`) exists in `disks` or in `config/drive.ts`. | error |
+| `media.console-gate` | The media console has an `authorize`. | warn here, error in production |
+| `media.account-console` | Every collection `accountConsole` lists exists and has an `access.read` rule. | warn |
+| `media.tenancy-schema` | With tenancy on, the `media` table has its `tenant_id` column (`--deep`). | error |
+
+Every lib also reports `media.registered`, `media.peers` and `media.agora-siblings`.
+
+## In CI
+
+```yaml title=".github/workflows/ci.yml"
+- run: node ace agora:doctor --json --strict
+  env:
+    NODE_ENV: production
+```
