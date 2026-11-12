@@ -107,6 +107,19 @@ export const authorizers = {
     };
   },
 
+  /**
+   * The file belongs to the user's active tenant (organization): `record.tenantId` equals the
+   * identity's `tenantId` (both empty counts as the same: no tenant). With tenancy on, reads are
+   * already confined to the active tenant; use this to say so explicitly in a rule, or to compare
+   * against an identity resolver's tenant. A write has no record yet, so it is not restricted here.
+   */
+  sameTenant(): MediaAuthorizer {
+    return ({ subject, record, action }) => {
+      if (action === 'write' || !record) return true;
+      return (record.tenantId ?? null) === (subject?.tenantId ?? null);
+    };
+  },
+
   /** The identity carries one of these global roles (e.g. an authkit token's roles). */
   roles(roles: readonly string[]): MediaAuthorizer {
     return ({ subject }) => Boolean(subject?.roles?.some((role) => roles.includes(role)));

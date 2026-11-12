@@ -42,4 +42,9 @@ export interface MediaRecord {
   conversions: Record<string, MediaConversion>;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * The tenant (organization) the file belongs to, when tenancy is on (`null`: no tenant). Absent
+   * while tenancy is off.
+   */
+  tenantId?: string | null;
 }

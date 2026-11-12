@@ -1,6 +1,7 @@
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MiddlewareFn, ParsedNamedMiddleware } from '@adonisjs/core/types/http';
+import { resolveMediaTenancy } from '../src/agora/tenancy.js';
 import type { DirectUploadPolicyModule, MediaConfig } from '../src/define_config.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
 import { DirectUploadHandler } from '../src/direct_upload_handler.js';
@@ -45,7 +46,9 @@ export default class MediaProvider {
 
       // Validate + build the store from config first, so a misconfigured `store` fails fast (before
       // we touch Drive) rather than silently booting on a non-durable in-memory fallback.
-      const ctx: StoreContext = { app: this.app };
+      // Organizations as tenants: off unless `config/context.ts` (or `tenancy` here) turns it on.
+      const tenancy = resolveMediaTenancy(config.tenancy);
+      const ctx: StoreContext = { app: this.app, ...(tenancy.enabled ? { tenancy: true } : {}) };
       const store = await resolveStore(config, ctx);
       const imageProcessor = await this.#resolveImageProcessor(config);
 
@@ -58,7 +61,7 @@ export default class MediaProvider {
               ...(resumable.store !== undefined ? { store: resumable.store } : {}),
               ...(resumable.stores !== undefined ? { stores: resumable.stores } : {}),
             },
-            { app: this.app },
+            { app: this.app, ...(tenancy.enabled ? { tenancy: true } : {}) },
           )
         : undefined;
 
@@ -72,7 +75,7 @@ export default class MediaProvider {
               ...(direct.store !== undefined ? { store: direct.store } : {}),
               ...(direct.stores !== undefined ? { stores: direct.stores } : {}),
             },
-            { app: this.app },
+            { app: this.app, ...(tenancy.enabled ? { tenancy: true } : {}) },
           )
         : undefined;
 
@@ -153,6 +156,7 @@ export default class MediaProvider {
         ...(config.access?.identity !== undefined
           ? { accessIdentity: config.access.identity }
           : {}),
+        ...(tenancy.enabled ? { tenancy } : {}),
       });
     });
   }

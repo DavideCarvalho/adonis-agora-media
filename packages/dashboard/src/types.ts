@@ -128,6 +128,8 @@ export interface UploadInfo {
   parts: number;
   multipart: boolean;
   createdAt?: string;
+  /** The organization (tenant) of the upload, when the app turned tenancy on (`null`: none). */
+  tenantId?: string | null;
 }
 
 export interface UploadListResponse {
@@ -151,6 +153,8 @@ export interface MediaEntry {
   conversions: string[];
   createdAt: string;
   updatedAt: string;
+  /** The organization (tenant) of the file, when the app turned tenancy on (`null`: none). */
+  tenantId?: string | null;
 }
 
 /**
@@ -261,4 +265,14 @@ export interface ObjectInsight {
 /** What `GET /object/insights` returns. Empty when the host registered no providers. */
 export interface ObjectInsightsResponse {
   insights: ObjectInsight[];
+}
+
+/** The console's "Organization" control (`GET /tenants`). */
+export interface TenantPickerResponse {
+  /** `off`: tenancy off. `none`: the viewer has no organization. `fixed`: one. `pick`: several. */
+  mode: 'off' | 'none' | 'fixed' | 'pick';
+  /** The viewer may see every organization (and "All organizations" is offered). */
+  all: boolean;
+  selected: string | null;
+  tenants: Array<{ id: string; label: string }>;
 }

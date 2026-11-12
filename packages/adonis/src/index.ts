@@ -14,6 +14,8 @@ export type {
   MediaSubject,
 } from './access.js';
 export { adonisAuthIdentity, authorizers } from './access.js';
+// Organizations as tenants (`tenancy` in config/media.ts).
+export type { MediaTenancyOption, ResolvedMediaTenancy } from './agora/tenancy.js';
 export type {
   AttachmentData,
   AttachmentManagerOptions,
@@ -226,6 +228,7 @@ export type {
   MediaListOptions,
   MediaListPage,
   MediaStore,
+  MediaTotalsOptions,
 } from './media_store.js';
 export {
   clampMediaListLimit,
@@ -233,6 +236,7 @@ export {
   decodeMediaCursor,
   encodeMediaCursor,
   MAX_MEDIA_LIST_LIMIT,
+  tenantMatches,
 } from './media_store.js';
 export { isMultipartCapable } from './multipart.js';
 export type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
@@ -266,6 +270,7 @@ export {
   streamEntries,
   WEBVTT_MIME_TYPE,
 } from './streaming.js';
+export { tenantScopedStore } from './tenant_scoped_store.js';
 // Transformers (pluggable content transformations persisted as conversions)
 export type {
   Transformer,

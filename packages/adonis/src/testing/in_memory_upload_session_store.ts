@@ -51,7 +51,8 @@ export class InMemoryUploadSessionStore implements UploadSessionStore {
       .filter(
         (session) =>
           (filter.disk === undefined || session.disk === filter.disk) &&
-          (filter.keyPrefix === undefined || session.key.startsWith(filter.keyPrefix)),
+          (filter.keyPrefix === undefined || session.key.startsWith(filter.keyPrefix)) &&
+          (filter.tenantIds === undefined || filter.tenantIds.includes(session.tenantId ?? null)),
       )
       .map((session) => ({ ...session }));
   }

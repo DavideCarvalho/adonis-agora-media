@@ -9,8 +9,13 @@ import {
   type MediaListOptions,
   type MediaListPage,
   type MediaStore,
+  type MediaTotalsOptions,
 } from '../media_store.js';
-import { createMediaTables } from './lucid-schema.js';
+import {
+  createMediaTables,
+  ensureMediaTenantColumn,
+  hasMediaTenantColumn,
+} from './lucid-schema.js';
 
 export interface LucidMediaStoreOptions {
   /** The Lucid connection name. Defaults to the `Database` default connection. */
@@ -22,6 +27,24 @@ export interface LucidMediaStoreOptions {
    * manage the schema explicitly via a migration calling {@link createMediaTables}.
    */
   autoCreateSchema?: boolean;
+  /**
+   * Read and write the `tenant_id` column (media's `tenancy` is on). Off by default: the column is
+   * then never touched, so a table without it keeps working. With `autoCreateSchema` the column is
+   * added when missing; without it, a missing column fails the first query with
+   * {@link MediaTenancySchemaError} (run `node ace media:publish-migration tenancy`).
+   */
+  tenantColumn?: boolean;
+}
+
+/** Thrown when tenancy is on and the `media` table has no `tenant_id` column. */
+export class MediaTenancySchemaError extends Error {
+  readonly code = 'E_MEDIA_TENANCY_SCHEMA';
+  constructor(table: string) {
+    super(
+      `@adonis-agora/media: tenancy is on but the "${table}" table has no tenant_id column. Run \`node ace media:publish-migration tenancy\` and \`node ace migration:run\`, or set \`tenancy: false\` in config/media.ts.`,
+    );
+    this.name = 'MediaTenancySchemaError';
+  }
 }
 
 /** Physical row shape of the `media` table. JSON columns are stored as text. */
@@ -41,6 +64,7 @@ interface MediaRow {
   conversions: string | null;
   created_at: number;
   updated_at: number;
+  tenant_id?: string | null;
 }
 
 /**
@@ -55,9 +79,11 @@ interface MediaRow {
  * `node ace configure @adonis-agora/media` (or calls {@link createMediaTables} from a migration).
  */
 export class LucidMediaStore implements MediaStore {
+  readonly tenantFiltering = true;
   private readonly table: string;
   private readonly connectionName: string | undefined;
   private readonly autoCreate: boolean;
+  private readonly tenantColumn: boolean;
   private schemaReady: Promise<void> | undefined;
 
   constructor(
@@ -67,6 +93,7 @@ export class LucidMediaStore implements MediaStore {
     this.table = options.table ?? 'media';
     this.connectionName = options.connectionName;
     this.autoCreate = options.autoCreateSchema !== false;
+    this.tenantColumn = options.tenantColumn === true;
   }
 
   private client(): QueryClientContract {
@@ -79,9 +106,23 @@ export class LucidMediaStore implements MediaStore {
 
   /** Ensure the schema exists before the first operation, once per store instance. */
   private async ready(): Promise<void> {
-    if (!this.autoCreate) return;
-    if (!this.schemaReady) this.schemaReady = this.ensureSchema();
+    if (!this.autoCreate && !this.tenantColumn) return;
+    if (!this.schemaReady) {
+      this.schemaReady = (this.autoCreate ? this.ensureSchema() : this.assertTenantColumn()).catch(
+        (error) => {
+          // Not cached: a migration run later in the same process is picked up on the next call.
+          this.schemaReady = undefined;
+          throw error;
+        },
+      );
+    }
     return this.schemaReady;
+  }
+
+  private async assertTenantColumn(): Promise<void> {
+    if (!(await hasMediaTenantColumn(this.client(), { table: this.table }))) {
+      throw new MediaTenancySchemaError(this.table);
+    }
   }
 
   /**
@@ -90,11 +131,12 @@ export class LucidMediaStore implements MediaStore {
    */
   async ensureSchema(): Promise<void> {
     await createMediaTables(this.db, { table: this.table });
+    if (this.tenantColumn) await ensureMediaTenantColumn(this.db, { table: this.table });
   }
 
   async save(record: MediaRecord): Promise<MediaRecord> {
     await this.ready();
-    const row = toRow(record);
+    const row = toRow(record, this.tenantColumn);
     // Single atomic upsert (portable Knex `INSERT ... ON CONFLICT (id) DO UPDATE`) instead of a
     // racy read-then-branch: concurrent saves of the same id can't interleave into a lost write.
     await this.client().table(this.table).insert(row).onConflict('id').merge();
@@ -128,6 +170,9 @@ export class LucidMediaStore implements MediaStore {
     if (options.collection !== undefined) q = q.where('collection', options.collection);
     if (options.prefix !== undefined && options.prefix !== '') {
       q = q.where('path', 'like', `${options.prefix}%`);
+    }
+    if (this.tenantColumn && options.tenantIds !== undefined) {
+      q = whereTenantIn(q, options.tenantIds);
     }
 
     // Keyset pagination on the (created_at desc, id desc) ordering: resume strictly *after* the cursor
@@ -165,9 +210,13 @@ export class LucidMediaStore implements MediaStore {
     await this.query().where('id', id).delete();
   }
 
-  async collectionTotals(): Promise<MediaCollectionTotals[]> {
+  async collectionTotals(options: MediaTotalsOptions = {}): Promise<MediaCollectionTotals[]> {
     await this.ready();
-    const rows = (await this.query()
+    let q = this.query();
+    if (this.tenantColumn && options.tenantIds !== undefined) {
+      q = whereTenantIn(q, options.tenantIds);
+    }
+    const rows = (await q
       .select('collection')
       .count('* as count')
       .sum('size as sum_size')
@@ -185,6 +234,17 @@ export class LucidMediaStore implements MediaStore {
     }));
   }
 
+  async listTenants(): Promise<string[]> {
+    if (!this.tenantColumn) return [];
+    await this.ready();
+    const rows = (await this.query()
+      .distinct('tenant_id')
+      .whereNotNull('tenant_id')
+      .orderBy('tenant_id', 'asc')
+      .limit(1000)) as Array<{ tenant_id: string }>;
+    return rows.map((row) => String(row.tenant_id));
+  }
+
   async nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number> {
     await this.ready();
     const row = (await this.query()
@@ -198,8 +258,30 @@ export class LucidMediaStore implements MediaStore {
   }
 }
 
-function toRow(record: MediaRecord): MediaRow {
+/** `tenant_id IN (…)`, with `null` standing for `tenant_id IS NULL`; an empty list matches nothing. */
+// biome-ignore lint/suspicious/noExplicitAny: Knex's chainable builder type.
+function whereTenantIn<Q extends { where: any }>(q: Q, tenantIds: ReadonlyArray<string | null>): Q {
+  const ids = tenantIds.filter((id): id is string => id !== null);
+  const withNull = tenantIds.includes(null);
+  return q.where(
+    (builder: {
+      whereIn(column: string, values: string[]): unknown;
+      orWhereNull(column: string): unknown;
+      whereRaw(sql: string): unknown;
+    }) => {
+      if (ids.length === 0 && !withNull) {
+        builder.whereRaw('1 = 0');
+        return;
+      }
+      if (ids.length > 0) builder.whereIn('tenant_id', ids);
+      if (withNull) builder.orWhereNull('tenant_id');
+    },
+  ) as Q;
+}
+
+function toRow(record: MediaRecord, tenantColumn: boolean): MediaRow {
   return {
+    ...(tenantColumn ? { tenant_id: record.tenantId ?? null } : {}),
     id: record.id,
     owner_type: record.ownerType,
     owner_id: record.ownerId,
@@ -235,6 +317,7 @@ function fromRow(row: MediaRow): MediaRecord {
     conversions: parseJson<Record<string, MediaConversion>>(row.conversions, {}),
     createdAt: new Date(Number(row.created_at)),
     updatedAt: new Date(Number(row.updated_at)),
+    ...(row.tenant_id !== undefined ? { tenantId: row.tenant_id } : {}),
   };
 }
 

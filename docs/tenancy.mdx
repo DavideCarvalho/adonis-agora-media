@@ -1,0 +1,129 @@
+---
+title: Organizations
+description: "Scope media by the active organization: stamped files, tenant-prefixed storage paths, tenant-scoped reads, and an organization picker in the console."
+icon: Building2
+---
+
+When your app turns tenancy on in `config/context.ts` (see `@adonis-agora/context`), media follows
+the active tenant (with authkit, the active organization of the session). Nothing changes until you
+turn it on.
+
+```ts title="config/context.ts"
+export default defineConfig({
+  tenancy: { enabled: true, kinds: ['organization'] },
+})
+```
+
+## Add the column
+
+Media keeps each file's tenant in a nullable `tenant_id` column. New installs get the migration from
+`node ace configure @adonis-agora/media`. On an existing app, publish it and run it:
+
+```sh
+node ace media:publish-migration tenancy
+node ace migration:run
+```
+
+With the `lucid` store's `autoCreateSchema` (the default), the column is added for you. Without it,
+and without the migration, the first media query fails with `E_MEDIA_TENANCY_SCHEMA`, which says what
+to run. `node ace agora:doctor` checks it too.
+
+## What changes
+
+- **New files** belong to the active tenant, and are stored under `t/<tenantId>/…`. Files written
+  before keep their path.
+- **Reads** see only the active tenant's files: `media.library.find()`, `list()`, `for(...).list()`,
+  `url()`, `image()`, `deliver()`, the delivery and stream routes. A file of another organization
+  answers "not found", never "forbidden". A request with no organization sees only files that have
+  none.
+- **Public collections** (`access: { read: 'public' }`) stay readable from every organization.
+- **Signed URLs** (`delivery.signing`) are served whichever organization the viewer is in: your app
+  signed them.
+- **Uploads in progress** (TUS and direct sessions) belong to the organization that started them.
+- **Jobs and ace commands** with no request see every file, unless they run inside
+  `Context.withTenant(...)`.
+
+Your collection rules still apply on top. To say it in a rule explicitly, use
+`authorizers.sameTenant()`:
+
+```ts title="config/media.ts"
+import { authorizers, defineConfig } from '@adonis-agora/media'
+
+export default defineConfig({
+  collections: [
+    {
+      name: 'contracts',
+      access: { read: authorizers.all(authorizers.owner(), authorizers.sameTenant()) },
+    },
+  ],
+})
+```
+
+To attach a file to a given organization from a job or a seeder, pass `tenantId`:
+
+```ts
+await media.library.attach({ ownerType: 'Organization', ownerId: org.id, collection: 'logos',
+  fileName, mimeType, contents, tenantId: org.id })
+```
+
+## Options
+
+```ts title="config/media.ts"
+export default defineConfig({
+  tenancy: {
+    nullRows: 'shared', // files with no organization show in every organization
+    pathPrefix: false,  // keep storage paths without t/<tenantId>/
+    kinds: ['organization'],
+  },
+})
+```
+
+| Option | Default | |
+| --- | --- | --- |
+| `enabled` | `'inherit'` | Follows `config/context.ts`. `false` (or `tenancy: false`) keeps media out of tenancy. |
+| `kinds` | context's `kinds` | Tenant kinds media honours; another kind counts as no organization. |
+| `nullRows` | `'tenantless'` | `'shared'` also shows files with no organization inside every organization. |
+| `pathPrefix` | `true` | Store new files under `t/<tenantId>/`. |
+
+## Files written before tenancy
+
+Existing files have no organization, so only requests without one see them. When the owner of a
+file is the organization itself, stamp them in one go:
+
+```sh
+node ace media:tenancy:backfill --owner-type=Organization --dry-run
+node ace media:tenancy:backfill --owner-type=Organization
+```
+
+When the owner belongs to an organization (a `Project` with an `organization_id`), a migration can
+do it with SQL:
+
+```sql
+UPDATE media SET tenant_id = projects.organization_id
+FROM projects
+WHERE media.owner_type = 'Project' AND media.owner_id = projects.id::text AND media.tenant_id IS NULL;
+```
+
+## The console
+
+With tenancy on, the media console shows the viewer's own organization. Its `authorize` can widen
+that with `tenants`:
+
+```ts title="config/media_dashboard.ts"
+export default defineConfig({
+  authorize: (ctx) =>
+    ctx.auth.user?.isStaff ? { allowed: true, tenants: '*' } : ctx.auth.user?.isAdmin === true,
+})
+```
+
+- `tenants: '*'`: every organization, plus files with no organization.
+- `tenants: ['acme', 'globex']`: those organizations.
+- omitted: the viewer's active organization. A viewer with none sees an empty console.
+
+The header shows an **Organization** control: a fixed chip for one organization, a searchable list
+for several, with "All organizations" first for `'*'`. The pick lives in the URL (`?tenant=`), and a
+pick outside what `authorize` granted shows nothing. With several organizations in view, the
+Collections and Uploads lists get an Organization column.
+
+In the Library view, a viewer limited to some organizations browses only their `t/<tenantId>/`
+folders. The MCP tools and the global search follow the same scope.

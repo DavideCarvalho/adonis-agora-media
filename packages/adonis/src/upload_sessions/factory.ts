@@ -9,6 +9,8 @@ import type { UploadSessionStore } from '../resumable_upload.js';
  */
 export interface UploadSessionStoreContext {
   app: ApplicationService;
+  /** Media's `tenancy` is on: the store reads and writes the sessions' `tenant_id`. */
+  tenancy?: boolean;
 }
 
 /**
@@ -74,6 +76,7 @@ export const uploadSessions = {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
         ...(config.table !== undefined ? { table: config.table } : {}),
         ...(config.partsTable !== undefined ? { partsTable: config.partsTable } : {}),
+        ...(ctx.tenancy === true ? { tenantColumn: true } : {}),
       });
     };
   },

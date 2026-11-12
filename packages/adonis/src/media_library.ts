@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
+import {
+  currentTenantId,
+  currentTenantScope,
+  type ResolvedMediaTenancy,
+  TENANCY_OFF,
+  tenantPathPrefix,
+} from './agora/tenancy.js';
 import { SIGNATURE_HEAD_BYTES, verifyContentAgainstWhitelist } from './content_type.js';
 import { asBuffer, peekContents, peekStream, toBytes } from './contents.js';
 import {
@@ -47,7 +54,7 @@ import {
   type ImageProcessor,
   presetCrops,
 } from './image_processor.js';
-import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols.js';
+import { deliverRecord, findUnscoped, imageOfRecord, streamOfRecord } from './internal_symbols.js';
 import { type MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
 import type { MediaConversion, MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
@@ -71,6 +78,7 @@ import {
   streamFormatOf,
   WEBVTT_MIME_TYPE,
 } from './streaming.js';
+import { tenantScopedStore } from './tenant_scoped_store.js';
 import type {
   Transformer,
   TransformerContext,
@@ -107,6 +115,11 @@ export interface MediaLibraryOptions {
    * the trailing file part (`delivery.streamPath`). Default `/media/:id/stream/:conversion`.
    */
   deliveryStreamPath?: string;
+  /**
+   * Organizations as tenants (`tenancy` in `config/media.ts`, resolved against `config/context.ts`).
+   * Off by default: nothing is stamped, filtered or prefixed.
+   */
+  tenancy?: ResolvedMediaTenancy;
 }
 
 /** What serving one file of a streaming package yields: a manifest's text, or the usual delivery. */
@@ -135,6 +148,11 @@ export interface AttachInput {
   customProperties?: Record<string, unknown>;
   /** Disk override (else collection disk, else storage default). */
   disk?: string;
+  /**
+   * The tenant the file belongs to, with tenancy on (`null`: none). Default: the active tenant of
+   * the request or job.
+   */
+  tenantId?: string | null;
 }
 
 /**
@@ -171,6 +189,11 @@ export interface AttachExistingInput {
    * {@link UploadNotSupportedError} on a disk without it.
    */
   moveIntoLayout?: boolean;
+  /**
+   * The tenant the file belongs to, with tenancy on (`null`: none). Default: the active tenant of
+   * the request or job.
+   */
+  tenantId?: string | null;
 }
 
 /** Options for {@link MediaLibrary.deliver}. */
@@ -228,6 +251,8 @@ interface AttachContext {
   disk: string;
   target: Disk;
   id: string;
+  /** The tenant stamped on the record (`undefined` while tenancy is off). */
+  tenantId: string | null | undefined;
 }
 
 /** Record descriptors {@link MediaLibrary.#commit} persists, once the object is in place. */
@@ -258,6 +283,9 @@ export class MediaLibrary {
    */
   readonly storage: StorageManager;
   private readonly store: MediaStore;
+  /** The store without the tenant scope (signed deliveries, which the app already authorized). */
+  readonly #rawStore: MediaStore;
+  readonly #tenancy: ResolvedMediaTenancy;
   /**
    * Registered collection configs. Public because `acceptsMimeTypes` must have exactly one source
    * of truth: the TUS handler enforces the same whitelist at upload time by reading it from here,
@@ -281,8 +309,18 @@ export class MediaLibrary {
 
   constructor(options: MediaLibraryOptions) {
     this.storage = options.storage;
-    this.store = options.store;
     this.collections = new MediaCollectionRegistry(options.collections ?? []);
+    this.#tenancy = options.tenancy ?? TENANCY_OFF;
+    this.#rawStore = options.store;
+    const tenancy = this.#tenancy;
+    // With tenancy on, every read goes through the tenant scope: a file of another organization
+    // reads as missing. Public collections stay readable from every tenant.
+    this.store = tenancy.enabled
+      ? tenantScopedStore(options.store, {
+          scope: () => currentTenantScope(tenancy),
+          isShared: (collection) => this.collections.get(collection).access?.read === 'public',
+        })
+      : options.store;
     this.imageProcessor = options.imageProcessor;
     this.emitDiagnostics = options.emitDiagnostics ?? true;
     this.newId = options.idGenerator ?? (() => randomUUID());
@@ -310,7 +348,14 @@ export class MediaLibrary {
   async attach(input: AttachInput): Promise<MediaRecord> {
     const context = await this.#prepare(input);
     const { config, ownerId, id, target, mimeType } = context;
-    const path = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
+    const path = this.#layoutPath(
+      input.ownerType,
+      ownerId,
+      input.collection,
+      id,
+      input.fileName,
+      context.tenantId,
+    );
     const hasConversions = (config.conversions ?? []).length > 0;
 
     // Prove the bytes are what the caller claims BEFORE writing them. Peeking replays the head, so
@@ -397,7 +442,14 @@ export class MediaLibrary {
     }
 
     let path = input.key;
-    const layout = this.#layoutPath(input.ownerType, ownerId, input.collection, id, input.fileName);
+    const layout = this.#layoutPath(
+      input.ownerType,
+      ownerId,
+      input.collection,
+      id,
+      input.fileName,
+      context.tenantId,
+    );
     if (input.moveIntoLayout && path !== layout) {
       // Server-side only. There is deliberately no fallback that reads and re-writes the bytes:
       // that is precisely the copy this method exists to avoid.
@@ -458,8 +510,14 @@ export class MediaLibrary {
     collection: string,
     id: string,
     fileName: string,
+    tenantId?: string | null,
   ): string {
-    return `${ownerType}/${ownerId}/${collection}/${id}/${sanitizeFileName(fileName)}`;
+    // With tenancy on, a tenant's new files live under `t/<tenantId>/` (`tenancy.pathPrefix`).
+    const tenant =
+      this.#tenancy.pathPrefix && tenantId !== undefined && tenantId !== null
+        ? tenantPathPrefix(tenantId)
+        : '';
+    return `${tenant}${ownerType}/${ownerId}/${collection}/${id}/${sanitizeFileName(fileName)}`;
   }
 
   /**
@@ -483,6 +541,7 @@ export class MediaLibrary {
     mimeType: string;
     disk?: string | undefined;
     id?: string | undefined;
+    tenantId?: string | null | undefined;
   }): Promise<AttachContext> {
     const config = this.collections.get(input.collection);
     const ownerId = String(input.ownerId);
@@ -513,6 +572,11 @@ export class MediaLibrary {
       disk,
       target: this.storage.disk(disk),
       id: input.id ?? this.newId(),
+      tenantId: !this.#tenancy.enabled
+        ? undefined
+        : input.tenantId !== undefined
+          ? input.tenantId
+          : currentTenantId(this.#tenancy),
     };
   }
 
@@ -562,6 +626,7 @@ export class MediaLibrary {
         conversions: {},
         createdAt: timestamp,
         updatedAt: timestamp,
+        ...(context.tenantId !== undefined ? { tenantId: context.tenantId } : {}),
       });
     } catch (error) {
       // Compensation (disk + store aren't a single transaction): the bytes landed but the record
@@ -1050,6 +1115,11 @@ export class MediaLibrary {
 
   find(id: string): Promise<MediaRecord | null> {
     return this.store.find(id);
+  }
+
+  /** {@link find} across every tenant: for a request a delivery signature already authorized. @internal */
+  [findUnscoped](id: string): Promise<MediaRecord | null> {
+    return this.#rawStore.find(id);
   }
 
   /**

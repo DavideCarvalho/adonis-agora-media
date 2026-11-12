@@ -4,11 +4,14 @@ import { configure } from '../configure.js';
 describe('node ace configure @adonis-agora/media', () => {
   it('registers both providers and publishes the config files and both migrations', async () => {
     const providers: string[] = [];
+    const commands: string[] = [];
     const stubs: string[] = [];
     const codemods = {
-      updateRcFile: vi.fn(async (fn: (rc: { addProvider(p: string): void }) => void) => {
-        fn({ addProvider: (p) => providers.push(p) });
-      }),
+      updateRcFile: vi.fn(
+        async (fn: (rc: { addProvider(p: string): void; addCommand(c: string): void }) => void) => {
+          fn({ addProvider: (p) => providers.push(p), addCommand: (c) => commands.push(c) });
+        },
+      ),
       makeUsingStub: vi.fn(async (_root: string, stub: string) => {
         stubs.push(stub);
       }),
@@ -25,6 +28,8 @@ describe('node ace configure @adonis-agora/media', () => {
       'database/migrations/create_media_table.stub',
       // The console's Uploads tab reads these tables through the `lucid` session store.
       'database/migrations/create_media_upload_sessions_table.stub',
+      'database/migrations/add_media_tenant_id.stub',
     ]);
+    expect(commands).toEqual(['@adonis-agora/media/commands']);
   });
 });

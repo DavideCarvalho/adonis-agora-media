@@ -56,6 +56,7 @@ const STUBS = [
   'config/media_dashboard.stub',
   'database/migrations/create_media_table.stub',
   'database/migrations/create_media_upload_sessions_table.stub',
+  'database/migrations/add_media_tenant_id.stub',
 ];
 
 /**

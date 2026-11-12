@@ -1,0 +1,37 @@
+{{{
+  exports({ to: app.migrationsPath(`${new Date().getTime()}_add_media_tenant_id.ts`) })
+}}}
+import { BaseSchema } from '@adonisjs/lucid/schema'
+
+/**
+ * Organizations as tenants for @adonis-agora/media: a nullable 'tenant_id' on 'media' (and on
+ * 'media_upload_sessions' when the resumable session store uses Lucid). New files are stamped with
+ * the active tenant once tenancy is on; existing rows stay NULL (see 'node ace media:tenancy:backfill').
+ */
+export default class extends BaseSchema {
+  async up() {
+    this.schema.alterTable('media', (table) => {
+      table.string('tenant_id').nullable()
+      table.index(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
+    })
+    if (await this.schema.hasTable('media_upload_sessions')) {
+      this.schema.alterTable('media_upload_sessions', (table) => {
+        table.string('tenant_id').nullable()
+        table.index(['tenant_id'], 'media_upload_sessions_tenant_idx')
+      })
+    }
+  }
+
+  async down() {
+    if (await this.schema.hasTable('media_upload_sessions')) {
+      this.schema.alterTable('media_upload_sessions', (table) => {
+        table.dropIndex(['tenant_id'], 'media_upload_sessions_tenant_idx')
+        table.dropColumn('tenant_id')
+      })
+    }
+    this.schema.alterTable('media', (table) => {
+      table.dropIndex(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
+      table.dropColumn('tenant_id')
+    })
+  }
+}

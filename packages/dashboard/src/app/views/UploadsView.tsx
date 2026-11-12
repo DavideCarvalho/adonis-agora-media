@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { Route } from '../hash-route';
 import { navigate } from '../hash-route';
 import { useAbortUpload, useTopology, useUploadDetail, useUploads } from '../queries';
+import { tenantLabel, useShowsTenantColumn, useTenantPicker } from '../TenantPicker';
 import { Bar, Button, Dot, Empty, formatBytes, Panel, relativeAge } from '../ui';
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
@@ -124,6 +125,8 @@ function UploadDetail({ uploadId }: { uploadId: string }) {
 export function UploadsView({ route }: { route: Route }) {
   const { data, isLoading, isError, error } = useUploads();
   const uploads = data?.uploads ?? [];
+  const picker = useTenantPicker();
+  const showTenant = useShowsTenantColumn();
 
   if (route.uploadId) return <UploadDetail uploadId={route.uploadId} />;
 
@@ -147,6 +150,7 @@ export function UploadsView({ route }: { route: Route }) {
             <thead>
               <tr className="mono border-b border-border text-[10px] uppercase tracking-wider text-zinc-600">
                 <th className="px-4 py-2 font-normal">Key</th>
+                {showTenant && <th className="px-4 py-2 font-normal">Organization</th>}
                 <th className="px-4 py-2 font-normal">Disk</th>
                 <th className="px-4 py-2 font-normal">Progress</th>
                 <th className="px-4 py-2 font-normal">Parts</th>
@@ -165,6 +169,11 @@ export function UploadsView({ route }: { route: Route }) {
                       {upload.key}
                     </button>
                   </td>
+                  {showTenant && (
+                    <td className="mono px-4 py-2 text-xs text-zinc-400">
+                      {upload.tenantId ? tenantLabel(picker, upload.tenantId) : '—'}
+                    </td>
+                  )}
                   <td className="mono px-4 py-2 text-xs text-zinc-400">{upload.disk}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">

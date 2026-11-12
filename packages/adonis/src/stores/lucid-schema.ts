@@ -136,3 +136,49 @@ export async function dropMediaTables(
   const t = resolveTables(options);
   await db.rawQuery(`DROP TABLE IF EXISTS ${t.media}`);
 }
+
+/**
+ * Whether the `media` table has the `tenant_id` column tenancy needs (a zero-row probe query).
+ *
+ * @param db a Lucid `Database` or connection client
+ * @param options.table optional table-name override (defaults to {@link MEDIA_TABLES})
+ */
+export async function hasMediaTenantColumn(
+  db: LucidQueryClient,
+  options: { table?: string } = {},
+): Promise<boolean> {
+  const t = resolveTables(options);
+  try {
+    await db.rawQuery(`SELECT tenant_id FROM ${t.media} WHERE 1 = 0`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Add the nullable `tenant_id` column and its `(tenant_id, owner_type, owner_id, collection)` index
+ * to the `media` table when missing (idempotent). Tenancy (organizations as tenants) stamps new
+ * files with it; existing rows stay `NULL`. Same DDL as the migration
+ * `node ace media:publish-migration tenancy` publishes.
+ *
+ * @param db a Lucid `Database` or connection client
+ * @param options.table optional table-name override (defaults to {@link MEDIA_TABLES})
+ */
+export async function ensureMediaTenantColumn(
+  db: LucidDatabase,
+  options: { table?: string } = {},
+): Promise<void> {
+  const t = resolveTables(options);
+  if (!(await hasMediaTenantColumn(db, options))) {
+    await db.rawQuery(`ALTER TABLE ${t.media} ADD COLUMN tenant_id VARCHAR(255) NULL`);
+  }
+  // MySQL has no `CREATE INDEX IF NOT EXISTS`: a duplicate index there is reported and ignored.
+  try {
+    await db.rawQuery(
+      `CREATE INDEX ${isMysql(detectDialect(db)) ? '' : 'IF NOT EXISTS '}${t.media}_tenant_owner_idx ON ${t.media} (tenant_id, owner_type, owner_id, collection)`,
+    );
+  } catch (error) {
+    if (!/duplicate|exists/i.test(String((error as Error)?.message ?? error))) throw error;
+  }
+}
