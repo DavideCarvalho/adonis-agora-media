@@ -228,16 +228,21 @@ export class DashboardService {
 
   /** Object metadata + a URL for preview/download (signed, or this console's proxy — see `objectUrls`). */
   async object(diskName: string, key: string): Promise<ObjectDetailResponse> {
+    const meta = await this.objectMeta(diskName, key);
+    const url = await this.objectUrl(this.manager.storage.disk(diskName), diskName, key);
+    return { ...meta, url };
+  }
+
+  /** {@link object} without the URL: size, content type and last modified only. */
+  async objectMeta(diskName: string, key: string): Promise<Omit<ObjectDetailResponse, 'url'>> {
     if (!key) throw new DashboardError('key is required', 400);
     const disk = this.manager.storage.disk(diskName);
     const stat = isExtendedDisk(disk) ? await disk.stat(key) : await metaAsStat(disk, key);
-    const url = await this.objectUrl(disk, diskName, key);
     return {
       key,
       size: stat.size,
       ...(stat.contentType !== undefined ? { contentType: stat.contentType } : {}),
       ...(stat.lastModified !== undefined ? { lastModified: stat.lastModified.toISOString() } : {}),
-      url,
     };
   }
 
@@ -408,6 +413,13 @@ export class DashboardService {
       }),
     );
     return { record: toMediaEntry(record), variants };
+  }
+
+  /** One stored `MediaRecord` as the console lists it, without signing any URL. */
+  async mediaEntry(id: string): Promise<MediaEntry> {
+    const record = await this.manager.store.find(id);
+    if (!record) throw new DashboardError(`unknown media record: ${id}`, 404);
+    return toMediaEntry(record);
   }
 
   /** Deletes a stored `MediaRecord`. Actions-gated (does not touch its underlying disk object). */
