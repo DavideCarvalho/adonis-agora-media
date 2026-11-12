@@ -270,8 +270,12 @@ async function createIndex(
   name: string,
   table: string,
   columns: string[],
+  /** MySQL only: index this many leading characters of each column. */
+  mysqlPrefix?: number,
 ): Promise<void> {
-  const statement = `CREATE INDEX ${sql.mysql ? '' : 'IF NOT EXISTS '}${sql.q(name)} ON ${sql.table(table)} (${columns.map(sql.q).join(', ')})`;
+  const column = (c: string) =>
+    sql.mysql && mysqlPrefix !== undefined ? `${sql.q(c)}(${mysqlPrefix})` : sql.q(c);
+  const statement = `CREATE INDEX ${sql.mysql ? '' : 'IF NOT EXISTS '}${sql.q(name)} ON ${sql.table(table)} (${columns.map(column).join(', ')})`;
   try {
     await db.rawQuery(statement);
   } catch (error) {
@@ -375,6 +379,16 @@ export async function hasMediaTenantColumn(
   }
 }
 
+/** The columns of the `<table>_tenant_owner_idx` index, in order. */
+const TENANT_INDEX_COLUMNS = ['tenant_id', 'owner_type', 'owner_id', 'collection'] as const;
+
+/**
+ * Characters of each column MySQL indexes in `<table>_tenant_owner_idx`. InnoDB caps a key at 3072
+ * bytes; four utf8mb4 VARCHAR(255) columns are 4080. 4 × 191 × 4 = 3056 fits, and equality lookups
+ * on values up to 191 characters still resolve in the index alone.
+ */
+export const TENANT_INDEX_MYSQL_PREFIX = 191;
+
 /**
  * Add the nullable `tenant_id` column and its `(tenant_id, owner_type, owner_id, collection)` index
  * to the `media` table when missing (idempotent). Tenancy (organizations as tenants) stamps new
@@ -396,10 +410,14 @@ export async function ensureMediaTenantColumn(
       `ALTER TABLE ${sql.table(t.media)} ADD COLUMN ${sql.q('tenant_id')} VARCHAR(255) NULL`,
     );
   }
-  await createIndex(db, sql, `${t.media}_tenant_owner_idx`, t.media, [
-    'tenant_id',
-    'owner_type',
-    'owner_id',
-    'collection',
-  ]);
+  // MySQL caps an InnoDB key at 3072 bytes, which four utf8mb4 VARCHAR(255) columns exceed, so
+  // MySQL indexes a prefix of each (see TENANT_INDEX_MYSQL_PREFIX). Postgres/SQLite index them whole.
+  await createIndex(
+    db,
+    sql,
+    `${t.media}_tenant_owner_idx`,
+    t.media,
+    [...TENANT_INDEX_COLUMNS],
+    TENANT_INDEX_MYSQL_PREFIX,
+  );
 }

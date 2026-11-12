@@ -28,6 +28,11 @@ With the `lucid` store's `autoCreateSchema` (the default), the column is added f
 and without the migration, the first media query fails with `E_MEDIA_TENANCY_SCHEMA`, which says what
 to run. `node ace agora:doctor` checks it too.
 
+On MySQL, the `(tenant_id, owner_type, owner_id, collection)` index covers the first 191 characters
+of each column (four full `VARCHAR(255)` columns are over InnoDB's 3072-byte key limit under
+`utf8mb4`). If an earlier run of the migration failed on MySQL after adding the column, run
+`node ace migration:run` again: it adds the index and leaves the column alone.
+
 ## What changes
 
 - **New files** belong to the active tenant, and are stored under `t/<tenantId>/…`. Files written
