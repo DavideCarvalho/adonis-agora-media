@@ -17,16 +17,45 @@ const sessionsSchema: string | undefined = schema
 
 export default class extends BaseSchema {
   async up() {
-    this.in(schema).alterTable('media', (table) => {
-      table.string('tenant_id').nullable()
-      table.index(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
-    })
+    if (this.db.dialect.name === 'mysql') {
+      await this.upMysql()
+    } else {
+      this.in(schema).alterTable('media', (table) => {
+        table.string('tenant_id').nullable()
+        table.index(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
+      })
+    }
     if (await this.in(sessionsSchema).hasTable('media_upload_sessions')) {
       this.in(sessionsSchema).alterTable('media_upload_sessions', (table) => {
         table.string('tenant_id').nullable()
         table.index(['tenant_id'], 'media_upload_sessions_tenant_idx')
       })
     }
+  }
+
+  /**
+   * MySQL caps an index key at 3072 bytes and four utf8mb4 VARCHAR(255) columns are 4080, so the
+   * index covers the first 191 characters of each. Safe to re-run after a failed attempt: the column
+   * is added only when missing.
+   */
+  private async upMysql() {
+    if (!(await this.in(schema).hasColumn('media', 'tenant_id'))) {
+      this.in(schema).alterTable('media', (table) => {
+        table.string('tenant_id').nullable()
+      })
+    }
+    this.schema.raw(
+      this.db
+        .knexRawQuery('CREATE INDEX ?? ON ?? (??(191), ??(191), ??(191), ??(191))', [
+          'media_tenant_owner_idx',
+          schema ? `${schema}.media` : 'media',
+          'tenant_id',
+          'owner_type',
+          'owner_id',
+          'collection',
+        ])
+        .toQuery()
+    )
   }
 
   async down() {
