@@ -41,8 +41,9 @@ node ace configure @adonis-agora/media
 ```
 
 `configure` registers **both** providers in `adonisrc.ts`, publishes `config/media.ts`
-and `config/media_dashboard.ts`, and publishes two Lucid migrations (one for the optional
-`lucid` media store, one for the upload-session store). Delete the migrations you don't
+and `config/media_dashboard.ts`, and publishes three Lucid migrations (one for the optional
+`lucid` media store, one for the upload-session store, one adding the nullable `tenant_id`
+column tenancy needs — unused while tenancy is off). Delete the migrations you don't
 need; the in-memory stores need none.
 
 ```ts title="config/media.ts"
