@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.8
+
+### Minor Changes
+
+- [#295](https://github.com/DavideCarvalho/adonis-agora-media/pull/295) [`b29ec2c`](https://github.com/DavideCarvalho/adonis-agora-media/commit/b29ec2cc8b8feaa9107267a81fb524ed48b46567) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `stores.lucid({ schema })` and `uploadSessions.lucid({ schema })` put media's tables in a database schema other than the connection's (a Postgres schema, a MySQL database). Every statement names the schema, so it works on any connection without `searchPath`. Auto-create makes the schema when missing, the published migrations take the same `schema`, `createMediaTables` / `dropMediaTables` and `media:tenancy:backfill --schema` accept it, SQLite fails at boot when it is set, and `agora:doctor --deep` checks it (`media.db-schema`, registered only when a schema is set). The auto-created table now also works on MySQL (identifiers are quoted per dialect). Without `schema` nothing changes.
+
 ## 1.0.0-rc.7
 
 ### Patch Changes
