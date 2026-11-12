@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CollectionFilter } from '../../types';
 import { navigate, type Route } from '../hash-route';
 import {
@@ -216,8 +216,16 @@ function FilterField({
  */
 export function CollectionsView({ route }: { route: Route }) {
   const topology = useTopology();
-  const [draft, setDraft] = useState<CollectionFilter>(EMPTY_FILTER);
-  const [applied, setApplied] = useState<CollectionFilter>(EMPTY_FILTER);
+  const initial = withCollection(EMPTY_FILTER, route.collection);
+  const [draft, setDraft] = useState<CollectionFilter>(initial);
+  const [applied, setApplied] = useState<CollectionFilter>(initial);
+  // A collection link (`#/collections?collection=…`, e.g. a search hit) followed while this view is
+  // already open re-applies the filter.
+  useEffect(() => {
+    const next = withCollection(EMPTY_FILTER, route.collection);
+    setDraft(next);
+    setApplied(next);
+  }, [route.collection]);
 
   const { items, isLoading, isError, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useCollections(applied);
