@@ -10,12 +10,22 @@ import { BaseSchema } from '@adonisjs/lucid/schema'
  * TEXT and timestamps as epoch-ms integers, so the schema is portable across SQLite / Postgres / MySQL.
  * Only needed if you enable 'uploads.resumable' with the 'lucid' session store.
  */
+/**
+ * The database schema both tables live in: the same value as 'schema' in uploadSessions.lucid().
+ * Leave it undefined to use the connection's current schema. On MySQL a schema is a database.
+ */
+const schema: string | undefined = undefined
+
 export default class extends BaseSchema {
   protected sessionsTable = 'media_upload_sessions'
   protected partsTable = 'media_upload_parts'
 
   async up() {
-    this.schema.createTable(this.sessionsTable, (table) => {
+    if (schema) {
+      const create = this.db.dialect.name === 'mysql' ? 'CREATE DATABASE' : 'CREATE SCHEMA'
+      this.schema.raw(this.db.knexRawQuery(create + ' IF NOT EXISTS ??', [schema]).toQuery())
+    }
+    this.builder().createTable(this.sessionsTable, (table) => {
       table.string('id').primary()
       table.string('disk').notNullable()
       table.text('key').notNullable()
@@ -30,7 +40,7 @@ export default class extends BaseSchema {
       table.index(['disk'], 'media_upload_sessions_disk_idx')
     })
 
-    this.schema.createTable(this.partsTable, (table) => {
+    this.builder().createTable(this.partsTable, (table) => {
       table.string('session_id').notNullable()
       table.integer('part_number').notNullable()
       table.string('etag').notNullable()
@@ -39,7 +49,12 @@ export default class extends BaseSchema {
   }
 
   async down() {
-    this.schema.dropTable(this.partsTable)
-    this.schema.dropTable(this.sessionsTable)
+    this.builder().dropTable(this.partsTable)
+    this.builder().dropTable(this.sessionsTable)
+  }
+
+  /** The schema builder, pointed at 'schema' when it is set. */
+  private builder() {
+    return schema ? this.schema.withSchema(schema) : this.schema
   }
 }

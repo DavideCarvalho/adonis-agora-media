@@ -207,6 +207,8 @@
     "better-sqlite3": "13.0.3",
     "luxon": "3.7.2",
     "mediabunny": "1.65.2",
+    "mysql2": "3.24.6",
+    "pg": "8.23.1",
     "sharp": "0.35.5",
     "tempura": "1.0.1",
     "typescript": "7.0.2",

@@ -1,5 +1,11 @@
 import type { QueryClientContract } from '@adonisjs/lucid/types/database';
-import { assertSafeIdentifier } from '../stores/lucid-schema.js';
+import {
+  assertSafeIdentifier,
+  assertSchema,
+  detectDialect,
+  type LucidDatabase,
+  qualifiedTable,
+} from '../stores/lucid-schema.js';
 
 /** What {@link backfillMediaTenants} changes. */
 export interface BackfillOptions {
@@ -7,6 +13,8 @@ export interface BackfillOptions {
   ownerType: string;
   /** The `media` table (default `media`). */
   table?: string;
+  /** The database schema the table lives in (default: the connection's current one). */
+  schema?: string;
   /** Count only, change nothing. */
   dryRun?: boolean;
 }
@@ -20,7 +28,12 @@ export async function backfillMediaTenants(
   client: QueryClientContract,
   options: BackfillOptions,
 ): Promise<number> {
-  const table = assertSafeIdentifier(options.table ?? 'media');
+  const schema = assertSchema(
+    options.schema,
+    detectDialect(client as unknown as LucidDatabase),
+    'media:tenancy:backfill',
+  );
+  const table = qualifiedTable(assertSafeIdentifier(options.table ?? 'media'), schema);
   const matching = () =>
     client.from(table).whereNull('tenant_id').where('owner_type', options.ownerType);
   const [row] = (await matching().count('* as total')) as Array<{ total?: unknown }>;

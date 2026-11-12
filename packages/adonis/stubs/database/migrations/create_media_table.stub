@@ -8,11 +8,21 @@ import { BaseSchema } from '@adonisjs/lucid/schema'
  * 'conversions') are stored as TEXT — the store (de)serializes them — and timestamps as epoch-ms
  * integers, so the schema is portable across SQLite / Postgres / MySQL.
  */
+/**
+ * The database schema the table lives in: the same value as 'schema' in stores.lucid(). Leave it
+ * undefined to use the connection's current schema. On MySQL a schema is a database.
+ */
+const schema: string | undefined = undefined
+
 export default class extends BaseSchema {
   protected tableName = 'media'
 
   async up() {
-    this.schema.createTable(this.tableName, (table) => {
+    if (schema) {
+      const create = this.db.dialect.name === 'mysql' ? 'CREATE DATABASE' : 'CREATE SCHEMA'
+      this.schema.raw(this.db.knexRawQuery(create + ' IF NOT EXISTS ??', [schema]).toQuery())
+    }
+    this.builder().createTable(this.tableName, (table) => {
       table.string('id').primary()
       table.string('owner_type').notNullable()
       table.string('owner_id').notNullable()
@@ -35,6 +45,11 @@ export default class extends BaseSchema {
   }
 
   async down() {
-    this.schema.dropTable(this.tableName)
+    this.builder().dropTable(this.tableName)
+  }
+
+  /** The schema builder, pointed at 'schema' when it is set. */
+  private builder() {
+    return schema ? this.schema.withSchema(schema) : this.schema
   }
 }

@@ -18,6 +18,9 @@ export default class MediaTenancyBackfill extends BaseCommand {
   @flags.string({ description: 'The media table (default: media)' })
   declare table: string;
 
+  @flags.string({ description: 'The database schema of the table (default: the current one)' })
+  declare schema: string;
+
   @flags.string({ description: 'The Lucid connection (default: the default connection)' })
   declare connection: string;
 
@@ -38,6 +41,7 @@ export default class MediaTenancyBackfill extends BaseCommand {
     const count = await backfillMediaTenants(db.connection(this.connection), {
       ownerType: this.ownerType,
       ...(this.table !== undefined ? { table: this.table } : {}),
+      ...(this.schema !== undefined ? { schema: this.schema } : {}),
       ...(this.dryRun ? { dryRun: true } : {}),
     });
     this.logger.success(
