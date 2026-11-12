@@ -99,6 +99,9 @@ export interface MediaAccountDeps {
   now?: () => number;
 }
 
+/** The longest display name a rename accepts (the `name` column is `VARCHAR(255)`). */
+const MAX_NAME_LENGTH = 255;
+
 /** Defaults. */
 export const ACCOUNT_DEFAULTS = {
   pageSize: 20,
@@ -257,6 +260,7 @@ export function mediaAccountExtension(deps: MediaAccountDeps): AccountExtension 
     media: MediaAccountManager,
     ctx: AccountExtensionContext,
     id: string | null,
+    access: 'read' | 'write' = 'read',
   ): Promise<{ record: MediaRecord; who: { type: string; id: string } } | null> => {
     if (!id) return null;
     const who = await owner(ctx);
@@ -264,7 +268,7 @@ export function mediaAccountExtension(deps: MediaAccountDeps): AccountExtension 
     if (!record || !byName.has(record.collection)) return null;
     if (record.ownerType !== who.type || String(record.ownerId) !== String(who.id)) return null;
     if (!inScope(accountScope(media.tenancy, ctx), record.tenantId)) return null;
-    if (!(await may(media, ctx, who, 'read', record.collection, record))) return null;
+    if (!(await may(media, ctx, who, access, record.collection, record))) return null;
     return { record, who };
   };
 
@@ -300,7 +304,7 @@ export function mediaAccountExtension(deps: MediaAccountDeps): AccountExtension 
           label: { key: 'media.files.rename_field' },
           kind: 'text',
           required: true,
-          maxLength: 255,
+          maxLength: MAX_NAME_LENGTH,
         },
       ],
       async handle(ctx, input) {
@@ -310,9 +314,14 @@ export function mediaAccountExtension(deps: MediaAccountDeps): AccountExtension 
         const { record, who } = found;
         if (byName.get(record.collection)?.rename === false) return FORBIDDEN;
         if (!(await may(media, ctx, who, 'write', record.collection, record))) return FORBIDDEN;
-        await asTenant(media.tenancy, ctx, () =>
-          media.library.rename(record.id, input.fields.name ?? ''),
-        );
+        const name = (input.fields.name ?? '').trim();
+        if (name === '') {
+          return { ok: false, error: { key: 'media.files.name_required' }, status: 400 };
+        }
+        if (name.length > MAX_NAME_LENGTH) {
+          return { ok: false, error: { key: 'media.files.name_too_long' }, status: 400 };
+        }
+        await asTenant(media.tenancy, ctx, () => media.library.rename(record.id, name));
         return { ok: true, flash: { key: 'media.files.renamed' } };
       },
     },
@@ -342,7 +351,8 @@ export function mediaAccountExtension(deps: MediaAccountDeps): AccountExtension 
         // The file is already stored by the upload endpoint (under a ticket issued to this account);
         // this confirms it belongs to the account before saying so.
         const media = await deps.media();
-        const found = await ownFile(media, ctx, input.fields.media || input.target);
+        // Checked against `write`, the rule the upload ticket was issued under.
+        const found = await ownFile(media, ctx, input.fields.media || input.target, 'write');
         if (!found) return NOT_FOUND;
         return { ok: true, flash: { key: 'media.files.uploaded' } };
       },

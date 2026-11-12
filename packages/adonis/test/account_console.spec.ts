@@ -477,3 +477,67 @@ describe('MediaStore.listByOwnerPaged', () => {
     }
   });
 });
+
+describe('account console review fixes', () => {
+  it('rename refuses a blank or too long name', async () => {
+    const { media, extension } = setup();
+    const mine = await attach(media, '42');
+    const rename = page(extension).actions?.rename;
+    expect(await rename?.handle(ctx(), { target: mine.id, fields: { name: '  ' } })).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+    expect(
+      await rename?.handle(ctx(), { target: mine.id, fields: { name: 'x'.repeat(256) } }),
+    ).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it('confirms an upload into a write-only collection', async () => {
+    const disk = new InMemoryDisk('https://cdn.test');
+    const media = new MediaManager({
+      defaultDisk: 'fs',
+      resolve: () => disk,
+      store: new InMemoryMediaStore(),
+      emitDiagnostics: false,
+      collections: [{ name: 'dropbox', access: { write: authorizers.authenticated() } }],
+    });
+    const ext = mediaAccountExtension({
+      media: async () => media,
+      options: { collections: ['dropbox'] },
+      secret: SECRET,
+    });
+    const record = await attach(media, '42', 'dropbox');
+    expect(
+      await page(ext).actions?.upload?.handle(ctx(), {
+        target: null,
+        fields: { media: record.id },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('fails an upload whose bytes do not match the declared length', async () => {
+    const { media } = setup();
+    const ticket = issueUploadTicket(SECRET, {
+      ownerType: 'User',
+      ownerId: '42',
+      collection: 'documents',
+      expiresAt: Date.now() + 60_000,
+    });
+    const send = (body: string, length: string) =>
+      handleAccountUpload(
+        {
+          header: (name: string) =>
+            ({
+              'x-media-upload-ticket': ticket,
+              'content-length': length,
+              'content-type': 'text/plain',
+            })[name.toLowerCase()],
+          body: Readable.from([Buffer.from(body)]),
+        },
+        { media: async () => media, options: { collections: ['documents'] }, secret: SECRET },
+      );
+    expect((await send('hello world', '3')).status).toBe(422);
+    expect((await send('hi', '5')).status).toBe(422);
+    expect((await send('hello', '5')).status).toBe(201);
+  });
+});

@@ -1,4 +1,4 @@
-import type { Readable } from 'node:stream';
+import { type Readable, Transform } from 'node:stream';
 import { withTenant } from '../agora/tenancy.js';
 import type { MediaRecord } from '../media_record.js';
 import {
@@ -76,6 +76,25 @@ export async function handleAccountUpload(
   }
   const mimeType = (request.header('content-type') ?? 'application/octet-stream').split(';')[0]!;
   const media = await deps.media();
+  // The declared length is only trusted as far as the bytes go: more (or fewer) bytes than
+  // declared, or more than the limit, fail the upload, so the stored size is the bytes stored.
+  let received = 0;
+  const sizeError = (message: string) =>
+    Object.assign(new Error(message), { code: 'E_MEDIA_UPLOAD_SIZE' });
+  const counted = request.body.pipe(
+    new Transform({
+      transform(chunk: Buffer, _encoding, done) {
+        received += chunk.length;
+        if (received > length || received > max) done(sizeError('file larger than declared'));
+        else done(null, chunk);
+      },
+      flush(done) {
+        if (received !== length) done(sizeError('file shorter than declared'));
+        else done();
+      },
+    }),
+  );
+  request.body.on('error', (error) => counted.destroy(error));
   const attach = () =>
     media.library.attach({
       ownerType: ticket.ownerType,
@@ -83,7 +102,7 @@ export async function handleAccountUpload(
       collection: ticket.collection,
       fileName: fileName.slice(0, 255),
       mimeType: mimeType.trim() || 'application/octet-stream',
-      contents: request.body,
+      contents: counted,
       size: length,
       ...(ticket.tenantId !== undefined ? { tenantId: ticket.tenantId } : {}),
     });
