@@ -21,6 +21,8 @@ import { DirectUploadHandler } from '../src/direct_upload_handler.js';
 import type { DriveServiceModule } from '../src/disks/drive.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
 import { resolveConfiguredDisks } from '../src/disks/factory.js';
+import { registerDoctorChecks } from '../src/doctor/agora_doctor.js';
+import { mediaDoctorChecks } from '../src/doctor/checks.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
@@ -200,6 +202,9 @@ export default class MediaProvider {
     // `@adonisjs/core`'s own `AppServiceProvider` and `@adonis-agora/durable`'s `DashboardProvider`
     // use internally, and is immune to the dual-package hazard for the same reason `booted_app.ts`
     // is: it comes from `this.app` (captured at registration), never from a module-level import.
+    // `node ace agora:doctor` reads these after boot (registered from `boot()`, which Adonis awaits).
+    await registerDoctorChecks(this.app.container as never, mediaDoctorChecks).catch(() => {});
+
     // Media's "My files" page in the authkit account console, when authkit's registry is in the
     // app and `accountConsole.collections` lists something. No import of authkit: a binding name and
     // an object literal.
