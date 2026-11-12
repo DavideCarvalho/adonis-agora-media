@@ -8,15 +8,55 @@ const DOCS = 'https://davidecarvalho.github.io/agora/docs/media';
 
 type AnyConfig = Record<string, unknown>;
 
+/** Drive's disks as boot resolves them: the default name and the service names. */
+export interface DriveDisks {
+  default?: string;
+  services: string[];
+}
+
+/**
+ * Resolve `config/drive.ts` the way the media provider does at boot: Drive's `defineConfig()`
+ * returns a config provider, a hand-rolled config is a plain `{ default, services }`. `null` when
+ * there is no Drive config, `'unknown'` when it cannot be resolved.
+ */
+export async function resolveDriveDisks(
+  app: ApplicationService,
+): Promise<DriveDisks | null | 'unknown'> {
+  const value = app.config.get<unknown>('drive', undefined);
+  if (value === undefined || value === null) return null;
+  try {
+    const { configProvider } = await import('@adonisjs/core');
+    const resolved = (await configProvider.resolve<unknown>(app, value)) as {
+      config?: { default?: string; services?: Record<string, unknown> };
+      default?: string;
+      services?: Record<string, unknown>;
+    } | null;
+    const config = resolved ? (resolved.config ?? resolved) : (value as unknown as typeof resolved);
+    if (!config || typeof config !== 'object') return 'unknown';
+    return {
+      ...(typeof config.default === 'string' ? { default: config.default } : {}),
+      services: Object.keys(config.services ?? {}),
+    };
+  } catch {
+    return 'unknown';
+  }
+}
+
 /** `media.disks`: every disk media writes to exists in `config/media.ts` `disks` or in Drive. */
 export function checkDisks(
   media: MediaConfig | undefined,
-  drive: { default?: string; services?: Record<string, unknown> } | undefined,
+  drive: DriveDisks | null | 'unknown',
 ): AgoraDoctorResult {
   if (media === undefined) {
     return { status: 'skip', message: 'config/media.ts is not present.' };
   }
-  const known = new Set([...Object.keys(media.disks ?? {}), ...Object.keys(drive?.services ?? {})]);
+  if (drive === 'unknown') {
+    return {
+      status: 'skip',
+      message: 'config/drive.ts could not be resolved, so the disks were not checked.',
+    };
+  }
+  const known = new Set([...Object.keys(media.disks ?? {}), ...(drive?.services ?? [])]);
   const referenced = new Map<string, string>();
   const defaultDisk = media.disk ?? drive?.default;
   if (defaultDisk === undefined) {
@@ -139,13 +179,10 @@ export const mediaDoctorChecks: AgoraDoctorCheck[] = [
     id: 'media.disks',
     lib: 'media',
     title: 'Disks exist',
-    run: (app) =>
+    run: async (app) =>
       checkDisks(
         app.config.get<MediaConfig | undefined>('media', undefined),
-        app.config.get<{ default?: string; services?: Record<string, unknown> } | undefined>(
-          'drive',
-          undefined,
-        ),
+        await resolveDriveDisks(app),
       ),
   },
   {

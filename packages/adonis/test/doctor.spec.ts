@@ -22,9 +22,9 @@ describe('media doctor checks', () => {
   });
 
   it('media.disks', () => {
-    expect(checkDisks(undefined, undefined).status).toBe('skip');
-    expect(checkDisks({}, undefined).status).toBe('error');
-    expect(checkDisks({}, { default: 'fs', services: { fs: {} } }).status).toBe('ok');
+    expect(checkDisks(undefined, null).status).toBe('skip');
+    expect(checkDisks({}, null).status).toBe('error');
+    expect(checkDisks({}, { default: 'fs', services: ['fs'] }).status).toBe('ok');
     const missing = checkDisks(
       {
         disk: 's3',
@@ -32,11 +32,40 @@ describe('media doctor checks', () => {
         collections: [{ name: 'videos', disk: 'cold' }],
         uploads: { resumable: { routes: { disk: 'tmp' } } },
       },
-      { default: 'fs', services: { fs: {} } },
+      { default: 'fs', services: ['fs'] },
     );
     expect(missing.status).toBe('error');
     expect(missing.message).toContain('"cold" (collection "videos")');
     expect(missing.message).toContain('"tmp" (uploads.resumable.routes.disk)');
+    expect(checkDisks({}, 'unknown').status).toBe('skip');
+  });
+
+  it("resolves Drive's config provider like boot does", async () => {
+    const { resolveDriveDisks } = await import('../src/doctor/checks.js');
+    const app = (drive: unknown) =>
+      ({
+        config: { get: (key: string, def: unknown) => (key === 'drive' ? drive : def) },
+      }) as never;
+    const provider = {
+      type: 'provider',
+      resolver: async () => ({ config: { default: 's3', services: { s3: {}, fs: {} } } }),
+    };
+    expect(await resolveDriveDisks(app(provider))).toEqual({
+      default: 's3',
+      services: ['s3', 'fs'],
+    });
+    expect(await resolveDriveDisks(app({ default: 'fs', services: { fs: {} } }))).toEqual({
+      default: 'fs',
+      services: ['fs'],
+    });
+    expect(await resolveDriveDisks(app(undefined))).toBeNull();
+    const broken = {
+      type: 'provider',
+      resolver: async () => {
+        throw new Error('x');
+      },
+    };
+    expect(await resolveDriveDisks(app(broken))).toBe('unknown');
   });
 
   it('media.console-gate', () => {

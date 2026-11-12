@@ -126,15 +126,15 @@ export class LucidMediaStore implements MediaStore {
     }
   }
 
-  /**
-   * Create the `media` table (idempotent). Delegates to the standalone {@link createMediaTables}
-   * so the auto-create path and a migration-based one run identical DDL.
-   */
   /** Whether the table has the `tenant_id` column tenancy needs. */
   async hasTenantColumn(): Promise<boolean> {
     return hasMediaTenantColumn(this.client(), { table: this.table });
   }
 
+  /**
+   * Create the `media` table (idempotent). Delegates to the standalone {@link createMediaTables}
+   * so the auto-create path and a migration-based one run identical DDL.
+   */
   async ensureSchema(): Promise<void> {
     await createMediaTables(this.db, { table: this.table });
     if (this.tenantColumn) await ensureMediaTenantColumn(this.db, { table: this.table });

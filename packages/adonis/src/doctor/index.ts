@@ -14,6 +14,8 @@ export {
   checkConsoleGate,
   checkDisks,
   checkTenancySchema,
+  type DriveDisks,
+  resolveDriveDisks,
 } from './checks.js';
 
 /** Every media check, for `node ace agora:doctor --no-boot` (which imports this entry). */
