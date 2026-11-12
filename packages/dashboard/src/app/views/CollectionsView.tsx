@@ -216,8 +216,9 @@ function FilterField({
  */
 export function CollectionsView({ route }: { route: Route }) {
   const topology = useTopology();
-  const [draft, setDraft] = useState<CollectionFilter>(EMPTY_FILTER);
-  const [applied, setApplied] = useState<CollectionFilter>(EMPTY_FILTER);
+  const initial = withCollection(EMPTY_FILTER, route.collection);
+  const [draft, setDraft] = useState<CollectionFilter>(initial);
+  const [applied, setApplied] = useState<CollectionFilter>(initial);
 
   const { items, isLoading, isError, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useCollections(applied);

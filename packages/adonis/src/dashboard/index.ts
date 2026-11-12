@@ -28,6 +28,14 @@ export {
   resolveConsoleAuthorize,
 } from './console_authorize.js';
 export type {
+  AgoraConsoleEntry,
+  AgoraConsoleIcon,
+  AgoraConsoleRegistry,
+  AgoraConsoleSearchHit,
+} from './console_switcher.js';
+// The Agora console switcher: join it from a console the app mounts itself.
+export { AGORA_CONSOLES_BINDING, registerAgoraConsole } from './console_switcher.js';
+export type {
   AccessDeniedOption,
   AccessDeniedRenderer,
   DashboardMiddleware,

@@ -33,6 +33,16 @@ export interface DashboardBootstrap {
   uploadsBase: string;
   tusBase: string;
   actions: boolean;
+  /** The console switcher, present only when other Agora consoles are registered in the app. */
+  switcher?: SwitcherConfig;
+}
+
+/** Where the SPA asks which other consoles the viewer may open, and how many are registered. */
+export interface SwitcherConfig {
+  /** `GET` it for the consoles the viewer may open; `<endpoint>/search?q=` searches them. */
+  endpoint: string;
+  /** Registered consoles other than this one (before any `authorize` runs). */
+  others: number;
 }
 
 /** Normalise a mount path: leading slash, collapsed slashes, no trailing slash (root stays `/`). */
@@ -67,7 +77,9 @@ export function renderIndexHtml(
   const based = html.split(BASE_PLACEHOLDER).join(`${basePath === '/' ? '' : basePath}/`);
   // `<` escaped as `\u003c` inside the JSON: a data block ends at the first `</script`, and a
   // config value must not be able to close it early. Valid JSON either way.
-  const json = JSON.stringify(bootstrap).replace(/</g, '\\u003c');
+  const { switcher, ...rest } = bootstrap;
+  const config: DashboardBootstrap = switcher && switcher.others > 0 ? { ...rest, switcher } : rest;
+  const json = JSON.stringify(config).replace(/</g, '\\u003c');
   const inject = `<script type="application/json" id="${CONFIG_ELEMENT_ID}">${json}</script>`;
   return based.includes('</head>') ? based.replace('</head>', `${inject}</head>`) : inject + based;
 }

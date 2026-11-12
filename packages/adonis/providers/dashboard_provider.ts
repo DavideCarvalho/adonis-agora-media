@@ -11,6 +11,14 @@ import {
   type ConsoleAuthorizeDecision,
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
+import {
+  listVisibleConsoles,
+  mediaConsoleSearch,
+  otherConsoles,
+  readAgoraConsoles,
+  registerAgoraConsole,
+  searchConsoles,
+} from '../src/dashboard/console_switcher.js';
 import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
 import { registerMediaDevTools } from '../src/dashboard/dev_tools.js';
 import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
@@ -30,6 +38,9 @@ function spaDirectory(): string {
   spaDir ??= fileURLToPath(new URL('../assets/spa/', import.meta.url));
   return spaDir;
 }
+
+/** This console's id in the app's `'agora.consoles'` registry. */
+const CONSOLE_ID = 'media';
 
 /** Logged once at boot when `authorize` is omitted. Same wording in every Agora console. */
 const NO_AUTHORIZE_WARNING =
@@ -68,6 +79,10 @@ export default class MediaDashboardProvider {
     // Developer tools on the app's dev MCP endpoint, when `@adonis-agora/agent/mcp_provider` bound
     // its hub (its `register()` ran before any `boot()`). Gated by this console's own `authorize`.
     await this.#registerDevTools(config, decide);
+
+    // The console switcher: this console joins the app's `'agora.consoles'` registry so the other
+    // Agora consoles can link to it (and search it), and it can link to them.
+    await this.#registerConsole(config, decide);
 
     await this.app.booted(async () => {
       // Said once per process, when the routes mount.
@@ -108,6 +123,47 @@ export default class MediaDashboardProvider {
     } catch (error) {
       this.#warn(
         `[@adonis-agora/media] could not register the developer tools: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async #registerConsole(
+    config: MediaDashboardConfig,
+    decide: ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null,
+  ): Promise<void> {
+    const basePath = normalizePath(config.basePath ?? '/media/dashboard');
+    const service = this.#service(config);
+    const diskNames = this.#resolveDiskNames(config);
+    try {
+      await registerAgoraConsole(
+        this.app.container,
+        {
+          id: CONSOLE_ID,
+          title: 'Media',
+          package: '@adonis-agora/media',
+          icon: 'media',
+          path: basePath,
+          order: 50,
+          authorize: decide ?? (async () => ({ allowed: true })),
+          search: mediaConsoleSearch(async () => {
+            const svc = await service();
+            return {
+              find: async (id) => {
+                const entry = await svc.mediaEntry(id).catch(() => null);
+                return entry
+                  ? { id: entry.id, collection: entry.collection, fileName: entry.fileName }
+                  : null;
+              },
+              collections: async () => (await svc.collectionsSummary()).collections,
+              disks: () => diskNames,
+            };
+          }, basePath),
+        },
+        { warn: (message) => this.#warn(message) },
+      );
+    } catch (error) {
+      this.#warn(
+        `[@adonis-agora/media] could not join the console switcher: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -228,6 +284,26 @@ export default class MediaDashboardProvider {
           json(async (svc) => svc.topology()),
         )
         .as('media.dashboard.topology');
+      // The console switcher: the other Agora consoles this viewer may open, and a search across them.
+      router
+        .get('/consoles', async (ctx: HttpContext) => {
+          const registry = await readAgoraConsoles(this.app.container);
+          ctx.response.header('cache-control', 'private, no-store');
+          return ctx.response
+            .status(200)
+            .json(await listVisibleConsoles(registry, CONSOLE_ID, ctx));
+        })
+        .as('media.dashboard.consoles');
+      router
+        .get('/consoles/search', async (ctx: HttpContext) => {
+          const registry = await readAgoraConsoles(this.app.container);
+          const q = ctx.request.qs().q;
+          ctx.response.header('cache-control', 'private, no-store');
+          return ctx.response
+            .status(200)
+            .json(await searchConsoles(registry, CONSOLE_ID, ctx, typeof q === 'string' ? q : ''));
+        })
+        .as('media.dashboard.consoles.search');
       router
         .get(
           '/disks',
@@ -480,7 +556,15 @@ export default class MediaDashboardProvider {
       return ctx.response
         .header('content-type', 'text/html; charset=utf-8')
         .header('cache-control', 'no-store, must-revalidate')
-        .send(renderIndexHtml(html, basePath, bootstrap));
+        .send(
+          renderIndexHtml(html, basePath, {
+            ...bootstrap,
+            switcher: {
+              endpoint: `${bootstrap.apiBase}/consoles`,
+              others: otherConsoles(await readAgoraConsoles(this.app.container), CONSOLE_ID),
+            },
+          }),
+        );
     };
 
     const group = router.group(() => {
