@@ -6,6 +6,7 @@ import type {
   UploadSessionStore,
 } from '../resumable_upload.js';
 import {
+  assertSafeIdentifier,
   assertSchema,
   detectDialect,
   inspectSchemaTables,
@@ -90,6 +91,8 @@ export class LucidUploadSessionStore implements UploadSessionStore {
       options.table ?? 'media_upload_sessions',
       options.partsTable ?? 'media_upload_parts',
     ];
+    // With a schema the tables must be bare names: `a.b` would make a three-part reference.
+    if (this.schema !== undefined) for (const name of this.tableNames) assertSafeIdentifier(name);
     this.table = qualifiedTable(this.tableNames[0], this.schema);
     this.partsTable = qualifiedTable(this.tableNames[1], this.schema);
   }

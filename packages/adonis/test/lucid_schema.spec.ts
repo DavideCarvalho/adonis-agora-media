@@ -51,6 +51,16 @@ describe('the media lucid `schema` option', () => {
     expect(new LucidUploadSessionStore(fakeDatabase('mysql'), { schema: name }).schema).toBe(name);
   });
 
+  it('rejects a dotted table name next to a schema', () => {
+    const pg = fakeDatabase('postgres');
+    expect(() => new LucidMediaStore(pg, { schema: 's', table: 'a.b' })).toThrow(
+      /unsafe SQL identifier/,
+    );
+    expect(() => new LucidUploadSessionStore(pg, { schema: 's', partsTable: 'a.b' })).toThrow(
+      /unsafe SQL identifier/,
+    );
+  });
+
   it('changes nothing without a schema', async () => {
     const store = new LucidMediaStore(db);
     expect(store.schema).toBeUndefined();

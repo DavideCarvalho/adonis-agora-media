@@ -13,6 +13,7 @@ import {
   type MediaTotalsOptions,
 } from '../media_store.js';
 import {
+  assertSafeIdentifier,
   assertSchema,
   createMediaTables,
   detectDialect,
@@ -115,6 +116,8 @@ export class LucidMediaStore implements MediaStore {
       options.schema === undefined
         ? undefined
         : assertSchema(options.schema, this.dialect(), 'stores.lucid()');
+    // With a schema the table must be a bare name: `a.b` would make a three-part reference.
+    if (this.schema !== undefined) assertSafeIdentifier(this.table);
     this.qualified = qualifiedTable(this.table, this.schema);
   }
 

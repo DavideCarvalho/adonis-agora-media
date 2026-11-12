@@ -247,6 +247,38 @@ for (const target of targets) {
       expectAllQualified();
     });
 
+    it.skipIf(mysql)('reports a table the role cannot write to', async () => {
+      const name = freshSchema();
+      await runMigrationStub(db, 'create_media_upload_sessions_table.stub', { schema: name });
+      const role = `${name}_ro`;
+      await raw(`DROP ROLE IF EXISTS ${role}`);
+      await raw(`CREATE ROLE ${role} LOGIN PASSWORD 'pw'`);
+      await raw(`GRANT USAGE ON SCHEMA "${name}" TO ${role}`);
+      await raw(`GRANT ALL ON "${name}"."media_upload_sessions" TO ${role}`);
+      await raw(`GRANT SELECT ON "${name}"."media_upload_parts" TO ${role}`);
+      const url = new URL(target.url as string);
+      url.username = role;
+      url.password = 'pw';
+      const app = new AppFactory().create(new URL('./', import.meta.url), () => {}) as any;
+      const limited = new Database(
+        { connection: 'ro', connections: { ro: { client: 'pg', connection: url.href } as never } },
+        new LoggerFactory().create(),
+        new Emitter(app),
+      );
+      try {
+        const results = await checkStoreSchema(
+          'sessions',
+          new LucidUploadSessionStore(limited, { schema: name }),
+        );
+        expect(results.map((r) => r.status)).toEqual(['error']);
+        expect(results[0]?.message).toContain('media_upload_parts');
+      } finally {
+        await limited.manager.closeAll();
+        await raw(`DROP OWNED BY ${role}`);
+        await raw(`DROP ROLE ${role}`);
+      }
+    });
+
     it('reports the schema to agora:doctor', async () => {
       const name = freshSchema();
       const store = new LucidMediaStore(db, { schema: name });

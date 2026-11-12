@@ -153,8 +153,9 @@ function isDuplicateIndex(error: unknown): boolean {
   const { code, errno } = (error ?? {}) as { code?: unknown; errno?: unknown };
   return (
     code === 'ER_DUP_KEYNAME' ||
+    code === '42P07' ||
     errno === 1061 ||
-    /duplicate|exists/i.test(String((error as Error)?.message ?? error))
+    /already exists|duplicate/i.test(String((error as Error)?.message ?? error))
   );
 }
 
@@ -205,7 +206,7 @@ export interface MediaSchemaInspection {
 
 /**
  * Whether `schema` exists, which of `tables` are missing from it, and whether this connection may
- * write to the first one (a no-op `INSERT … SELECT … WHERE 1 = 0` and `DELETE … WHERE 1 = 0`, which
+ * write to each one present (a no-op `INSERT … SELECT … WHERE 1 = 0` and `DELETE … WHERE 1 = 0`, which
  * change nothing but need the privileges).
  */
 export async function inspectSchemaTables(
@@ -224,14 +225,15 @@ export async function inspectSchemaTables(
   ).map((row) => String(row.name ?? row.NAME ?? row.TABLE_NAME));
   const missingTables = tables.filter((table) => !found.includes(table));
   let writeError: string | null = null;
-  const first = tables[0];
-  if (first !== undefined && !missingTables.includes(first)) {
-    const qualified = qualifiedTable(first, schema);
+  for (const table of tables) {
+    if (missingTables.includes(table)) continue;
+    const qualified = qualifiedTable(table, schema);
     try {
       await db.rawQuery('INSERT INTO ?? SELECT * FROM ?? WHERE 1 = 0', [qualified, qualified]);
       await db.rawQuery('DELETE FROM ?? WHERE 1 = 0', [qualified]);
     } catch (error) {
-      writeError = error instanceof Error ? error.message : String(error);
+      writeError = `${table}: ${error instanceof Error ? error.message : String(error)}`;
+      break;
     }
   }
   return { schema, exists: true, missingTables, writeError };
