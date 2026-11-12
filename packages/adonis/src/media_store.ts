@@ -26,6 +26,18 @@ export interface MediaListOptions {
   tenantIds?: ReadonlyArray<string | null>;
 }
 
+/** Options for {@link MediaStore.listByOwnerPaged}. */
+export interface MediaOwnerPageOptions {
+  /** Only these collections (omit for every collection; an empty list matches nothing). */
+  collections?: readonly string[];
+  /** Opaque cursor from a previous page's `nextCursor`. */
+  cursor?: string;
+  /** Page size (clamped to {@link MAX_MEDIA_LIST_LIMIT}). Defaults to {@link DEFAULT_MEDIA_LIST_LIMIT}. */
+  limit?: number;
+  /** Only records of these tenants (`null`: no tenant). */
+  tenantIds?: ReadonlyArray<string | null>;
+}
+
 /** Options for {@link MediaStore.collectionTotals}. */
 export interface MediaTotalsOptions {
   /** Only count records of these tenants (`null`: no tenant). */
@@ -73,6 +85,15 @@ export interface MediaStore {
    * do). Without it, tenant-scoped reads filter `list` pages in memory and skip the totals.
    */
   readonly tenantFiltering?: boolean;
+  /**
+   * One owner's records across several collections, newest first, cursor-paginated (same keyset as
+   * {@link list}). Optional: without it, {@link MediaLibrary.page} walks {@link list} per owner.
+   */
+  listByOwnerPaged?(
+    ownerType: string,
+    ownerId: string,
+    options?: MediaOwnerPageOptions,
+  ): Promise<MediaListPage>;
   /** Every tenant id some record carries (tenancy on), for the console's organization picker. */
   listTenants?(): Promise<string[]>;
 }

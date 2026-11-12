@@ -1,6 +1,19 @@
+import { randomBytes } from 'node:crypto';
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MiddlewareFn, ParsedNamedMiddleware } from '@adonisjs/core/types/http';
+import {
+  ACCOUNT_EXTENSIONS_BINDING,
+  type AccountExtensionRegistry,
+} from '../src/account_console/contract.js';
+import {
+  accountCollections,
+  accountPath,
+  type MediaAccountConsoleOptions,
+  mediaAccountExtension,
+} from '../src/account_console/extension.js';
+import { handleAccountUpload } from '../src/account_console/upload_endpoint.js';
+import { UPLOAD_SCRIPT } from '../src/account_console/upload_script.js';
 import { resolveMediaTenancy } from '../src/agora/tenancy.js';
 import type { DirectUploadPolicyModule, MediaConfig } from '../src/define_config.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
@@ -32,6 +45,8 @@ import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
  * ```
  */
 export default class MediaProvider {
+  #secret: string | undefined;
+
   constructor(protected app: ApplicationService) {}
 
   register() {
@@ -185,10 +200,121 @@ export default class MediaProvider {
     // `@adonisjs/core`'s own `AppServiceProvider` and `@adonis-agora/durable`'s `DashboardProvider`
     // use internally, and is immune to the dual-package hazard for the same reason `booted_app.ts`
     // is: it comes from `this.app` (captured at registration), never from a module-level import.
+    // Media's "My files" page in the authkit account console, when authkit's registry is in the
+    // app and `accountConsole.collections` lists something. No import of authkit: a binding name and
+    // an object literal.
+    await this.#registerAccountPages();
+
     await this.app.booted(async () => {
       const router = await this.app.container.make('router');
       this.#registerRoutes(router);
     });
+  }
+
+  /** The `accountConsole` options when the page is configured (at least one collection). */
+  #accountConsole(): MediaAccountConsoleOptions | undefined {
+    const options = this.app.config.get<MediaConfig>('media', {}).accountConsole;
+    if (!options || accountCollections(options).length === 0) return undefined;
+    return options;
+  }
+
+  /** The HMAC secret of the account console's upload tickets: the app key, else a process key. */
+  #accountSecret(): string {
+    if (this.#secret !== undefined) return this.#secret;
+    const key = this.app.config.get<unknown>('app.appKey', undefined);
+    const released =
+      typeof key === 'string'
+        ? key
+        : typeof (key as { release?: unknown } | undefined)?.release === 'function'
+          ? String((key as { release(): unknown }).release())
+          : '';
+    this.#secret = released !== '' ? released : randomBytes(32).toString('hex');
+    return this.#secret;
+  }
+
+  async #registerAccountPages(): Promise<void> {
+    const options = this.#accountConsole();
+    if (!options) return;
+    const container = this.app.container as unknown as {
+      hasBinding(key: string): boolean;
+      make(key: string): Promise<unknown>;
+    };
+    try {
+      if (typeof container.hasBinding !== 'function') return;
+      if (!container.hasBinding(ACCOUNT_EXTENSIONS_BINDING)) return;
+      const registry = (await container.make(ACCOUNT_EXTENSIONS_BINDING)) as
+        | Partial<AccountExtensionRegistry>
+        | undefined;
+      if (typeof registry?.register !== 'function' || (registry.contract ?? 0) < 1) return;
+      registry.register(
+        mediaAccountExtension({
+          media: () => this.app.container.make(MediaManager),
+          options,
+          secret: this.#accountSecret(),
+        }),
+      );
+    } catch (error) {
+      try {
+        const logger = await this.app.container.make('logger');
+        logger.warn(
+          `[@adonis-agora/media] could not add the account console page: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } catch {
+        /* logging must never break boot */
+      }
+    }
+  }
+
+  /**
+   * The account console's upload endpoint and its script, under `accountConsole.path` (default
+   * `/media/account`): `GET /upload.js` and `POST /uploads` (authorized by the page's signed
+   * ticket). With `publicUrl` (pages shown by an IdP in another app) the endpoint answers CORS.
+   */
+  #mountAccountRoutes(router: HttpRouterService): void {
+    const options = this.#accountConsole();
+    if (!options || !accountCollections(options).some((c) => c.upload !== false)) return;
+    const base = accountPath(options);
+    const remote = options.publicUrl !== undefined;
+    const cors = (ctx: HttpContext) => {
+      if (!remote) return;
+      ctx.response.header('access-control-allow-origin', '*');
+      ctx.response.header('access-control-allow-methods', 'POST, OPTIONS');
+      ctx.response.header(
+        'access-control-allow-headers',
+        'content-type, x-file-name, x-media-upload-ticket',
+      );
+    };
+    router
+      .get(`${base}/upload.js`, async (ctx: HttpContext) => {
+        if (remote) ctx.response.header('access-control-allow-origin', '*');
+        return ctx.response
+          .header('content-type', 'text/javascript; charset=utf-8')
+          .header('cache-control', 'public, max-age=300')
+          .send(UPLOAD_SCRIPT);
+      })
+      .as('media.account.upload_script');
+    if (remote) {
+      router
+        .route(`${base}/uploads`, ['OPTIONS'], async (ctx: HttpContext) => {
+          cors(ctx);
+          return ctx.response.status(204).send('');
+        })
+        .as('media.account.uploads.preflight');
+    }
+    router
+      .post(`${base}/uploads`, async (ctx: HttpContext) => {
+        cors(ctx);
+        const result = await handleAccountUpload(
+          { header: (name) => ctx.request.header(name), body: ctx.request.request },
+          {
+            media: () => this.app.container.make(MediaManager),
+            options,
+            secret: this.#accountSecret(),
+          },
+        );
+        return ctx.response.status(result.status).json(result.body);
+      })
+      .as('media.account.uploads');
   }
 
   /**
@@ -207,6 +333,7 @@ export default class MediaProvider {
    */
   #registerRoutes(router: HttpRouterService) {
     const config = this.app.config.get<MediaConfig>('media', {});
+    this.#mountAccountRoutes(router);
     this.#mountTusRoutes(router, config);
     this.#mountDirectSessionRoutes(router, config);
 

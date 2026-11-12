@@ -13,6 +13,8 @@ export const MEDIA_FAKE_METHODS = [
   'attach',
   'attachExisting',
   'list',
+  'page',
+  'rename',
   'find',
   'delete',
   'url',

@@ -14,6 +14,12 @@ export type {
   MediaSubject,
 } from './access.js';
 export { adonisAuthIdentity, authorizers } from './access.js';
+// The "My files" page of the authkit account console (`accountConsole` in config/media.ts).
+export type {
+  MediaAccountCollection,
+  MediaAccountConsoleOptions,
+} from './account_console/extension.js';
+export { mediaAccountExtension } from './account_console/extension.js';
 // Organizations as tenants (`tenancy` in config/media.ts).
 export type { MediaTenancyOption, ResolvedMediaTenancy } from './agora/tenancy.js';
 export type {
@@ -227,6 +233,7 @@ export type {
   MediaCursor,
   MediaListOptions,
   MediaListPage,
+  MediaOwnerPageOptions,
   MediaStore,
   MediaTotalsOptions,
 } from './media_store.js';
