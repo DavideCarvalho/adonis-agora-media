@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.9
+
+### Patch Changes
+
+- [#296](https://github.com/DavideCarvalho/adonis-agora-media/pull/296) [`25916df`](https://github.com/DavideCarvalho/adonis-agora-media/commit/25916df1627ddbea46244e89982c759fdd3565ed) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Tenancy on MySQL: the `media_tenant_owner_idx` index (tenant, owner type, owner id, collection) was over InnoDB's 3072-byte key limit under utf8mb4, so the tenancy migration and the auto-added tenant column failed there. On MySQL the index now covers the first 191 characters of each column; Postgres and SQLite are unchanged. Re-running the tenancy migration after a failed MySQL attempt (column added, index missing) now completes it.
+
 ## 1.0.0-rc.8
 
 ### Minor Changes
