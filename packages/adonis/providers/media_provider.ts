@@ -22,7 +22,11 @@ import type { DriveServiceModule } from '../src/disks/drive.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
 import { resolveConfiguredDisks } from '../src/disks/factory.js';
 import { registerDoctorChecks } from '../src/doctor/agora_doctor.js';
-import { mediaDoctorChecks } from '../src/doctor/checks.js';
+import {
+  dbSchemaDoctorCheck,
+  hasConfiguredSchema,
+  mediaDoctorChecks,
+} from '../src/doctor/checks.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
@@ -204,6 +208,12 @@ export default class MediaProvider {
     // is: it comes from `this.app` (captured at registration), never from a module-level import.
     // `node ace agora:doctor` reads these after boot (registered from `boot()`, which Adonis awaits).
     await registerDoctorChecks(this.app.container as never, mediaDoctorChecks).catch(() => {});
+    // `media.db-schema` only when a Lucid store sets `schema`: without one, no new doctor line.
+    if (hasConfiguredSchema(this.app.config.get<MediaConfig | undefined>('media', undefined))) {
+      await registerDoctorChecks(this.app.container as never, [dbSchemaDoctorCheck]).catch(
+        () => {},
+      );
+    }
 
     // Media's "My files" page in the authkit account console, when authkit's registry is in the
     // app and `accountConsole.collections` lists something. No import of authkit: a binding name and

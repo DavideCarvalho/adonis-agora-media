@@ -12,9 +12,13 @@ export { AGORA_DOCTOR_BINDING, registerDoctorChecks } from './agora_doctor.js';
 export {
   checkAccountConsole,
   checkConsoleGate,
+  checkDbSchema,
   checkDisks,
+  checkStoreSchema,
   checkTenancySchema,
   type DriveDisks,
+  dbSchemaDoctorCheck,
+  hasConfiguredSchema,
   resolveDriveDisks,
 } from './checks.js';
 

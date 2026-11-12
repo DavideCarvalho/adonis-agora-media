@@ -30,6 +30,11 @@ export interface LucidUploadSessionStoreConfig {
   table?: string;
   /** Parts side-index table name. Default `media_upload_parts`. */
   partsTable?: string;
+  /**
+   * Database schema both tables live in (a Postgres schema, a MySQL database). Every query names it.
+   * Not supported on SQLite. Default: the connection's current schema.
+   */
+  schema?: string;
 }
 
 /**
@@ -65,7 +70,7 @@ export const uploadSessions = {
 
   /** Persist resumable sessions in SQL via `@adonisjs/lucid`. */
   lucid(config: LucidUploadSessionStoreConfig = {}): UploadSessionStoreFactory {
-    return async (ctx) => {
+    const factory: UploadSessionStoreFactory = async (ctx) => {
       // Resolve by the STRING alias rather than importing `@adonisjs/lucid/services/db`, which
       // resolves the `Database` CLASS and makes it the container token. See the equivalent comment
       // in `../stores/factory.ts` for why a class token breaks when two copies of `@adonisjs/lucid`
@@ -76,9 +81,14 @@ export const uploadSessions = {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
         ...(config.table !== undefined ? { table: config.table } : {}),
         ...(config.partsTable !== undefined ? { partsTable: config.partsTable } : {}),
+        ...(config.schema !== undefined ? { schema: config.schema } : {}),
         ...(ctx.tenancy === true ? { tenantColumn: true } : {}),
       });
     };
+    // Readable without building the store, so `agora:doctor` knows a schema is configured.
+    return config.schema === undefined
+      ? factory
+      : Object.assign(factory, { schema: config.schema });
   },
 };
 

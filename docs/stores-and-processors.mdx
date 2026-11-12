@@ -108,7 +108,7 @@ Nothing inside `attach`/`url`/`delete` calls `list` — it exists for management
 
 ### Lucid store
 
-`stores.lucid({ connection?, table? })` builds a `LucidMediaStore` that persists rows in SQL via `@adonisjs/lucid`'s query builder (Knex), so it works across **SQLite / Postgres / MySQL**. `@adonisjs/lucid` is an optional peer imported lazily — only when you select `lucid`.
+`stores.lucid({ connection?, table?, schema? })` builds a `LucidMediaStore` that persists rows in SQL via `@adonisjs/lucid`'s query builder (Knex), so it works across **SQLite / Postgres / MySQL**. `@adonisjs/lucid` is an optional peer imported lazily — only when you select `lucid`.
 
 The schema is deliberately portable: JSON payloads (`custom_properties`, `conversions`) are stored as **TEXT** (the store (de)serializes them), and timestamps as **epoch-ms integers**. `configure` publishes the migration:
 
@@ -179,6 +179,48 @@ export default class extends BaseSchema {
   }
 }
 ```
+
+#### Database schema
+
+Set `schema` to keep media's tables out of your app's schema, e.g. in a Postgres schema named
+`media` while the app lives in `public`. Use the same value for the resumable and direct upload
+session stores:
+
+```ts title="config/media.ts"
+defineConfig({
+  store: 'lucid',
+  stores: { lucid: stores.lucid({ connection: 'pg', schema: 'media' }) },
+  uploads: {
+    resumable: {
+      store: 'lucid',
+      stores: { lucid: uploadSessions.lucid({ connection: 'pg', schema: 'media' }) },
+    },
+  },
+})
+```
+
+Every query names the schema (`"media"."media"`), so it works on any connection, including your
+default one. With the default `autoCreateSchema`, the store creates the schema on first use when
+it is missing. With migrations, set the same name in the `schema` constant at the top of each
+published media migration; the create migrations create the schema too. If the connection's role
+cannot create it, create it once yourself and grant the role access. `node ace
+media:tenancy:backfill` takes `--schema`.
+
+The name must be a plain identifier (letters, digits, `_` and `$`, at most 63 characters).
+Without `schema`, the tables live in the connection's current schema, as before.
+
+<Callout type="warn">
+  Don't put the tables in another schema with a Lucid connection that sets `searchPath`. Lucid
+  applies it with `SET search_path` on the session, and behind PgBouncer in transaction mode that
+  setting leaks to other clients' connections. Use `schema` instead.
+</Callout>
+
+- **MySQL / MariaDB:** a schema is a database. `schema: 'media'` stores rows in
+  `` `media`.`media` ``, and auto-creating runs `CREATE DATABASE IF NOT EXISTS`.
+- **SQLite:** there are no schemas. Setting `schema` on a SQLite connection fails at boot.
+
+`node ace agora:doctor --deep` checks that each configured schema exists, holds its tables and
+accepts writes from the connection.
 
 <Callout type="info">
   Import it directly from the subpath (`@adonis-agora/media/stores/lucid`) if you need the `LucidMediaStore` class — e.g. to construct one by hand in a test that uses a real database.

@@ -13,9 +13,15 @@ import {
   type MediaTotalsOptions,
 } from '../media_store.js';
 import {
+  assertSchema,
   createMediaTables,
+  detectDialect,
   ensureMediaTenantColumn,
   hasMediaTenantColumn,
+  inspectSchemaTables,
+  type LucidDatabase,
+  type MediaSchemaInspection,
+  qualifiedTable,
 } from './lucid-schema.js';
 
 export interface LucidMediaStoreOptions {
@@ -23,6 +29,12 @@ export interface LucidMediaStoreOptions {
   connectionName?: string;
   /** Table name. Default `media`. */
   table?: string;
+  /**
+   * Database schema the table lives in (a Postgres schema, a MySQL database). Every query names
+   * it; with `autoCreateSchema` it is created when missing. Not supported on SQLite (the
+   * constructor throws). Default: the connection's current schema.
+   */
+  schema?: string;
   /**
    * Auto-create the `media` table on first use (default `true`). Set to `false` to
    * manage the schema explicitly via a migration calling {@link createMediaTables}.
@@ -82,6 +94,10 @@ interface MediaRow {
 export class LucidMediaStore implements MediaStore {
   readonly tenantFiltering = true;
   private readonly table: string;
+  /** The configured database schema, or `undefined` for the connection's current one. */
+  readonly schema: string | undefined;
+  /** {@link table} as the query builder takes it (`schema.table` when a schema is set). */
+  private readonly qualified: string;
   private readonly connectionName: string | undefined;
   private readonly autoCreate: boolean;
   private readonly tenantColumn: boolean;
@@ -95,6 +111,25 @@ export class LucidMediaStore implements MediaStore {
     this.connectionName = options.connectionName;
     this.autoCreate = options.autoCreateSchema !== false;
     this.tenantColumn = options.tenantColumn === true;
+    this.schema =
+      options.schema === undefined
+        ? undefined
+        : assertSchema(options.schema, this.dialect(), 'stores.lucid()');
+    this.qualified = qualifiedTable(this.table, this.schema);
+  }
+
+  /** The connection's dialect name, when it can be read without a query. */
+  private dialect(): string | undefined {
+    try {
+      return detectDialect(this.client() as unknown as LucidDatabase);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The options every schema helper takes: the table and, when set, the schema. */
+  private schemaOptions(): { table: string; schema?: string } {
+    return { table: this.table, ...(this.schema !== undefined ? { schema: this.schema } : {}) };
   }
 
   private client(): QueryClientContract {
@@ -102,7 +137,7 @@ export class LucidMediaStore implements MediaStore {
   }
 
   private query() {
-    return this.client().from(this.table);
+    return this.client().from(this.qualified);
   }
 
   /** Ensure the schema exists before the first operation, once per store instance. */
@@ -121,14 +156,23 @@ export class LucidMediaStore implements MediaStore {
   }
 
   private async assertTenantColumn(): Promise<void> {
-    if (!(await hasMediaTenantColumn(this.client(), { table: this.table }))) {
-      throw new MediaTenancySchemaError(this.table);
+    if (!(await hasMediaTenantColumn(this.client(), this.schemaOptions()))) {
+      throw new MediaTenancySchemaError(this.qualified);
     }
   }
 
   /** Whether the table has the `tenant_id` column tenancy needs. */
   async hasTenantColumn(): Promise<boolean> {
-    return hasMediaTenantColumn(this.client(), { table: this.table });
+    return hasMediaTenantColumn(this.client(), this.schemaOptions());
+  }
+
+  /**
+   * Where the configured {@link schema} stands, for `agora:doctor`: whether it exists, whether the
+   * table is in it, and whether this connection may write to it. `null` without a schema.
+   */
+  async inspectSchema(): Promise<MediaSchemaInspection | null> {
+    if (this.schema === undefined) return null;
+    return inspectSchemaTables(this.client(), this.schema, [this.table]);
   }
 
   /**
@@ -138,8 +182,8 @@ export class LucidMediaStore implements MediaStore {
   async ensureSchema(): Promise<void> {
     // On the store's own connection: the `Database` facade would run the DDL on the default one.
     const client = this.client();
-    await createMediaTables(client, { table: this.table });
-    if (this.tenantColumn) await ensureMediaTenantColumn(client, { table: this.table });
+    await createMediaTables(client, this.schemaOptions());
+    if (this.tenantColumn) await ensureMediaTenantColumn(client, this.schemaOptions());
   }
 
   async save(record: MediaRecord): Promise<MediaRecord> {
@@ -147,7 +191,7 @@ export class LucidMediaStore implements MediaStore {
     const row = toRow(record, this.tenantColumn);
     // Single atomic upsert (portable Knex `INSERT ... ON CONFLICT (id) DO UPDATE`) instead of a
     // racy read-then-branch: concurrent saves of the same id can't interleave into a lost write.
-    await this.client().table(this.table).insert(row).onConflict('id').merge();
+    await this.client().table(this.qualified).insert(row).onConflict('id').merge();
     return { ...record };
   }
 

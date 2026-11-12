@@ -45,14 +45,26 @@ export async function runUploadSessionsMigration(db: Database): Promise<void> {
   return runMigrationStub(db, 'create_media_upload_sessions_table.stub');
 }
 
-/** Load a package migration stub (stripping its Tempura header) and drive its `up()` on `db`. */
-async function runMigrationStub(db: Database, stubName: string): Promise<void> {
+/**
+ * Load a package migration stub (stripping its Tempura header) and drive its `up()` (or `down()`)
+ * on `db`. `schema` replaces the stub's `const schema = undefined`, as an app would edit it.
+ */
+export async function runMigrationStub(
+  db: Database,
+  stubName: string,
+  options: { schema?: string; connection?: string; direction?: 'up' | 'down' } = {},
+): Promise<void> {
   const stubPath = fileURLToPath(
     new URL(`../stubs/database/migrations/${stubName}`, import.meta.url),
   );
   const raw = readFileSync(stubPath, 'utf8');
   // Drop the leading `{{{ ... }}}` Tempura header; the rest is a valid ESM migration module.
-  const source = raw.slice(raw.indexOf('}}}') + 3).trimStart();
+  let source = raw.slice(raw.indexOf('}}}') + 3).trimStart();
+  if (options.schema !== undefined) {
+    const declaration = 'const schema: string | undefined = undefined';
+    if (!source.includes(declaration)) throw new Error(`${stubName} has no schema constant`);
+    source = source.replace(declaration, `const schema: string | undefined = '${options.schema}'`);
+  }
 
   // Keep the temp module inside the project tree so its `@adonisjs/lucid` import resolves against the
   // package's node_modules and Vitest's transform pipeline (swc) picks it up.
@@ -67,9 +79,10 @@ async function runMigrationStub(db: Database, stubName: string): Promise<void> {
       client: unknown,
       file: string,
       dryRun?: boolean,
-    ) => { execUp(): Promise<unknown> };
-    const migration = new Migration(db.connection(), file, false);
-    await migration.execUp();
+    ) => { execUp(): Promise<unknown>; execDown(): Promise<unknown> };
+    const migration = new Migration(db.connection(options.connection), file, false);
+    if (options.direction === 'down') await migration.execDown();
+    else await migration.execUp();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -5,6 +5,14 @@ import type {
   UploadSessionListFilter,
   UploadSessionStore,
 } from '../resumable_upload.js';
+import {
+  assertSchema,
+  detectDialect,
+  inspectSchemaTables,
+  type LucidDatabase,
+  type MediaSchemaInspection,
+  qualifiedTable,
+} from '../stores/lucid-schema.js';
 import type { MultipartPart } from '../types.js';
 
 export interface LucidUploadSessionStoreOptions {
@@ -14,6 +22,11 @@ export interface LucidUploadSessionStoreOptions {
   table?: string;
   /** Parts side-index table name. Default `media_upload_parts`. */
   partsTable?: string;
+  /**
+   * Database schema both tables live in (a Postgres schema, a MySQL database). Every query names
+   * it. Not supported on SQLite (the constructor throws). Default: the connection's current schema.
+   */
+  schema?: string;
   /**
    * Read and write the sessions' `tenant_id` column (media's `tenancy` is on). Off by default: the
    * column is then never touched.
@@ -55,6 +68,10 @@ interface PartRow {
 export class LucidUploadSessionStore implements UploadSessionStore {
   private readonly table: string;
   private readonly partsTable: string;
+  /** The configured database schema, or `undefined` for the connection's current one. */
+  readonly schema: string | undefined;
+  /** The unqualified sessions and parts table names. */
+  private readonly tableNames: [string, string];
   private readonly connectionName: string | undefined;
   private readonly tenantColumn: boolean;
 
@@ -62,10 +79,37 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     private readonly db: Database,
     options: LucidUploadSessionStoreOptions = {},
   ) {
-    this.table = options.table ?? 'media_upload_sessions';
-    this.partsTable = options.partsTable ?? 'media_upload_parts';
     this.connectionName = options.connectionName;
     this.tenantColumn = options.tenantColumn === true;
+    this.schema =
+      options.schema === undefined
+        ? undefined
+        : assertSchema(options.schema, this.dialect(), 'uploadSessions.lucid()');
+    // Both names as the query builder takes them: `schema.table` when a schema is set.
+    this.tableNames = [
+      options.table ?? 'media_upload_sessions',
+      options.partsTable ?? 'media_upload_parts',
+    ];
+    this.table = qualifiedTable(this.tableNames[0], this.schema);
+    this.partsTable = qualifiedTable(this.tableNames[1], this.schema);
+  }
+
+  /**
+   * Where the configured {@link schema} stands, for `agora:doctor`: whether it exists, whether both
+   * tables are in it, and whether this connection may write there. `null` without a schema.
+   */
+  async inspectSchema(): Promise<MediaSchemaInspection | null> {
+    if (this.schema === undefined) return null;
+    return inspectSchemaTables(this.client(), this.schema, this.tableNames);
+  }
+
+  /** The connection's dialect name, when it can be read without a query. */
+  private dialect(): string | undefined {
+    try {
+      return detectDialect(this.client() as unknown as LucidDatabase);
+    } catch {
+      return undefined;
+    }
   }
 
   private client(): QueryClientContract {

@@ -173,6 +173,121 @@ export async function checkTenancySchema(app: ApplicationService): Promise<Agora
   };
 }
 
+/** A store `media.db-schema` can inspect (the Lucid media and upload-session stores). */
+interface SchemaInspectable {
+  inspectSchema(): Promise<{
+    schema: string;
+    exists: boolean;
+    missingTables: string[];
+    writeError: string | null;
+  } | null>;
+}
+
+/** One store's schema state as doctor results (`[]` when the store has no schema). */
+export async function checkStoreSchema(
+  label: string,
+  store: SchemaInspectable,
+): Promise<AgoraDoctorResult[]> {
+  const docs = `${DOCS}/stores-and-processors`;
+  const found = await store.inspectSchema();
+  if (found === null) return [];
+  if (!found.exists) {
+    return [
+      {
+        status: 'error',
+        message: `${label}: the database schema "${found.schema}" does not exist (or this connection cannot see it).`,
+        fix: `Run the media migrations, or create it: CREATE SCHEMA "${found.schema}" (MySQL: CREATE DATABASE).`,
+        docs,
+      },
+    ];
+  }
+  const results: AgoraDoctorResult[] = [];
+  if (found.missingTables.length > 0) {
+    results.push({
+      status: 'error',
+      message: `${label}: missing from schema "${found.schema}": ${found.missingTables.join(', ')}.`,
+      fix: 'Run the media migrations (node ace migration:run).',
+      docs,
+    });
+  }
+  if (found.writeError !== null) {
+    results.push({
+      status: 'error',
+      message: `${label}: this connection cannot write to schema "${found.schema}": ${found.writeError.split('\n')[0]}`,
+      fix: "Grant the app's role USAGE on the schema and INSERT, SELECT, DELETE on its tables.",
+      docs,
+    });
+  }
+  if (results.length === 0) {
+    results.push({
+      status: 'ok',
+      message: `${label}: schema "${found.schema}" exists, holds the tables and takes writes.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * `media.db-schema` (deep): every Lucid store configured with a `schema` (media, resumable and
+ * direct upload sessions) finds its schema and tables and can write there. Builds fresh store
+ * instances from the config; they query only when inspected.
+ */
+export async function checkDbSchema(app: ApplicationService): Promise<AgoraDoctorResult[]> {
+  const media = app.config.get<MediaConfig | undefined>('media', undefined);
+  if (media === undefined) return [];
+  const { resolveStore } = await import('../stores/factory.js');
+  const { resolveUploadSessionStore } = await import('../upload_sessions/factory.js');
+  const tenancy = resolveMediaTenancy(media.tenancy).enabled ? { tenancy: true } : {};
+  const results: AgoraDoctorResult[] = [];
+  const inspect = async (label: string, build: () => Promise<unknown>) => {
+    const store = (await build()) as Partial<SchemaInspectable>;
+    if (typeof store.inspectSchema !== 'function') return;
+    results.push(...(await checkStoreSchema(label, store as SchemaInspectable)));
+  };
+  if (media.store !== undefined && factorySchemaOf(media.stores?.[media.store]) !== undefined) {
+    await inspect('media store', () => resolveStore(media, { app, ...tenancy }));
+  }
+  for (const [label, uploads] of [
+    ['resumable upload sessions', media.uploads?.resumable],
+    ['direct upload sessions', media.uploads?.direct],
+  ] as const) {
+    if (uploads?.store === undefined) continue;
+    if (factorySchemaOf(uploads.stores?.[uploads.store]) === undefined) continue;
+    await inspect(label, () => resolveUploadSessionStore(uploads, { app, ...tenancy }));
+  }
+  return results;
+}
+
+/** The schema a store factory was configured with (see `factorySchema` in `stores/factory.ts`). */
+function factorySchemaOf(factory: unknown): string | undefined {
+  const schema = (factory as { schema?: unknown } | undefined)?.schema;
+  return typeof schema === 'string' ? schema : undefined;
+}
+
+/** Whether any Lucid store in `config/media.ts` is configured with a `schema`. */
+export function hasConfiguredSchema(media: MediaConfig | undefined): boolean {
+  if (media === undefined) return false;
+  const named = (map: Record<string, unknown> | undefined, name: string | undefined) =>
+    name !== undefined && factorySchemaOf(map?.[name]) !== undefined;
+  return (
+    named(media.stores, media.store) ||
+    named(media.uploads?.resumable?.stores, media.uploads?.resumable?.store) ||
+    named(media.uploads?.direct?.stores, media.uploads?.direct?.store)
+  );
+}
+
+/**
+ * The `media.db-schema` check. Registered at boot only when a store has a `schema` (so an app
+ * without one sees no new line).
+ */
+export const dbSchemaDoctorCheck: AgoraDoctorCheck = {
+  id: 'media.db-schema',
+  lib: 'media',
+  title: 'Database schema is ready',
+  cost: 'deep',
+  run: (app) => checkDbSchema(app),
+};
+
 /** Every media check, in report order. Ids are frozen for 1.x. */
 export const mediaDoctorChecks: AgoraDoctorCheck[] = [
   {

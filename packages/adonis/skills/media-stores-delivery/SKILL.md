@@ -249,6 +249,28 @@ SigV4 bakes the host into the signature — presigned URLs must be signed for th
 the BROWSER reaches. Proxying is a deployment decision and must be opted into explicitly.
 Source: `docs/delivery.mdx` (auto never picks proxy), `docs/storage/s3-disk.mdx` (publicEndpoint).
 
+### [HIGH] Moving the media tables to another schema with searchPath
+
+Wrong:
+
+```ts
+// config/database.ts: media: { client: 'pg', searchPath: ['media'], ... }
+stores.lucid({ connection: 'media' })
+// SET search_path is per session; behind PgBouncer (transaction mode) it leaks to other clients
+```
+
+Correct:
+
+```ts
+stores.lucid({ connection: 'pg', schema: 'media' })
+uploadSessions.lucid({ connection: 'pg', schema: 'media' })
+```
+
+Mechanism: `schema` qualifies every statement (`"media"."media"`); with `autoCreateSchema` the
+schema is created when missing. On MySQL it is a database; on SQLite it fails at boot. The
+published migrations carry a matching `schema` constant.
+Source: `docs/stores-and-processors.mdx` (Database schema).
+
 ### [MEDIUM] Implementing a custom MediaStore without a working list()
 
 Wrong:

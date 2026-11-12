@@ -27,6 +27,12 @@ export interface LucidStoreConfig {
   /** Table name. Default `media`. */
   table?: string;
   /**
+   * Database schema the table lives in (a Postgres schema, a MySQL database), e.g. `'media'` for
+   * `"media"."media"`. Every query names it, so it works on any connection. Not supported on SQLite.
+   * Default: the connection's current schema.
+   */
+  schema?: string;
+  /**
    * Auto-create the `media` table on first use (default `true`). Set to `false` to
    * manage the schema explicitly via a migration (see `createMediaTables`).
    */
@@ -62,7 +68,7 @@ export const stores = {
 
   /** Persist media records in SQL via `@adonisjs/lucid`. */
   lucid(config: LucidStoreConfig = {}): StoreFactory {
-    return async (ctx) => {
+    const factory: StoreFactory = async (ctx) => {
       // Resolve the Lucid `Database` by its STRING alias, never by importing
       // `@adonisjs/lucid/services/db` (which resolves the `Database` CLASS and calls
       // `container.make(Database)` with it). Lucid's provider keys its binding on the class object
@@ -81,12 +87,17 @@ export const stores = {
       return new LucidMediaStore(db, {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
         ...(config.table !== undefined ? { table: config.table } : {}),
+        ...(config.schema !== undefined ? { schema: config.schema } : {}),
         ...(config.autoCreateSchema !== undefined
           ? { autoCreateSchema: config.autoCreateSchema }
           : {}),
         ...(ctx.tenancy === true ? { tenantColumn: true } : {}),
       });
     };
+    // Readable without building the store, so `agora:doctor` knows a schema is configured.
+    return config.schema === undefined
+      ? factory
+      : Object.assign(factory, { schema: config.schema });
   },
 };
 

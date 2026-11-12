@@ -110,7 +110,7 @@ node ace migration:run
 
 Until the tables exist, uploads through the store fail, and the console's **Uploads** tab says `upload sessions table missing — run the media migration (node ace migration:run)` instead of listing sessions.
 
-`uploadSessions.lucid({ connection?, table?, partsTable? })` — `connection` defaults to Lucid's default; `table` defaults to `media_upload_sessions`; `partsTable` defaults to `media_upload_parts`.
+`uploadSessions.lucid({ connection?, table?, partsTable?, schema? })` — `connection` defaults to Lucid's default; `table` defaults to `media_upload_sessions`; `partsTable` defaults to `media_upload_parts`; `schema` puts both tables in another database schema (see [Database schema](/docs/media/stores-and-processors#database-schema)) — set the same name in the migration's `schema` constant.
 
 ---
 

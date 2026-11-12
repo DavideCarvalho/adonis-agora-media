@@ -8,14 +8,21 @@ import { BaseSchema } from '@adonisjs/lucid/schema'
  * 'media_upload_sessions' when the resumable session store uses Lucid). New files are stamped with
  * the active tenant once tenancy is on; existing rows stay NULL (see 'node ace media:tenancy:backfill').
  */
+/**
+ * The database schemas of 'media' and 'media_upload_sessions': the same values as 'schema' in
+ * stores.lucid() and uploadSessions.lucid(). Leave them undefined for the connection's current one.
+ */
+const schema: string | undefined = undefined
+const sessionsSchema: string | undefined = schema
+
 export default class extends BaseSchema {
   async up() {
-    this.schema.alterTable('media', (table) => {
+    this.in(schema).alterTable('media', (table) => {
       table.string('tenant_id').nullable()
       table.index(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
     })
-    if (await this.schema.hasTable('media_upload_sessions')) {
-      this.schema.alterTable('media_upload_sessions', (table) => {
+    if (await this.in(sessionsSchema).hasTable('media_upload_sessions')) {
+      this.in(sessionsSchema).alterTable('media_upload_sessions', (table) => {
         table.string('tenant_id').nullable()
         table.index(['tenant_id'], 'media_upload_sessions_tenant_idx')
       })
@@ -23,15 +30,20 @@ export default class extends BaseSchema {
   }
 
   async down() {
-    if (await this.schema.hasTable('media_upload_sessions')) {
-      this.schema.alterTable('media_upload_sessions', (table) => {
+    if (await this.in(sessionsSchema).hasTable('media_upload_sessions')) {
+      this.in(sessionsSchema).alterTable('media_upload_sessions', (table) => {
         table.dropIndex(['tenant_id'], 'media_upload_sessions_tenant_idx')
         table.dropColumn('tenant_id')
       })
     }
-    this.schema.alterTable('media', (table) => {
+    this.in(schema).alterTable('media', (table) => {
       table.dropIndex(['tenant_id', 'owner_type', 'owner_id', 'collection'], 'media_tenant_owner_idx')
       table.dropColumn('tenant_id')
     })
+  }
+
+  /** The schema builder, pointed at 'name' when it is set. */
+  private in(name: string | undefined) {
+    return name ? this.schema.withSchema(name) : this.schema
   }
 }
