@@ -94,6 +94,21 @@ export default defineConfig({
 curl -H "Authorization: Bearer $CONSOLE_TOKEN" https://app.example.com/media/dashboard/api/disks
 ```
 
+To let both operators and scripts in, pass both to `anyAuthorize`. It allows a request when any of
+them does, tried in order:
+
+```ts title="config/media_dashboard.ts"
+import env from '#start/env'
+import { anyAuthorize, authorizeByToken, defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: anyAuthorize(
+    authorizeByToken({ token: env.get('CONSOLE_TOKEN') }),
+    (ctx) => ctx.auth.user?.isAdmin === true,
+  ),
+})
+```
+
 ### Sending signed-out visitors to your login
 
 Return `{ redirectTo }` for a request with no signed-in user. A page navigation is redirected there,

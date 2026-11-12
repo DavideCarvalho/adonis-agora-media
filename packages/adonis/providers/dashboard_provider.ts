@@ -12,6 +12,7 @@ import {
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
 import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
+import { registerMediaDevTools } from '../src/dashboard/dev_tools.js';
 import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
 import { DashboardError, DashboardService } from '../src/dashboard/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
@@ -61,19 +62,66 @@ export default class MediaDashboardProvider {
     const config = this.app.config.get<MediaDashboardConfig>('media_dashboard', {});
     if (config.enabled === false) return;
 
+    // The access check, resolved once: the console's routes and its dev tools share it.
+    const decide = this.#resolveAuthorize(config);
+
+    // Developer tools on the app's dev MCP endpoint, when `@adonis-agora/agent/mcp_provider` bound
+    // its hub (its `register()` ran before any `boot()`). Gated by this console's own `authorize`.
+    await this.#registerDevTools(config, decide);
+
     await this.app.booted(async () => {
+      // Said once per process, when the routes mount.
+      if (!config.authorize) this.#warn(NO_AUTHORIZE_WARNING);
       const router = await this.app.container.make('router');
-      this.#registerRoutes(router, config);
+      this.#registerRoutes(router, config, decide);
     });
   }
 
-  #registerRoutes(router: HttpRouterService, config: MediaDashboardConfig): void {
+  /** The console's service, built per request from the bound {@link MediaManager}. */
+  #service(config: MediaDashboardConfig): () => Promise<DashboardService> {
+    const basePath = normalizePath(config.basePath ?? '/media/dashboard');
+    const apiBase = normalizePath(config.apiBasePath ?? `${basePath}/api`);
+    const diskNames = this.#resolveDiskNames(config);
+    const objectUrls = { strategy: this.#resolveObjectUrlStrategy(config), apiBasePath: apiBase };
+    return async () =>
+      new DashboardService(
+        await this.app.container.make(MediaManager),
+        // Strategy and mount path travel together: a strategy without the path it needs would be a
+        // half-configured state that builds `/object/raw` URLs rooted at nothing.
+        { diskNames, actions: config.actions ?? false, objectUrls },
+        config.objectInsights ?? [],
+      );
+  }
+
+  async #registerDevTools(
+    config: MediaDashboardConfig,
+    decide: ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null,
+  ): Promise<void> {
+    const service = this.#service(config);
+    // An auxiliary feature: a hub that throws must not take the app's boot down with it.
+    try {
+      await registerMediaDevTools(this.app.container, {
+        authorize: decide ?? (async () => ({ allowed: true })),
+        service: () => service(),
+        actions: config.actions ?? false,
+      });
+    } catch (error) {
+      this.#warn(
+        `[@adonis-agora/media] could not register the developer tools: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  #registerRoutes(
+    router: HttpRouterService,
+    config: MediaDashboardConfig,
+    decide: ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null,
+  ): void {
     const basePath = normalizePath(config.basePath ?? '/media/dashboard');
     const apiBase = normalizePath(config.apiBasePath ?? `${basePath}/api`);
     const uploadsBase = normalizePath(config.uploadsPrefix ?? '/media/uploads');
     const tusBase = normalizePath(config.tusPrefix ?? '/media/uploads/tus');
     const actions = config.actions ?? false;
-    const diskNames = this.#resolveDiskNames(config);
     const middleware = config.middleware
       ? Array.isArray(config.middleware)
         ? config.middleware
@@ -87,7 +135,6 @@ export default class MediaDashboardProvider {
     // `401` for `reason: 'unauthenticated'` and `403` for everything else (fail closed) —
     // `{ error: 'unauthenticated' | 'forbidden' }` JSON for the API, the access-denied page (or the
     // host's `accessDenied`) for a page.
-    const decide = this.#resolveAuthorize(config);
     const authorizeGate = (mode: 'api' | 'page') =>
       decide
         ? [
@@ -117,20 +164,7 @@ export default class MediaDashboardProvider {
             },
           ]
         : [];
-    const objectInsights = config.objectInsights ?? [];
-
-    const service = async () =>
-      new DashboardService(
-        await this.app.container.make(MediaManager),
-        // Strategy and mount path travel together: a strategy without the path it needs would be a
-        // half-configured state that builds `/object/raw` URLs rooted at nothing.
-        {
-          diskNames,
-          actions,
-          objectUrls: { strategy: this.#resolveObjectUrlStrategy(config), apiBasePath: apiBase },
-        },
-        objectInsights,
-      );
+    const service = this.#service(config);
 
     this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware]);
     this.#mountSpa(router, basePath, { apiBase, uploadsBase, tusBase, actions }, [
@@ -141,14 +175,13 @@ export default class MediaDashboardProvider {
 
   /**
    * The per-request access check, or `null` for none. Without `authorize` the console is open
-   * outside production and refuses every page/API request in production; either way it says so once
-   * at boot (routes are registered once per process).
+   * outside production and refuses every page/API request in production (and says so once, when its
+   * routes mount).
    */
   #resolveAuthorize(
     config: MediaDashboardConfig,
   ): ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null {
     if (config.authorize) return resolveConsoleAuthorize(config.authorize);
-    this.#warn(NO_AUTHORIZE_WARNING);
     if (this.app.inProduction !== true) return null;
     return async () => ({ allowed: false, status: 403, reason: 'forbidden' });
   }

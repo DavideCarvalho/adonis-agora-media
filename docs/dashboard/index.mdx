@@ -234,6 +234,38 @@ Three properties of the design are worth being explicit about:
 
 ---
 
+## MCP tools
+
+When the app registers `@adonis-agora/agent/mcp_provider`, the console's data is also served to
+coding agents (Claude Code, Cursor, Claude Desktop) on the app's dev MCP endpoint, `/mcp/agora`.
+There is nothing to configure here: the tools follow this console's `authorize`, so whoever can open
+the console can use them, and nobody else. A disabled console (`enabled: false`) serves no tools.
+The [agent docs](/docs/agent/dev-tools) show how to connect a client.
+
+```sh
+claude mcp add --transport http agora http://localhost:3333/mcp/agora \
+  --header "Authorization: Bearer $CONSOLE_TOKEN"
+```
+
+Reads are listed by default. No tool ever returns a URL to a file, signed or not.
+
+| Tool | What it returns |
+| --- | --- |
+| `media_list_disks` | The disks the console browses, the default one, and what each supports. |
+| `media_list_objects` | One page of a disk under `prefix`: folders and files. Paged with `cursor` and `limit`. |
+| `media_get_object` | One object's size, content type and last modified, plus your [object insights](#object-insights). |
+| `media_list_uploads` | Resumable uploads in progress (`disk`, `prefix` filters). |
+| `media_get_upload` | One upload in progress with its recorded parts. |
+| `media_list_collections` | Stored media records, newest first. Filters: `collection`, `ownerType`, `ownerId`, `prefix`. Paged with `cursor` and `limit`. |
+| `media_get_collections_summary` | Record count and total bytes per collection. |
+| `media_get_media` | One media record by id, with the names of its conversions. |
+
+The two actions, `media_abort_upload` and `media_delete_objects` (at most 100 keys per call), are
+hidden until the app opts in with `devTools: { actions: ['media'] }` in `config/mcp.ts`, and they also
+need `actions: true` here, like in the console.
+
+---
+
 ## Next steps
 
 - [Console access](/docs/media/dashboard/authentication) — `authorize`, sign-in through your app, and the access-denied page

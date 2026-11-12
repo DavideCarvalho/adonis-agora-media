@@ -22,6 +22,7 @@ export type {
   ConsoleAuthorizerClass,
 } from './console_authorize.js';
 export {
+  anyAuthorize,
   authorizeByToken,
   normalizeConsoleAuthorizeResult,
   resolveConsoleAuthorize,
@@ -33,6 +34,19 @@ export type {
   MediaDashboardConfig,
 } from './define_config.js';
 export { defineConfig } from './define_config.js';
+export type {
+  DevTool,
+  DevToolCall,
+  DevToolInputProperty,
+  DevToolInputSchema,
+  DevToolsCaller,
+  DevToolsDecision,
+  DevToolsHub,
+  DevToolsLib,
+  MediaDevToolsOptions,
+} from './dev_tools.js';
+// Developer tools for the app's dev MCP endpoint (`@adonis-agora/agent`), when it has one.
+export { DEV_TOOLS_BINDING, mediaDevTools, registerMediaDevTools } from './dev_tools.js';
 export type { ObjectInsightContext, ObjectInsightProvider } from './object_insights.js';
 // Host-supplied object annotations.
 export { sanitizeInsight } from './object_insights.js';
