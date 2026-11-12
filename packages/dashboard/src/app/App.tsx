@@ -4,6 +4,7 @@ import { ConsoleSwitcher } from './ConsoleSwitcher';
 import type { Tab } from './hash-route';
 import { toHash, useHashRoute } from './hash-route';
 import { useTopology } from './queries';
+import { TenantPickerControl } from './TenantPicker';
 import { Button, Dot } from './ui';
 import { CollectionsView } from './views/CollectionsView';
 import { LibraryBrowseView } from './views/LibraryBrowseView';
@@ -90,8 +91,12 @@ export function App() {
             ))}
           </nav>
 
+          <div className="ml-auto">
+            <TenantPickerControl />
+          </div>
+
           {topology.data && (
-            <div className="ml-auto flex items-center gap-3">
+            <div className="flex items-center gap-3">
               <span className="mono tnum text-[10px] text-zinc-500">
                 {topology.data.disks} {topology.data.disks === 1 ? 'disk' : 'disks'}
               </span>

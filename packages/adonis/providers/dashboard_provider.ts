@@ -3,6 +3,7 @@ import { basename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
+import { currentTenantFilter, tenantLabels } from '../src/agora/tenancy.js';
 import {
   type AccessDeniedInfo,
   resolveAccessDeniedPage,
@@ -24,6 +25,13 @@ import { registerMediaDevTools } from '../src/dashboard/dev_tools.js';
 import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
 import { DashboardError, DashboardService } from '../src/dashboard/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
+import {
+  type ConsoleTenantScope,
+  consoleKeyPrefixes,
+  resolveConsoleTenantScope,
+  scopedManager,
+} from '../src/dashboard/tenant_scope.js';
+import type { TenantPickerResponse } from '../src/dashboard/types.js';
 import { MediaManager } from '../src/media_manager.js';
 
 /**
@@ -69,20 +77,32 @@ const NO_AUTHORIZE_WARNING =
 export default class MediaDashboardProvider {
   constructor(protected app: ApplicationService) {}
 
+  /** Each request's `authorize` verdict, read again for the console's tenant scope. */
+  readonly #decisions = new WeakMap<object, ConsoleAuthorizeDecision>();
+  /** Each request's console tenant scope (tenancy on). */
+  readonly #scopes = new WeakMap<object, Promise<ConsoleTenantScope | undefined>>();
+
   async boot() {
     const config = this.app.config.get<MediaDashboardConfig>('media_dashboard', {});
     if (config.enabled === false) return;
 
-    // The access check, resolved once: the console's routes and its dev tools share it.
-    const decide = this.#resolveAuthorize(config);
+    // The access check, resolved once: the console's routes, its dev tools and the switcher share
+    // it. Each verdict is remembered for the request, for the console's tenant scope.
+    const resolved = this.#resolveAuthorize(config);
+    const gate = async (ctx: HttpContext): Promise<ConsoleAuthorizeDecision> => {
+      const decision = resolved ? await resolved(ctx) : ({ allowed: true } as const);
+      this.#decisions.set(ctx, decision);
+      return decision;
+    };
+    const decide = resolved ? gate : null;
 
     // Developer tools on the app's dev MCP endpoint, when `@adonis-agora/agent/mcp_provider` bound
     // its hub (its `register()` ran before any `boot()`). Gated by this console's own `authorize`.
-    await this.#registerDevTools(config, decide);
+    await this.#registerDevTools(config, gate);
 
     // The console switcher: this console joins the app's `'agora.consoles'` registry so the other
     // Agora consoles can link to it (and search it), and it can link to them.
-    await this.#registerConsole(config, decide);
+    await this.#registerConsole(config, gate);
 
     await this.app.booted(async () => {
       // Said once per process, when the routes mount.
@@ -92,32 +112,107 @@ export default class MediaDashboardProvider {
     });
   }
 
-  /** The console's service, built per request from the bound {@link MediaManager}. */
-  #service(config: MediaDashboardConfig): () => Promise<DashboardService> {
+  /**
+   * The console's service, built per request from the bound {@link MediaManager}. With tenancy on
+   * and a request at hand, it is confined to the tenants this viewer may see (see
+   * {@link #consoleScope}); without a request (no viewer), it sees nothing of a tenant.
+   */
+  #service(config: MediaDashboardConfig): (ctx?: HttpContext) => Promise<DashboardService> {
     const basePath = normalizePath(config.basePath ?? '/media/dashboard');
     const apiBase = normalizePath(config.apiBasePath ?? `${basePath}/api`);
     const diskNames = this.#resolveDiskNames(config);
     const objectUrls = { strategy: this.#resolveObjectUrlStrategy(config), apiBasePath: apiBase };
-    return async () =>
-      new DashboardService(
-        await this.app.container.make(MediaManager),
-        // Strategy and mount path travel together: a strategy without the path it needs would be a
-        // half-configured state that builds `/object/raw` URLs rooted at nothing.
-        { diskNames, actions: config.actions ?? false, objectUrls },
+    return async (ctx) => {
+      const manager = await this.app.container.make(MediaManager);
+      const options = { diskNames, actions: config.actions ?? false, objectUrls };
+      if (!manager.tenancy?.enabled) {
+        // Strategy and mount path travel together: a strategy without the path it needs would be
+        // a half-configured state that builds `/object/raw` URLs rooted at nothing.
+        return new DashboardService(manager, options, config.objectInsights ?? []);
+      }
+      const ids = ctx ? (await this.#consoleScope(ctx))?.ids : [];
+      const keyPrefixes = consoleKeyPrefixes(ids);
+      return new DashboardService(
+        scopedManager(manager, ids),
+        { ...options, ...(keyPrefixes !== undefined ? { keyPrefixes } : {}) },
         config.objectInsights ?? [],
       );
+    };
+  }
+
+  /**
+   * The tenants this viewer may see in the console, once per request, or `undefined` with tenancy
+   * off. `authorize` may grant `tenants` (`'*'` or a list); otherwise it is the viewer's own active
+   * tenant. A `?tenant=` pick outside the grant is answered with nothing and logged.
+   */
+  #consoleScope(ctx: HttpContext): Promise<ConsoleTenantScope | undefined> {
+    let scope = this.#scopes.get(ctx);
+    if (!scope) {
+      scope = this.#resolveConsoleScope(ctx);
+      this.#scopes.set(ctx, scope);
+    }
+    return scope;
+  }
+
+  async #resolveConsoleScope(ctx: HttpContext): Promise<ConsoleTenantScope | undefined> {
+    const manager = await this.app.container.make(MediaManager);
+    if (!manager.tenancy?.enabled) return undefined;
+    const decision = this.#decisions.get(ctx);
+    const granted = decision?.allowed ? decision.tenants : undefined;
+    let own: ConsoleTenantScope['own'];
+    try {
+      const filter = currentTenantFilter(manager.tenancy);
+      if (filter.mode === 'tenant') {
+        own = { id: filter.tenant.id, kind: filter.tenant.kind, slug: filter.tenant.slug };
+      }
+    } catch {
+      // `tenancy.required` throws without a tenant: in the console that is just "no organization".
+      own = undefined;
+    }
+    const picked = (ctx.request.qs() as { tenant?: unknown }).tenant;
+    const scope = resolveConsoleTenantScope({
+      granted,
+      own,
+      selected: typeof picked === 'string' ? picked : undefined,
+    });
+    if (scope.forged) {
+      this.#warn(
+        `[@adonis-agora/media] console: organization "${scope.selected ?? ''}" requested outside the viewer's scope (${ctx.request.url(false)}); answered with nothing`,
+      );
+    }
+    return scope;
+  }
+
+  /** The console's "Organization" control: `off`, `none`, `fixed` (one) or `pick` (several). */
+  async #tenantPicker(ctx: HttpContext): Promise<TenantPickerResponse> {
+    const scope = await this.#consoleScope(ctx);
+    if (!scope) return { mode: 'off', all: false, selected: null, tenants: [] };
+    if (scope.authorized === 'none')
+      return { mode: 'none', all: false, selected: null, tenants: [] };
+    let ids: string[];
+    if (scope.authorized === '*') {
+      const manager = await this.app.container.make(MediaManager);
+      ids = (await manager.store.listTenants?.()) ?? [];
+    } else {
+      ids = [...scope.authorized];
+    }
+    const labels = await tenantLabels(ids, scope.own?.kind);
+    if (scope.own?.slug) labels[scope.own.id] = scope.own.slug;
+    const tenants = ids.map((id) => ({ id, label: labels[id] ?? id }));
+    const mode = scope.authorized !== '*' && tenants.length === 1 ? 'fixed' : 'pick';
+    return { mode, all: scope.authorized === '*', selected: scope.selected ?? null, tenants };
   }
 
   async #registerDevTools(
     config: MediaDashboardConfig,
-    decide: ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null,
+    decide: (ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>,
   ): Promise<void> {
     const service = this.#service(config);
     // An auxiliary feature: a hub that throws must not take the app's boot down with it.
     try {
       await registerMediaDevTools(this.app.container, {
-        authorize: decide ?? (async () => ({ allowed: true })),
-        service: () => service(),
+        authorize: decide,
+        service: (ctx) => service(ctx),
         actions: config.actions ?? false,
       });
     } catch (error) {
@@ -129,7 +224,7 @@ export default class MediaDashboardProvider {
 
   async #registerConsole(
     config: MediaDashboardConfig,
-    decide: ((ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>) | null,
+    decide: (ctx: HttpContext) => Promise<ConsoleAuthorizeDecision>,
   ): Promise<void> {
     const basePath = normalizePath(config.basePath ?? '/media/dashboard');
     const service = this.#service(config);
@@ -144,9 +239,9 @@ export default class MediaDashboardProvider {
           icon: 'media',
           path: basePath,
           order: 50,
-          authorize: decide ?? (async () => ({ allowed: true })),
-          search: mediaConsoleSearch(async () => {
-            const svc = await service();
+          authorize: decide,
+          search: mediaConsoleSearch(async (ctx) => {
+            const svc = await service(ctx);
             return {
               find: async (id) => {
                 const entry = await svc.mediaEntry(id).catch(() => null);
@@ -242,6 +337,17 @@ export default class MediaDashboardProvider {
     return async () => ({ allowed: false, status: 403, reason: 'forbidden' });
   }
 
+  /** An `info` line through the app logger when one is bound. Never throws. */
+  #info(message: string): void {
+    void Promise.resolve()
+      .then(() => this.app.container.make('logger'))
+      .then((logger) => {
+        const info = (logger as { info?: unknown } | undefined)?.info;
+        if (typeof info === 'function') info.call(logger, message);
+      })
+      .catch(() => {});
+  }
+
   /** Warn through the app logger when one is bound, else the console. Never throws. */
   #warn(message: string): void {
     void Promise.resolve()
@@ -257,7 +363,7 @@ export default class MediaDashboardProvider {
   #mountApi(
     router: HttpRouterService,
     apiBase: string,
-    service: () => Promise<DashboardService>,
+    service: (ctx: HttpContext) => Promise<DashboardService>,
     middleware: unknown[],
   ) {
     const json = (
@@ -266,7 +372,7 @@ export default class MediaDashboardProvider {
     ) => {
       return async (ctx: HttpContext) => {
         try {
-          const result = await handler(await service(), ctx);
+          const result = await handler(await service(ctx), ctx);
           if (result === undefined) return ctx.response.status(204).send('');
           return ctx.response.status(okStatus).json(result);
         } catch (error) {
@@ -284,6 +390,29 @@ export default class MediaDashboardProvider {
           json(async (svc) => svc.topology()),
         )
         .as('media.dashboard.topology');
+      // Organizations (tenancy): the picker's data, and the audited switch.
+      router
+        .get('/tenants', async (ctx: HttpContext) => {
+          ctx.response.header('cache-control', 'private, no-store');
+          return ctx.response.status(200).json(await this.#tenantPicker(ctx));
+        })
+        .as('media.dashboard.tenants');
+      router
+        .post('/tenants/:id/select', async (ctx: HttpContext) => {
+          const id = String(ctx.params.id);
+          const picker = await this.#tenantPicker(ctx);
+          const allowed =
+            picker.mode !== 'off' &&
+            picker.mode !== 'none' &&
+            (id === '*' ? picker.all : picker.tenants.some((t) => t.id === id));
+          this.#info(
+            `[@adonis-agora/media] console: organization switch to "${id}" ${allowed ? 'allowed' : 'refused'}`,
+          );
+          return ctx.response
+            .status(allowed ? 200 : 404)
+            .json(allowed ? { tenant: id } : { error: 'not found' });
+        })
+        .as('media.dashboard.tenants.select');
       // The console switcher: the other Agora consoles this viewer may open, and a search across them.
       router
         .get('/consoles', async (ctx: HttpContext) => {
@@ -352,7 +481,7 @@ export default class MediaDashboardProvider {
             const type = str(ctx, 'type');
             if (!disk) throw new DashboardError('disk is required', 400);
             if (!key) throw new DashboardError('key is required', 400);
-            await (await service()).putObject(disk, key, ctx.request.request, type);
+            await (await service(ctx)).putObject(disk, key, ctx.request.request, type);
             return ctx.response.status(204).send('');
           } catch (error) {
             const status = error instanceof DashboardError ? error.status : 500;
@@ -367,7 +496,7 @@ export default class MediaDashboardProvider {
             const disk = str(ctx, 'disk');
             const key = str(ctx, 'key');
             if (!disk) throw new DashboardError('disk is required', 400);
-            const { stream, contentType, size } = await (await service()).objectStream(
+            const { stream, contentType, size } = await (await service(ctx)).objectStream(
               disk,
               key ?? '',
             );

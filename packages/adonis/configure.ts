@@ -9,7 +9,8 @@ import { stubsRoot } from './stubs/main.js';
  *    (its built assets are copied in at `pnpm build` time), so this alone is enough to get it; no
  *    separate `@adonis-agora/media-dashboard` install is required;
  * 3. publishes `config/media.ts` and `config/media_dashboard.ts`;
- * 4. publishes the Lucid migrations for the optional `lucid` store and the resumable (TUS) session
+ * 4. registers the `@adonis-agora/media/commands` barrel (`media:publish-migration`, …);
+ * 5. publishes the Lucid migrations for the optional `lucid` store and the resumable (TUS) session
  *    store (run `node ace migration:run`; delete either if you only use the in-memory equivalents).
  *
  * Requires `@adonisjs/drive` to be installed and configured first (`node ace add @adonisjs/drive`).
@@ -20,6 +21,8 @@ export async function configure(command: Configure) {
   await codemods.updateRcFile((rcFile) => {
     rcFile.addProvider('@adonis-agora/media/media_provider');
     rcFile.addProvider('@adonis-agora/media/dashboard_provider');
+    // `media:publish-migration`, `media:tenancy:backfill`.
+    rcFile.addCommand('@adonis-agora/media/commands');
   });
 
   const stubs = stubsRoot();
@@ -31,4 +34,6 @@ export async function configure(command: Configure) {
     'database/migrations/create_media_upload_sessions_table.stub',
     {},
   );
+  // The nullable `tenant_id` columns organizations-as-tenants uses (unused while tenancy is off).
+  await codemods.makeUsingStub(stubs, 'database/migrations/add_media_tenant_id.stub', {});
 }

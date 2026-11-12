@@ -19,6 +19,17 @@ export interface MediaListOptions {
   cursor?: string;
   /** Page size (clamped to {@link MAX_MEDIA_LIST_LIMIT}). Defaults to {@link DEFAULT_MEDIA_LIST_LIMIT}. */
   limit?: number;
+  /**
+   * Only records of these tenants; `null` stands for records with no tenant. Applied by stores
+   * that declare {@link MediaStore.tenantFiltering}.
+   */
+  tenantIds?: ReadonlyArray<string | null>;
+}
+
+/** Options for {@link MediaStore.collectionTotals}. */
+export interface MediaTotalsOptions {
+  /** Only count records of these tenants (`null`: no tenant). */
+  tenantIds?: ReadonlyArray<string | null>;
 }
 
 /** One page of a cross-owner {@link MediaStore.list}. `nextCursor` is null when the page is the last. */
@@ -56,7 +67,22 @@ export interface MediaStore {
    * Count and total size of every collection, in one aggregate over the whole store, ordered by
    * each collection's newest record first. Optional: without it, callers page through {@link list}.
    */
-  collectionTotals?(): Promise<MediaCollectionTotals[]>;
+  collectionTotals?(options?: MediaTotalsOptions): Promise<MediaCollectionTotals[]>;
+  /**
+   * `true` when {@link list} and {@link collectionTotals} honour `tenantIds` (both bundled stores
+   * do). Without it, tenant-scoped reads filter `list` pages in memory and skip the totals.
+   */
+  readonly tenantFiltering?: boolean;
+  /** Every tenant id some record carries (tenancy on), for the console's organization picker. */
+  listTenants?(): Promise<string[]>;
+}
+
+/** Whether a record's tenant is one of `tenantIds` (`undefined`: no filter). */
+export function tenantMatches(
+  tenantIds: ReadonlyArray<string | null> | undefined,
+  tenantId: string | null | undefined,
+): boolean {
+  return tenantIds === undefined || tenantIds.includes(tenantId ?? null);
 }
 
 /** The keyset a {@link MediaListPage} cursor carries: the last row's `createdAt` (epoch-ms) and `id`. */

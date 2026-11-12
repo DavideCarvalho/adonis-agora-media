@@ -1,5 +1,7 @@
 import type { Readable } from 'node:stream';
-import type { MediaLibrary } from './media_library.js';
+import { MediaNotFoundError } from './errors.js';
+import { deliverRecord, findUnscoped } from './internal_symbols.js';
+import type { DeliverOptions, MediaLibrary } from './media_library.js';
 import type { Disk } from './types.js';
 
 /**
@@ -175,7 +177,7 @@ export class MediaDeliveryHandler {
       request,
       this.requireSignature !== undefined ? { required: this.requireSignature } : {},
     );
-    return this.library.deliver(request.mediaId, {
+    const options: DeliverOptions = {
       ...(trusted ? { trusted: true } : {}),
       ...(request.conversion !== undefined ? { conversion: request.conversion } : {}),
       ...(request.width !== undefined && request.width !== ''
@@ -183,6 +185,14 @@ export class MediaDeliveryHandler {
         : {}),
       ...(this.mode !== undefined ? { mode: this.mode } : {}),
       ...(this.signedTtlSeconds !== undefined ? { signedTtlSeconds: this.signedTtlSeconds } : {}),
-    });
+    };
+    // A signed request was authorized by the app that signed it: with tenancy on it is served
+    // whichever tenant the file belongs to.
+    if (trusted) {
+      const record = await this.library[findUnscoped](request.mediaId);
+      if (!record) throw new MediaNotFoundError(request.mediaId);
+      return this.library[deliverRecord](record, options);
+    }
+    return this.library.deliver(request.mediaId, options);
   }
 }

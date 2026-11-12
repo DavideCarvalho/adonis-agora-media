@@ -326,12 +326,12 @@ export interface MediaSearchSource {
  * console's mount path.
  */
 export function mediaConsoleSearch(
-  source: () => Promise<MediaSearchSource>,
+  source: (ctx: HttpContext) => Promise<MediaSearchSource>,
   base: string,
 ): (ctx: HttpContext, q: string, limit: number) => Promise<AgoraConsoleSearchHit[]> {
   const shell = base === '/' ? '/' : base;
-  return async (_ctx, q, limit) => {
-    const reader = await source();
+  return async (ctx, q, limit) => {
+    const reader = await source(ctx);
     const hits: AgoraConsoleSearchHit[] = [];
     const needle = q.toLowerCase();
     const record = await reader.find(q).catch(() => null);

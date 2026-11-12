@@ -14,6 +14,11 @@ export interface LucidUploadSessionStoreOptions {
   table?: string;
   /** Parts side-index table name. Default `media_upload_parts`. */
   partsTable?: string;
+  /**
+   * Read and write the sessions' `tenant_id` column (media's `tenancy` is on). Off by default: the
+   * column is then never touched.
+   */
+  tenantColumn?: boolean;
 }
 
 /** Physical row shape of the `media_upload_sessions` table. Timestamps are epoch-ms integers. */
@@ -29,6 +34,7 @@ interface SessionRow {
   metadata: string | null;
   created_at: number;
   expires_at: number | null;
+  tenant_id?: string | null;
 }
 
 /** Physical row shape of the `media_upload_parts` side-index table. */
@@ -50,6 +56,7 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   private readonly table: string;
   private readonly partsTable: string;
   private readonly connectionName: string | undefined;
+  private readonly tenantColumn: boolean;
 
   constructor(
     private readonly db: Database,
@@ -58,6 +65,7 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     this.table = options.table ?? 'media_upload_sessions';
     this.partsTable = options.partsTable ?? 'media_upload_parts';
     this.connectionName = options.connectionName;
+    this.tenantColumn = options.tenantColumn === true;
   }
 
   private client(): QueryClientContract {
@@ -66,7 +74,11 @@ export class LucidUploadSessionStore implements UploadSessionStore {
 
   async create(session: UploadSession): Promise<UploadSession> {
     const stored: UploadSession = { ...session, createdAt: session.createdAt ?? new Date() };
-    await this.client().table(this.table).insert(toRow(stored)).onConflict('id').merge();
+    await this.client()
+      .table(this.table)
+      .insert(toRow(stored, this.tenantColumn))
+      .onConflict('id')
+      .merge();
     return { ...stored };
   }
 
@@ -76,7 +88,11 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 
   async update(session: UploadSession): Promise<UploadSession> {
-    await this.client().table(this.table).insert(toRow(session)).onConflict('id').merge();
+    await this.client()
+      .table(this.table)
+      .insert(toRow(session, this.tenantColumn))
+      .onConflict('id')
+      .merge();
     return { ...session };
   }
 
@@ -106,13 +122,23 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     let q = this.client().from(this.table);
     if (filter.disk !== undefined) q = q.where('disk', filter.disk);
     if (filter.keyPrefix !== undefined) q = q.where('key', 'like', `${filter.keyPrefix}%`);
+    if (this.tenantColumn && filter.tenantIds !== undefined) {
+      const ids = filter.tenantIds.filter((id): id is string => id !== null);
+      const withNull = filter.tenantIds.includes(null);
+      q = q.where((builder) => {
+        if (ids.length === 0 && !withNull) builder.whereRaw('1 = 0');
+        if (ids.length > 0) builder.whereIn('tenant_id', ids);
+        if (withNull) builder.orWhereNull('tenant_id');
+      });
+    }
     const rows = (await q.orderBy('created_at', 'asc')) as SessionRow[];
     return rows.map(fromRow);
   }
 }
 
-function toRow(session: UploadSession): SessionRow {
+function toRow(session: UploadSession, tenantColumn: boolean): SessionRow {
   return {
+    ...(tenantColumn ? { tenant_id: session.tenantId ?? null } : {}),
     id: session.id,
     disk: session.disk,
     key: session.key,
@@ -138,6 +164,7 @@ function fromRow(row: SessionRow): UploadSession {
     parts: Number(row.parts),
     createdAt: new Date(Number(row.created_at)),
   };
+  if (row.tenant_id !== undefined) session.tenantId = row.tenant_id;
   if (row.multipart_upload_id) session.multipartUploadId = row.multipart_upload_id;
   if (row.expires_at !== null) session.expiresAt = new Date(Number(row.expires_at));
   if (row.metadata) {

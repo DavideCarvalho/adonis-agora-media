@@ -9,6 +9,8 @@ import type { MediaStore } from '../media_store.js';
  */
 export interface StoreContext {
   app: ApplicationService;
+  /** Media's `tenancy` is on: the store reads and writes the `tenant_id` column. */
+  tenancy?: boolean;
 }
 
 /**
@@ -82,6 +84,7 @@ export const stores = {
         ...(config.autoCreateSchema !== undefined
           ? { autoCreateSchema: config.autoCreateSchema }
           : {}),
+        ...(ctx.tenancy === true ? { tenantColumn: true } : {}),
       });
     };
   },

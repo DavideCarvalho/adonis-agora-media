@@ -60,7 +60,11 @@ export interface MediaManagerLike {
   readonly storage: { readonly defaultDisk: string; disk(name?: string): Disk };
   readonly hasResumable: boolean;
   readonly resumable: {
-    list(filter?: { disk?: string; keyPrefix?: string }): Promise<UploadSession[]>;
+    list(filter?: {
+      disk?: string;
+      keyPrefix?: string;
+      tenantIds?: ReadonlyArray<string | null>;
+    }): Promise<UploadSession[]>;
     /** Discard an in-flight session (native multipart + buffered parts), then drop its record. */
     abort(id: string): Promise<void>;
     /** All recorded parts for a session (multipart-capable disks); empty for a buffered session. */
@@ -87,6 +91,11 @@ export interface DashboardServiceOptions {
    * did before the option existed.
    */
   objectUrls?: ObjectUrlConfig;
+  /**
+   * With tenancy on, the storage prefixes a confined viewer may touch on the disks (`t/<tenant>/`
+   * per organization in scope). Keys outside them read as missing. Omit for no confinement.
+   */
+  keyPrefixes?: string[];
 }
 
 /** An error carrying an HTTP status for the provider to surface verbatim. */
@@ -181,6 +190,9 @@ export class DashboardService {
     diskName: string,
     params: CursorParams & { prefix?: string } = {},
   ): Promise<ObjectListResponse> {
+    const synthetic = this.syntheticFolders(params.prefix ?? '');
+    if (synthetic) return synthetic;
+    this.assertKey(params.prefix ?? '');
     const disk = this.extended(diskName);
     const result = await disk.list(params.prefix ?? '', {
       delimiter: '/',
@@ -236,6 +248,7 @@ export class DashboardService {
   /** {@link object} without the URL: size, content type and last modified only. */
   async objectMeta(diskName: string, key: string): Promise<Omit<ObjectDetailResponse, 'url'>> {
     if (!key) throw new DashboardError('key is required', 400);
+    this.assertKey(key);
     const disk = this.manager.storage.disk(diskName);
     const stat = isExtendedDisk(disk) ? await disk.stat(key) : await metaAsStat(disk, key);
     return {
@@ -256,6 +269,7 @@ export class DashboardService {
     key: string,
   ): Promise<{ stream: Readable; contentType: string; size: number }> {
     if (!key) throw new DashboardError('key is required', 400);
+    this.assertKey(key);
     const disk = this.manager.storage.disk(diskName);
     const stat = isExtendedDisk(disk) ? await disk.stat(key) : await metaAsStat(disk, key);
     const stream = await disk.getStream(key);
@@ -269,6 +283,7 @@ export class DashboardService {
    * providers run concurrently so one host lookup being slow doesn't serialize the others.
    */
   async objectInsights(diskName: string, key: string): Promise<ObjectInsightsResponse> {
+    this.assertKey(key);
     if (this.insightProviders.length === 0) return { insights: [] };
     // Validates the disk the same way every other object read does, so an unknown disk 404s here too.
     this.manager.storage.disk(diskName);
@@ -444,6 +459,7 @@ export class DashboardService {
   async remove(body: { disk: string; keys: string[] }): Promise<void> {
     this.assertActions();
     if (body.keys.length === 0) return;
+    for (const key of body.keys) this.assertKey(key);
     const disk = this.extended(body.disk);
     await disk.deleteMany(body.keys);
   }
@@ -461,6 +477,7 @@ export class DashboardService {
   ): Promise<void> {
     this.assertActions();
     if (!key) throw new DashboardError('key is required', 400);
+    this.assertKey(key);
     const disk = this.manager.storage.disk(diskName);
     const chunks: Buffer[] = [];
     let total = 0;
@@ -489,6 +506,7 @@ export class DashboardService {
     const disk = this.extended(body.disk);
     const normalized = normalizeFolder(body.prefix);
     if (normalized === '') throw new DashboardError('folder name is required', 400);
+    this.assertKey(`${normalized}/`);
     await disk.put(`${normalized}/`, new Uint8Array(0));
   }
 
@@ -504,6 +522,7 @@ export class DashboardService {
     const disk = this.extended(body.disk);
     const normalized = normalizeFolder(body.prefix);
     if (normalized === '') throw new DashboardError('folder is required', 400);
+    this.assertKey(`${normalized}/`);
     const sweepPrefix = `${normalized}/`;
     let cursor: string | undefined;
     do {
@@ -544,6 +563,8 @@ export class DashboardService {
   ): Promise<void> {
     this.assertActions();
     if (!body.from || !body.to) throw new DashboardError('from and to are required', 400);
+    this.assertKey(body.from);
+    this.assertKey(body.to);
     const toDisk = body.toDisk ?? body.disk;
     if (toDisk === body.disk && body.from === body.to)
       throw new DashboardError('source and destination are identical', 400);
@@ -601,6 +622,8 @@ export class DashboardService {
     const toNormalized = normalizeFolder(body.to);
     if (fromNormalized === '') throw new DashboardError('source folder is required', 400);
     if (toNormalized === '') throw new DashboardError('destination folder is required', 400);
+    this.assertKey(`${fromNormalized}/`);
+    this.assertKey(`${toNormalized}/`);
     const fromPrefix = `${fromNormalized}/`;
     const toPrefix = `${toNormalized}/`;
     if (toDisk === body.disk && toPrefix.startsWith(fromPrefix)) {
@@ -636,6 +659,54 @@ export class DashboardService {
     return disk;
   }
 
+  /** A key outside the viewer's tenant prefixes reads as missing (tenancy, confined viewer). */
+  private assertKey(key: string): void {
+    const prefixes = this.options.keyPrefixes;
+    if (prefixes === undefined) return;
+    const normalized = key.replace(/^\/+/, '');
+    if (!prefixes.some((prefix) => normalized.startsWith(prefix))) {
+      throw new DashboardError('not found', 404);
+    }
+  }
+
+  /**
+   * For a confined viewer, a listing ABOVE their tenant prefixes (the root, `t/`) shows just the
+   * folders that lead to them; `undefined` when the prefix needs a real listing.
+   */
+  private syntheticFolders(prefix: string): ObjectListResponse | undefined {
+    const prefixes = this.options.keyPrefixes;
+    if (prefixes === undefined) return undefined;
+    const normalized = prefix.replace(/^\/+/, '');
+    if (prefixes.some((p) => normalized.startsWith(p))) return undefined;
+    const empty = {
+      folders: [],
+      files: [],
+      nextCursor: null,
+      prevCursor: null,
+      hasNext: false,
+      hasPrev: false,
+    };
+    // Nothing in scope (no organization, or a pick outside the grant): an empty root, like the
+    // record listings.
+    if (prefixes.length === 0) {
+      if (normalized === '') return empty;
+      throw new DashboardError('not found', 404);
+    }
+    const below = prefixes.filter((p) => p.startsWith(normalized));
+    if (below.length === 0) throw new DashboardError('not found', 404);
+    const folders = Array.from(
+      new Set(below.map((p) => normalized + p.slice(normalized.length).split('/')[0] + '/')),
+    ).map((folder) => ({ name: folderName(folder), prefix: folder }));
+    return {
+      folders,
+      files: [],
+      nextCursor: null,
+      prevCursor: null,
+      hasNext: false,
+      hasPrev: false,
+    };
+  }
+
   private assertActions(): void {
     if (!this.options.actions)
       throw new DashboardError('actions are disabled on this console', 403);
@@ -665,6 +736,7 @@ function toMediaEntry(record: MediaRecord): MediaEntry {
     conversions: Object.keys(record.conversions),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+    ...(record.tenantId !== undefined ? { tenantId: record.tenantId } : {}),
   };
 }
 
@@ -682,6 +754,7 @@ function toUploadInfo(session: UploadSession): UploadInfo {
     parts: session.parts,
     multipart: session.multipartUploadId !== undefined,
     ...(session.createdAt ? { createdAt: session.createdAt.toISOString() } : {}),
+    ...(session.tenantId !== undefined ? { tenantId: session.tenantId } : {}),
   };
 }
 

@@ -37,6 +37,8 @@ export interface UploadSession {
   expiresAt?: Date;
   /** Decoded TUS `Upload-Metadata`, retained for finalization/inspection. */
   metadata?: Record<string, string>;
+  /** The tenant (organization) the upload belongs to, when tenancy is on (`null`: no tenant). */
+  tenantId?: string | null;
 }
 
 /** Optional filter for {@link UploadSessionStore.list}. */
@@ -45,6 +47,8 @@ export interface UploadSessionListFilter {
   disk?: string;
   /** Only sessions whose `key` starts with this prefix. */
   keyPrefix?: string;
+  /** Only sessions of these tenants (`null`: no tenant). */
+  tenantIds?: ReadonlyArray<string | null>;
 }
 
 /**

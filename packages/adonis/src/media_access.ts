@@ -19,7 +19,7 @@ import {
   NotAnImageError,
   TransformNotReadyError,
 } from './errors.js';
-import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols.js';
+import { deliverRecord, findUnscoped, imageOfRecord, streamOfRecord } from './internal_symbols.js';
 import type { DeliverOptions, MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { ResponsiveImage, ResponsiveImageOptions } from './responsive_image.js';
@@ -102,6 +102,28 @@ export class MediaAccess {
   constructor(options: { library: MediaLibrary; identity?: MediaIdentityResolver | undefined }) {
     this.#library = options.library;
     this.#identity = options.identity ?? adonisAuthIdentity;
+  }
+
+  /**
+   * The record a route serves. With tenancy on, a file of another tenant reads as missing, except
+   * on a request whose delivery signature verifies for that id: the app signed it, so it is looked
+   * up across tenants. An invalid or expired signature never widens the lookup (the file stays
+   * "not found").
+   */
+  async #lookup(
+    target: MediaRecord | string | null | undefined,
+    verified: (mediaId: string) => boolean,
+  ): Promise<MediaRecord | null> {
+    if (typeof target !== 'string') return target ?? null;
+    const record = await this.#library.find(target);
+    if (record) return record;
+    let trusted = false;
+    try {
+      trusted = verified(target);
+    } catch {
+      trusted = false;
+    }
+    return trusted ? this.#library[findUnscoped](target) : null;
   }
 
   /** The current user per the configured identity resolver, or `null`. */
@@ -226,13 +248,17 @@ export class MediaAccess {
     const { request, response } = ctx;
     const cacheControl = options.cacheControl ?? 'private, max-age=60';
     try {
-      const record =
-        typeof target === 'string' ? await this.#library.find(target) : (target ?? null);
-      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
-
       const qs = request.qs();
       const expires = stringParam(qs.exp);
       const signature = stringParam(qs.sig);
+      const record = await this.#lookup(target, (mediaId) =>
+        this.#library.checkDeliverySignature(
+          { mediaId, conversion, expires, signature },
+          { required: false },
+        ),
+      );
+      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
+
       const trusted = this.#library.checkDeliverySignature(
         { mediaId: record.id, conversion, expires, signature },
         { required: false },
@@ -325,20 +351,22 @@ export class MediaAccess {
     const { request, response } = ctx;
     const cacheControl = options.cacheControl ?? 'private, max-age=60';
     try {
-      const record =
-        typeof target === 'string' ? await this.#library.find(target) : (target ?? null);
-      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
-      const id = record.id;
-
       const qs = request.qs();
-      const signed = {
-        mediaId: id,
+      const signedFor = (mediaId: string) => ({
+        mediaId,
         conversion: stringParam(qs.conversion),
         width: stringParam(qs.w),
         quality: stringParam(qs.q),
         expires: stringParam(qs.exp),
         signature: stringParam(qs.sig),
-      };
+      });
+      const record = await this.#lookup(target, (mediaId) =>
+        this.#library.checkDeliverySignature(signedFor(mediaId), { required: false }),
+      );
+      if (!record) throw new MediaNotFoundError(typeof target === 'string' ? target : '');
+      const id = record.id;
+
+      const signed = signedFor(id);
       // A valid signature is a prior authorization; an invalid or expired one is refused
       // (DeliverySignatureError). Unsigned requests are this caller's to authorize.
       const trusted = this.#library.checkDeliverySignature(signed, { required: false });

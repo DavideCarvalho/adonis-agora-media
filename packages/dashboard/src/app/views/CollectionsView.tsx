@@ -8,6 +8,7 @@ import {
   useMediaRecord,
   useTopology,
 } from '../queries';
+import { tenantLabel, useShowsTenantColumn, useTenantPicker } from '../TenantPicker';
 import { Button, Empty, formatBytes, formatDate, Panel, useToasts } from '../ui';
 
 const EMPTY_FILTER: CollectionFilter = {};
@@ -216,6 +217,8 @@ function FilterField({
  */
 export function CollectionsView({ route }: { route: Route }) {
   const topology = useTopology();
+  const picker = useTenantPicker();
+  const showTenant = useShowsTenantColumn();
   const initial = withCollection(EMPTY_FILTER, route.collection);
   const [draft, setDraft] = useState<CollectionFilter>(initial);
   const [applied, setApplied] = useState<CollectionFilter>(initial);
@@ -311,6 +314,7 @@ export function CollectionsView({ route }: { route: Route }) {
                 <tr className="mono border-b border-border text-[10px] uppercase tracking-wider text-zinc-600">
                   <th className="py-2 pr-2 font-normal">Name</th>
                   <th className="py-2 pr-2 font-normal">Owner</th>
+                  {showTenant && <th className="py-2 pr-2 font-normal">Organization</th>}
                   <th className="py-2 pr-2 font-normal">Collection</th>
                   <th className="py-2 pr-2 font-normal">Conversions</th>
                   <th className="py-2 pr-2 font-normal">Size</th>
@@ -334,6 +338,11 @@ export function CollectionsView({ route }: { route: Route }) {
                       {m.ownerType}
                       <span className="text-zinc-600"> · {m.ownerId}</span>
                     </td>
+                    {showTenant && (
+                      <td className="mono py-2 pr-2 text-xs text-zinc-400">
+                        {m.tenantId ? tenantLabel(picker, m.tenantId) : '—'}
+                      </td>
+                    )}
                     <td className="py-2 pr-2 text-zinc-300">{m.collection}</td>
                     <td className="py-2 pr-2">
                       {m.conversions.length === 0 ? (

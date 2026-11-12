@@ -12,7 +12,14 @@ import type { HttpContext } from '@adonisjs/core/http';
  */
 export type ConsoleAuthorizeResult =
   | boolean
-  | { allowed: true }
+  | {
+      allowed: true;
+      /**
+       * With tenancy on: the tenants (organizations) this viewer may see in the console, or `'*'`
+       * for every tenant plus files with no tenant. Omit for the viewer's own active tenant.
+       */
+      tenants?: '*' | string[];
+    }
   | { allowed: false; reason?: 'unauthenticated' | 'forbidden' }
   | { redirectTo: string };
 
@@ -43,7 +50,7 @@ export type ConsoleAuthorize =
 
 /** The outcome of a console `authorize` check, normalized. */
 export type ConsoleAuthorizeDecision =
-  | { allowed: true }
+  | { allowed: true; tenants?: '*' | string[] }
   | { allowed: false; status: 401 | 403; reason: 'unauthenticated' | 'forbidden' }
   | { allowed: false; status: 401; reason: 'unauthenticated'; redirectTo: string };
 
@@ -75,8 +82,23 @@ const FORBIDDEN = { allowed: false, status: 403, reason: 'forbidden' } as const;
 export function normalizeConsoleAuthorizeResult(result: unknown): ConsoleAuthorizeDecision {
   if (result === true) return { allowed: true };
   if (typeof result !== 'object' || result === null) return FORBIDDEN;
-  const record = result as { allowed?: unknown; reason?: unknown; redirectTo?: unknown };
-  if (record.allowed === true) return { allowed: true };
+  const record = result as {
+    allowed?: unknown;
+    reason?: unknown;
+    redirectTo?: unknown;
+    tenants?: unknown;
+  };
+  if (record.allowed === true) {
+    if (record.tenants === '*') return { allowed: true, tenants: '*' };
+    if (Array.isArray(record.tenants)) {
+      const tenants = record.tenants
+        .filter((t): t is string => typeof t === 'string')
+        .map((t) => t.trim())
+        .filter((t) => t !== '');
+      return { allowed: true, tenants: [...new Set(tenants)] };
+    }
+    return { allowed: true };
+  }
   if (typeof record.redirectTo === 'string' && record.redirectTo !== '') {
     return {
       allowed: false,
@@ -183,7 +205,11 @@ export function anyAuthorize(
     let redirectTo: string | undefined;
     for (const authorize of resolved) {
       const decision = await authorize(ctx);
-      if (decision.allowed) return { allowed: true };
+      if (decision.allowed) {
+        return decision.tenants !== undefined
+          ? { allowed: true, tenants: decision.tenants }
+          : { allowed: true };
+      }
       if (decision.reason !== 'unauthenticated') continue;
       unauthenticated = true;
       if ('redirectTo' in decision && redirectTo === undefined) redirectTo = decision.redirectTo;

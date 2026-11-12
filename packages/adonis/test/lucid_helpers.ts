@@ -74,3 +74,8 @@ async function runMigrationStub(db: Database, stubName: string): Promise<void> {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** Run the `add_media_tenant_id` migration (organizations as tenants) against `db`. */
+export async function runTenancyMigration(db: Database): Promise<void> {
+  return runMigrationStub(db, 'add_media_tenant_id.stub');
+}

@@ -1,4 +1,10 @@
 import type { MediaIdentityResolver } from './access.js';
+import {
+  currentTenantId,
+  currentTenantScope,
+  type ResolvedMediaTenancy,
+  TENANCY_OFF,
+} from './agora/tenancy.js';
 import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
@@ -14,6 +20,7 @@ import type { MediaStore } from './media_store.js';
 import type { UploadSessionStore } from './resumable_upload.js';
 import { ResumableUploadManager } from './resumable_upload.js';
 import { StorageManager } from './storage_manager.js';
+import { tenantScopedSessionStore } from './tenant_scoped_store.js';
 import { FakeImageProcessor } from './testing/fake_image_processor.js';
 import { InMemoryMediaStore } from './testing/in_memory_media_store.js';
 import { InMemoryUploadSessionStore } from './testing/in_memory_upload_session_store.js';
@@ -84,6 +91,8 @@ export interface MediaManagerOptions {
   deliveryPath?: string;
   /** Route of the stream handler, with `:id` and `:conversion` (`delivery.streamPath`). */
   deliveryStreamPath?: string;
+  /** Organizations as tenants, resolved (`tenancy` in `config/media.ts`). Default: off. */
+  tenancy?: ResolvedMediaTenancy;
 }
 
 /**
@@ -137,6 +146,7 @@ export class MediaManager {
       ...(options.deliveryStreamPath !== undefined
         ? { deliveryStreamPath: options.deliveryStreamPath }
         : {}),
+      ...(options.tenancy !== undefined ? { tenancy: options.tenancy } : {}),
     });
     this.#access = new MediaAccess({
       library: this.#library,
@@ -163,10 +173,20 @@ export class MediaManager {
         ? { emitDiagnostics: options.emitDiagnostics }
         : {}),
     });
+    // With tenancy on, upload sessions are stamped with the active tenant and another tenant's
+    // session reads as missing (it cannot be resumed, completed or aborted from there).
+    const tenancy = options.tenancy;
+    const sessionsOf = (store: UploadSessionStore): UploadSessionStore =>
+      tenancy?.enabled
+        ? tenantScopedSessionStore(store, {
+            scope: () => currentTenantScope(tenancy),
+            stamp: () => currentTenantId(tenancy),
+          })
+        : store;
     if (options.uploadSessions !== undefined) {
       this.#resumable = new ResumableUploadManager({
         storage: this.#storage,
-        sessions: options.uploadSessions,
+        sessions: sessionsOf(options.uploadSessions),
         ...(options.resumableTmpPrefix !== undefined
           ? { tmpPrefix: options.resumableTmpPrefix }
           : {}),
@@ -181,7 +201,7 @@ export class MediaManager {
     if (options.directUploadSessions !== undefined) {
       this.#direct = new DirectUploadManager({
         storage: this.#storage,
-        sessions: options.directUploadSessions,
+        sessions: sessionsOf(options.directUploadSessions),
         // The manager reads the whitelist from the same registry attach uses, so the initiate
         // gate and the attach-time barrier cannot drift.
         collections: this.#library.collections,
@@ -225,6 +245,11 @@ export class MediaManager {
    */
   get store(): MediaStore {
     return this.#fake ? this.#fake.manager.store : this.#store;
+  }
+
+  /** Organizations as tenants, as resolved from `config/media.ts` and `config/context.ts`. */
+  get tenancy(): ResolvedMediaTenancy {
+    return this.#options.tenancy ?? TENANCY_OFF;
   }
 
   /** Direct-S3 upload coordinator (proxy + direct multipart modes). */

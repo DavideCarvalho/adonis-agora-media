@@ -11,10 +11,25 @@ import type {
   ObjectDetailResponse,
   ObjectInsightsResponse,
   ObjectListResponse,
+  TenantPickerResponse,
   Topology,
   UploadDetailResponse,
   UploadListResponse,
 } from '../types.js';
+
+/** The organization picked in this page's URL (`?tenant=`), sent with every API call. */
+export function selectedTenant(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = new URLSearchParams(window.location.search).get('tenant');
+  return value && value !== '*' ? value : undefined;
+}
+
+/** `url` with the picked organization appended as `tenant=` (no-op when none is picked). */
+export function withTenant(url: string): string {
+  const tenant = selectedTenant();
+  if (tenant === undefined) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}tenant=${encodeURIComponent(tenant)}`;
+}
 
 /** Runtime config injected into the page by the provider (or defaulted for local dev). */
 export interface DashboardBootstrap {
@@ -153,7 +168,10 @@ export class DashboardClient {
 
   constructor(options: DashboardClientOptions = {}) {
     this.apiBase = (options.apiBase ?? readBootstrap().apiBase).replace(/\/+$/, '');
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    const base = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    // Every call carries the organization picked in the page URL (tenancy), when there is one.
+    this.fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
+      base(typeof input === 'string' ? withTenant(input) : input, init)) as typeof fetch;
     this.onUnauthenticated = options.onUnauthenticated ?? followUnauthenticated;
   }
 
@@ -202,6 +220,16 @@ export class DashboardClient {
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  /** The organizations this viewer may pick (tenancy on); `mode: 'off'` otherwise. */
+  tenants(): Promise<TenantPickerResponse> {
+    return this.get<TenantPickerResponse>('/tenants');
+  }
+
+  /** Record a switch to `tenant` (`'*'` = every organization); the server logs it. */
+  async selectTenant(tenant: string): Promise<void> {
+    await this.post(`/tenants/${encodeURIComponent(tenant)}/select`, {});
   }
 
   topology(): Promise<Topology> {

@@ -10,3 +10,5 @@ export const imageOfRecord: unique symbol = Symbol('@adonis-agora/media:imageOfR
 export const streamOfRecord: unique symbol = Symbol('@adonis-agora/media:streamOfRecord');
 /** @internal */
 export const deliverRecord: unique symbol = Symbol('@adonis-agora/media:deliverRecord');
+/** @internal */
+export const findUnscoped: unique symbol = Symbol('@adonis-agora/media:findUnscoped');

@@ -7,11 +7,14 @@ import {
   type MediaListOptions,
   type MediaListPage,
   type MediaStore,
+  type MediaTotalsOptions,
+  tenantMatches,
 } from '../media_store.js';
 
 /** In-memory {@link MediaStore} for tests and scratch apps. */
 export class InMemoryMediaStore implements MediaStore {
   private readonly records = new Map<string, MediaRecord>();
+  readonly tenantFiltering = true;
 
   async save(record: MediaRecord): Promise<MediaRecord> {
     const copy = { ...record };
@@ -50,7 +53,8 @@ export class InMemoryMediaStore implements MediaStore {
           (options.collection === undefined || r.collection === options.collection) &&
           (options.prefix === undefined ||
             options.prefix === '' ||
-            r.path.startsWith(options.prefix)),
+            r.path.startsWith(options.prefix)) &&
+          tenantMatches(options.tenantIds, r.tenantId),
       )
       // Newest first, tie-broken by id desc — the same stable keyset the Lucid store paginates on.
       .sort(
@@ -84,9 +88,10 @@ export class InMemoryMediaStore implements MediaStore {
     this.records.delete(id);
   }
 
-  async collectionTotals(): Promise<MediaCollectionTotals[]> {
+  async collectionTotals(options: MediaTotalsOptions = {}): Promise<MediaCollectionTotals[]> {
     const totals = new Map<string, MediaCollectionTotals & { newest: number }>();
     for (const record of this.records.values()) {
+      if (!tenantMatches(options.tenantIds, record.tenantId)) continue;
       const entry = totals.get(record.collection) ?? {
         collection: record.collection,
         count: 0,
@@ -101,6 +106,12 @@ export class InMemoryMediaStore implements MediaStore {
     return [...totals.values()]
       .sort((a, b) => b.newest - a.newest)
       .map(({ collection, count, sumSize }) => ({ collection, count, sumSize }));
+  }
+
+  async listTenants(): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const record of this.records.values()) if (record.tenantId) ids.add(record.tenantId);
+    return [...ids].sort();
   }
 
   async nextOrder(ownerType: string, ownerId: string, collection: string): Promise<number> {

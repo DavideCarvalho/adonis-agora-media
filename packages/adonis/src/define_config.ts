@@ -1,4 +1,5 @@
 import type { MediaIdentityResolver } from './access.js';
+import type { MediaTenancyOption } from './agora/tenancy.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
 import type { DiskFactory, S3Credentials, S3DiskConfig } from './disks/factory.js';
@@ -293,6 +294,13 @@ export interface MediaConfig {
    * collection (`collections[].access`) or are passed to `media.access.deliveryRoute()`.
    */
   access?: MediaAccessConfig;
+  /**
+   * Organizations as tenants. `'inherit'` (default) follows `tenancy.enabled` in
+   * `config/context.ts`; `false` opts media out. Once on, new files are stamped with the active
+   * tenant (and stored under `t/<tenantId>/`), and reads, serving and the console only see the
+   * active tenant's files. Needs the `tenant_id` column: `node ace media:publish-migration tenancy`.
+   */
+  tenancy?: MediaTenancyOption;
 }
 
 /**

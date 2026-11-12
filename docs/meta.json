@@ -13,6 +13,7 @@
     "storage",
     "delivery",
     "access",
+    "tenancy",
     "react",
     "dashboard",
     "stores-and-processors",
@@ -23,6 +24,6 @@
     "migrating-to-1-0"
   ],
   "root": true,
-  "description": "A media library for AdonisJS \u2014 collections, image conversions and column attachments on top of @adonisjs/drive.",
+  "description": "A media library for AdonisJS — collections, image conversions and column attachments on top of @adonisjs/drive.",
   "icon": "Image"
 }
