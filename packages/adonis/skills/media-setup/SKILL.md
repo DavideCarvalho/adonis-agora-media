@@ -86,7 +86,7 @@ Every console action is also a command (`configure` registers `@adonis-agora/med
 `media:disks:list`, `media:objects:list|show|upload|copy|move|rename|delete`,
 `media:folders:create`, `media:collections:list`, `media:records:list|show|delete`,
 `media:uploads:list|show|abort`. They use `config/media_dashboard.ts` (its disks, its `actions`
-switch — changes are refused while `actions` is off — and its object URLs), lists print `--json` in the console API's `{ data, meta }` shape, take
+switch — changes are refused while `actions` is off — and its object URLs), `--json` prints the console API's response shape (`{ data, meta }` for the paged `objects:list` and `records:list`; `{ data }` for `disks:list`, `collections:list` and `uploads:list`), take
 `--tenant=<id>` with tenancy on, and ask before a destructive change unless `--force`.
 
 ```bash
