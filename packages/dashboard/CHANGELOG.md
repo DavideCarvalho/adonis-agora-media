@@ -1,5 +1,20 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.5
+
+### Minor Changes
+
+- [#304](https://github.com/DavideCarvalho/adonis-agora-media/pull/304) [`a1a5ab4`](https://github.com/DavideCarvalho/adonis-agora-media/commit/a1a5ab4315225caa605e44f37ba034b761d5481b) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console shell: the media console is rebuilt on the Agora console kit, the shell every `@adonis-agora` console now shares. Its accent is amber (the access-denied page follows).
+  
+  - Left sidebar with the brand (the console switcher), nav grouped as LIBRARY (Library, Collections) and TRANSFERS (Uploads, Upload), and a footer with the signed-in user, a theme toggle and sign-out. Below 768px the sidebar becomes a drawer.
+  - Topbar with the page title, the organization picker, the disk / uploads / actions pills, the live dot and ⌘K search across consoles.
+  - Each page opens with metric cards (disks and folder contents, record totals, sessions in progress). Library rows keep Preview inline and move copy key / copy / move / rename / delete into a row menu. Lists page with "Load more" on the cursor envelope.
+  - Light mode. The theme is remembered per console in localStorage.
+  - Fonts are bundled (Sora, JetBrains Mono); the page no longer loads Google Fonts.
+  - Every page and region has its own error boundary with a retry button, shaped skeletons and empty states.
+  
+  Server: the page's data block gains `search`, `viewer` and `signOut`. The new `viewer(ctx)` config option sets the user row; without it the console reads `ctx.auth.user` when the request is already authenticated. The new `signOut` option takes a POST action path, `{ href }` or `false`; without it the console uses the sign-out an account console announces on the `agora.consoles` registry (`account.signOut`). A POST sign-out carries the request's CSRF token.
+
 ## 10.0.0-rc.4
 
 ### Major Changes
