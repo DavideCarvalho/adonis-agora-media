@@ -80,6 +80,22 @@ const url = await media.library.url(recordId)
 
 Source: `docs/getting-started.mdx`, `docs/configuration.mdx`.
 
+### Operate from the terminal
+
+Every console action is also a command (`configure` registers `@adonis-agora/media/commands`):
+`media:disks:list`, `media:objects:list|show|upload|copy|move|rename|delete`,
+`media:folders:create`, `media:collections:list`, `media:records:list|show|delete`,
+`media:uploads:list|show|abort`. They use `config/media_dashboard.ts` (its disks and its `actions`
+switch: changes are refused while `actions` is off), print `--json` in the console API's shape, take
+`--tenant=<id>` with tenancy on, and ask before deleting unless `--force`.
+
+```bash
+node ace media:records:list --collection=avatars --json
+node ace media:objects:delete tmp/old.bin --force
+```
+
+Source: `docs/cli.mdx`.
+
 ## Core patterns
 
 ### Pattern 1 — select drivers by name from lazy factory maps

@@ -50,3 +50,11 @@ export function resolveDeclaredMimeType(
   if (resolved === undefined || !accepted.includes(resolved)) return undefined;
   return resolved;
 }
+
+/** The MIME type a file name's extension pins in the built-in map, or `undefined`. */
+export function mimeTypeFromName(fileName: string): string | undefined {
+  const baseName = fileName.slice(fileName.lastIndexOf('/') + 1);
+  const dot = baseName.lastIndexOf('.');
+  if (dot <= 0) return undefined;
+  return EXTENSION_MIME_TYPES[baseName.slice(dot + 1).toLowerCase()];
+}

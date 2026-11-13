@@ -1,0 +1,101 @@
+---
+title: CLI
+description: "node ace media:* — browse disks, copy, move, rename and delete objects, read media records and manage uploads from the terminal."
+icon: Terminal
+---
+
+Everything the media console does is also a `node ace` command. The commands use the console's own
+settings from `config/media_dashboard.ts`: the same disks, the same `actions` switch and the same
+object URLs. `node ace configure @adonis-agora/media` registers them; on an existing app add
+`@adonis-agora/media/commands` to `commands` in `adonisrc.ts`.
+
+```sh
+node ace list media
+```
+
+## Common flags
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | Prints one JSON document instead of a table. Lists print `{ data, meta }`, the console API's shape. |
+| `--tenant=<id>` | With tenancy on, acts on one organization only. Without it, commands see every organization. |
+| `--disk=<name>` | The disk to act on. Defaults to the console's default disk. |
+| `--force` | Skips the confirmation question of a destructive command. |
+
+A command that fails prints the reason and exits with code `1`. Saying no to a confirmation also
+exits with `1`.
+
+## Disks and objects
+
+```sh
+node ace media:disks:list
+
+# Browse a disk: folders first, then files. One page; follow `--after` for the next one.
+node ace media:objects:list --prefix=User/42/
+node ace media:objects:list --prefix=User/42/ --first=100 --after=<nextCursor>
+
+node ace media:objects:show User/42/avatar.png
+node ace media:objects:show User/42/avatar.png --url   # also print a link to the bytes
+```
+
+`media:objects:list` takes `--sort=key` only, the order a disk lists in. Any other sort is refused.
+
+## Changing objects
+
+These commands need `actions: true` in `config/media_dashboard.ts`, like the console's buttons.
+
+```sh
+# Upload a local file (100 MB max). The content type comes from the extension unless you pass --type.
+node ace media:objects:upload ./report.pdf --prefix=reports/2026
+node ace media:objects:upload ./export.bin --key=exports/latest.bin --type=application/octet-stream
+
+# Copy and move, on one disk or across disks. --folder copies or moves everything under a prefix.
+node ace media:objects:copy reports/a.pdf archive/a.pdf
+node ace media:objects:move reports/a.pdf a.pdf --to-disk=cold
+node ace media:objects:move reports/2025 archive/2025 --folder
+
+# Rename in place: the new name replaces the last path segment.
+node ace media:objects:rename reports/a.pdf q1.pdf
+node ace media:objects:rename reports/2025 old --folder
+
+node ace media:folders:create reports/2027
+
+# Delete keys, or a folder and everything under it. --dry-run shows what would go.
+node ace media:objects:delete reports/a.pdf reports/b.pdf --dry-run
+node ace media:objects:delete reports/a.pdf reports/b.pdf --force
+node ace media:objects:delete reports/2025 --folder --force
+```
+
+Deleting objects removes the bytes only. Media records that point at them stay.
+
+## Collections and media records
+
+```sh
+node ace media:collections:list                  # records and total size per collection
+
+node ace media:records:list --collection=avatars
+node ace media:records:list --owner-type=User --owner-id=42 --first=20
+node ace media:records:show <id>                 # with a link per generated conversion
+node ace media:records:delete <id> --force       # the record only; its files stay on the disk
+```
+
+`media:records:list` filters by `--collection`, `--owner-type`, `--owner-id` and `--prefix` (of the
+stored path), lists newest first (`--sort=-createdAt`, the only order) and pages with `--first` and
+`--after`.
+
+## Uploads in progress
+
+```sh
+node ace media:uploads:list --disk=s3 --sort=createdAt   # oldest first; newest first by default
+node ace media:uploads:show <id>                         # with its recorded parts
+node ace media:uploads:abort <id> --force
+```
+
+## In scripts
+
+```sh
+node ace media:records:list --collection=avatars --json | jq -r '.data[].id'
+node ace media:objects:delete tmp/a.bin tmp/b.bin --force --json
+```
+
+Changes are logged through the app logger with the OS user who ran them, as `cli:<user>`.

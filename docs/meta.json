@@ -20,6 +20,7 @@
     "stores-and-processors",
     "integrations",
     "health-check",
+    "cli",
     "errors",
     "testing",
     "roadmap",
