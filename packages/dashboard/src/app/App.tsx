@@ -1,127 +1,134 @@
-import { readSwitcherConfig } from '../client/console-switcher';
+import { useMemo } from 'react';
+import { ErrorBoundary } from '../agora-kit/blocks/error-boundary';
+import { AppShell, type NavSection } from '../agora-kit/shell/app-shell';
+import { readShellConfig } from '../agora-kit/shell-config';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
-import { ConsoleSwitcher } from './ConsoleSwitcher';
 import type { Tab } from './hash-route';
-import { toHash, useHashRoute } from './hash-route';
+import { navigate, toHash, useHashRoute } from './hash-route';
+import { FolderIcon, LayersIcon, LogoMark, TransferIcon, UploadIcon } from './icons';
 import { useTopology } from './queries';
 import { TenantPickerControl } from './TenantPicker';
-import { Button, Dot } from './ui';
+import { Dot } from './ui';
 import { CollectionsView } from './views/CollectionsView';
 import { LibraryBrowseView } from './views/LibraryBrowseView';
 import { UploadPanel } from './views/UploadPanel';
 import { UploadsView } from './views/UploadsView';
 
-/** The console switcher config the provider put in the page (absent when this console is alone). */
-const switcherConfig = readSwitcherConfig(CONFIG_ELEMENT_ID);
+/** Media's accent (amber): passed to the kit's ThemeProvider in `main.tsx`. */
+export const MEDIA_ACCENT = '#fbbf24';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'browse', label: 'library' },
-  { id: 'collections', label: 'collections' },
-  { id: 'uploads', label: 'uploads' },
-  { id: 'upload', label: 'upload' },
-];
+const TITLES: Record<Tab, string> = {
+  browse: 'Library',
+  collections: 'Collections',
+  uploads: 'Uploads',
+  upload: 'Upload',
+};
 
-/** The media brand mark — three stacked media layers (an object store / gallery), in currentColor so
- *  it inherits the console accent. Ported verbatim from the NestJS sibling console's `App.tsx`. */
-function LogoMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      role="img"
-      aria-label="media"
-    >
-      <title>media</title>
-      <path d="M12 3 21 7.5 12 12 3 7.5z" opacity={0.9} />
-      <path d="M3 12l9 4.5L21 12" opacity={0.55} />
-      <path d="M3 16.5 12 21l9-4.5" opacity={0.3} />
-    </svg>
-  );
-}
-
-export function App() {
-  const route = useHashRoute();
+/** The deployment at a glance, in the topbar: disk count, whether resumable uploads and mutating
+ *  actions are on, and the live dot. Hidden on phones (the pages say the same thing). */
+function TopologyPills() {
   const topology = useTopology();
-
-  const stat = (label: string, on: boolean) => (
+  if (!topology.data) return null;
+  const { disks, hasUploads, actions } = topology.data;
+  const pill = (label: string, on: boolean, title: string) => (
     <span
-      className={`mono flex items-center gap-1 text-[10px] ${on ? 'text-zinc-400' : 'text-zinc-700'}`}
+      className={`mono flex items-center gap-1.5 text-[11px] ${on ? 'text-dim' : 'text-faint'}`}
+      title={title}
     >
       <Dot tone={on ? 'ok' : 'idle'} />
       {label}
     </span>
   );
+  return (
+    <div className="hidden items-center gap-3 lg:flex">
+      <span className="mono tnum text-[11px] text-dim">
+        {disks} {disks === 1 ? 'disk' : 'disks'}
+      </span>
+      {pill(
+        'uploads',
+        hasUploads,
+        hasUploads ? 'Resumable uploads are on' : 'Resumable uploads are off',
+      )}
+      {pill(
+        'actions',
+        actions,
+        actions ? 'Copy, move, delete and upload are enabled' : 'Read-only console',
+      )}
+    </div>
+  );
+}
+
+function LiveIndicator() {
+  return (
+    <span className="hidden items-center gap-1.5 text-[12px] text-dim sm:flex">
+      <Dot tone="ok" pulse />
+      live
+    </span>
+  );
+}
+
+/**
+ * The media console: the Agora shell (kit) around four pages — LIBRARY (Library, Collections) and
+ * TRANSFERS (Uploads, Upload). Routing is the URL hash (`hash-route.ts`); every page renders inside
+ * its own error boundary, and every region inside it has its own.
+ */
+export function App() {
+  // What the provider put in the page: switcher, ⌘K search, viewer, sign-out (all optional).
+  const shell = useMemo(() => readShellConfig(CONFIG_ELEMENT_ID), []);
+  const route = useHashRoute();
+
+  const nav = useMemo<NavSection[]>(() => {
+    const item = (id: Tab, icon: React.ReactNode) => ({
+      id,
+      label: TITLES[id],
+      icon,
+      href: toHash({ tab: id }),
+      onSelect: () => navigate({ tab: id }),
+    });
+    return [
+      {
+        section: 'Library',
+        items: [item('browse', <FolderIcon />), item('collections', <LayersIcon />)],
+      },
+      {
+        section: 'Transfers',
+        items: [item('uploads', <TransferIcon />), item('upload', <UploadIcon />)],
+      },
+    ];
+  }, []);
 
   return (
-    <>
-      <div className="app-bg" />
-      <div className="relative z-10 flex h-full flex-col">
-        <header className="z-10 flex items-center gap-4 border-b border-border px-5 py-3">
-          <ConsoleSwitcher
-            config={switcherConfig}
-            current={{ title: 'Media', package: '@adonis-agora/media' }}
-            brand={
-              <div className="flex items-center gap-2.5">
-                <div className="grid h-7 w-7 place-items-center rounded-md border border-accent/30 bg-accent/10">
-                  <LogoMark className="h-4 w-4 text-accent" />
-                </div>
-                <div className="leading-none">
-                  <div className="text-sm font-semibold tracking-tight">media</div>
-                  <div className="mono text-[10px] uppercase tracking-[0.2em] text-zinc-600">
-                    agora
-                  </div>
-                </div>
-              </div>
-            }
+    <AppShell
+      brand={{
+        name: 'media',
+        subtitle: 'media library',
+        mark: <LogoMark />,
+        current: { title: 'Media', package: '@adonis-agora/media', icon: 'media' },
+      }}
+      nav={nav}
+      activeId={route.tab}
+      shell={shell}
+      title={TITLES[route.tab]}
+      searchPlaceholder="Search media, runs, payments, users…"
+      actions={
+        <>
+          <TenantPickerControl />
+          <TopologyPills />
+          <LiveIndicator />
+        </>
+      }
+    >
+      <ErrorBoundary label={TITLES[route.tab]} resetKeys={[route.tab]}>
+        {route.tab === 'browse' && (
+          <LibraryBrowseView
+            {...(route.disk ? { disk: route.disk } : {})}
+            {...(route.prefix ? { prefix: route.prefix } : {})}
           />
-
-          <nav className="ml-2 flex flex-wrap items-center gap-1">
-            {TABS.map((tab) => (
-              <Button
-                key={tab.id}
-                tone={route.tab === tab.id ? 'selected' : 'quiet'}
-                className="px-2.5 py-1 text-xs uppercase tracking-wide"
-                render={<a href={toHash({ tab: tab.id })}>{tab.label}</a>}
-              />
-            ))}
-          </nav>
-
-          <div className="ml-auto">
-            <TenantPickerControl />
-          </div>
-
-          {topology.data && (
-            <div className="flex items-center gap-3">
-              <span className="mono tnum text-[10px] text-zinc-500">
-                {topology.data.disks} {topology.data.disks === 1 ? 'disk' : 'disks'}
-              </span>
-              {stat('uploads', topology.data.hasUploads)}
-              {stat('actions', topology.data.actions)}
-              <span className="ml-1 flex items-center gap-1.5 text-xs text-zinc-500">
-                <Dot tone="ok" pulse />
-                live
-              </span>
-            </div>
-          )}
-        </header>
-
-        <main className="min-h-0 flex-1 overflow-auto p-6">
-          {route.tab === 'browse' && (
-            <LibraryBrowseView
-              {...(route.disk ? { disk: route.disk } : {})}
-              {...(route.prefix ? { prefix: route.prefix } : {})}
-            />
-          )}
-          {route.tab === 'collections' && <CollectionsView route={route} />}
-          {route.tab === 'uploads' && <UploadsView route={route} />}
-          {route.tab === 'upload' && <UploadPanel />}
-        </main>
-      </div>
-    </>
+        )}
+        {route.tab === 'collections' && <CollectionsView route={route} />}
+        {route.tab === 'uploads' && <UploadsView route={route} />}
+        {route.tab === 'upload' && <UploadPanel />}
+      </ErrorBoundary>
+    </AppShell>
   );
 }

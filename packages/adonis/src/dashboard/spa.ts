@@ -8,6 +8,8 @@
  * ecosystem.
  */
 
+import type { ConsoleSignOut, ConsoleViewer } from './console_shell.js';
+
 /** Placeholder base Vite bakes into asset URLs (`packages/dashboard/vite.config.ts`); rewritten to
  *  the configured `basePath` at serve time — the SAME built bundle mounts at any path with no rebuild. */
 export const BASE_PLACEHOLDER = '/__MEDIA_DASHBOARD__/';
@@ -35,6 +37,12 @@ export interface DashboardBootstrap {
   actions: boolean;
   /** The console switcher, present only when other Agora consoles are registered in the app. */
   switcher?: SwitcherConfig;
+  /** ⌘K search across the consoles (`GET <endpoint>?q=`), present when a registry exists. */
+  search?: { endpoint: string };
+  /** Who is signed in (sidebar footer). Absent → no user row. */
+  viewer?: ConsoleViewer;
+  /** How the footer signs out. Absent → no sign-out control. */
+  signOut?: ConsoleSignOut;
 }
 
 /** Where the SPA asks which other consoles the viewer may open, and how many are registered. */
@@ -77,8 +85,14 @@ export function renderIndexHtml(
   const based = html.split(BASE_PLACEHOLDER).join(`${basePath === '/' ? '' : basePath}/`);
   // `<` escaped as `\u003c` inside the JSON: a data block ends at the first `</script`, and a
   // config value must not be able to close it early. Valid JSON either way.
-  const { switcher, ...rest } = bootstrap;
-  const config: DashboardBootstrap = switcher && switcher.others > 0 ? { ...rest, switcher } : rest;
+  const { switcher, search, viewer, signOut, ...rest } = bootstrap;
+  const config: DashboardBootstrap = {
+    ...rest,
+    ...(switcher && switcher.others > 0 ? { switcher } : {}),
+    ...(search ? { search } : {}),
+    ...(viewer ? { viewer } : {}),
+    ...(signOut ? { signOut } : {}),
+  };
   const json = JSON.stringify(config).replace(/</g, '\\u003c');
   const inject = `<script type="application/json" id="${CONFIG_ELEMENT_ID}">${json}</script>`;
   return based.includes('</head>') ? based.replace('</head>', `${inject}</head>`) : inject + based;

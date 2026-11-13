@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { ChevronRightIcon } from '../agora-kit/icons';
 import type { DiskInfo, ObjectFolder } from '../types';
 import { useDashboard } from './context';
+import { FolderIcon, HardDriveIcon } from './icons';
 import { Dot } from './ui';
 
 /**
- * A lazy, collapsible file-structure tree for the disk browser's left rail. Ported to visual parity
- * with the NestJS sibling console's `FolderTree.tsx` — the Tailwind classes and layout below are
- * copied from it near-verbatim; only the data-fetching (`useDashboard()`'s injected client) differs.
+ * A lazy, collapsible file-structure tree for the disk browser's left rail, on the Agora kit's
+ * token classes (both themes).
  *
  * Each disk (bucket) is a root; expanding a node fetches only that level's sub-folders. Clicking any
  * node navigates the main pane to it. Files are not shown here — folders only.
@@ -79,7 +80,7 @@ function TreeRow({
   active: boolean;
   onToggle: () => void;
   onOpen: () => void;
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   trailing?: React.ReactNode;
   dropProps?:
@@ -97,12 +98,12 @@ function TreeRow({
       onDragOver={dropProps?.onDragOver}
       onDragLeave={dropProps?.onDragLeave}
       onDrop={dropProps?.onDrop}
-      className={`mono group flex items-center gap-1 rounded-md border pr-1.5 text-xs transition-colors ${
+      className={`mono group flex items-center gap-1 rounded-md border pr-1.5 text-[12px] transition-colors ${
         dropProps?.isTarget
-          ? 'border-accent/60 bg-accent/10 text-accent'
+          ? 'border-brand-border bg-brand-soft text-brand'
           : active
-            ? 'border-border bg-zinc-900 text-zinc-100'
-            : 'border-transparent text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200'
+            ? 'border-brand-border bg-brand-soft text-fg'
+            : 'border-transparent text-dim hover:bg-hover hover:text-fg'
       }`}
       style={{ paddingLeft: depth * INDENT_PER_DEPTH }}
     >
@@ -110,10 +111,10 @@ function TreeRow({
         type="button"
         aria-label={expanded ? 'Collapse' : 'Expand'}
         onClick={onToggle}
-        className="shrink-0 px-1 py-1 text-zinc-600 transition-colors hover:text-zinc-300"
+        className="shrink-0 px-1 py-1 text-faint transition-colors hover:text-fg [&_svg]:size-3"
       >
-        <span className={`inline-block transition-transform ${expanded ? 'rotate-90' : ''}`}>
-          ▸
+        <span className={`grid transition-transform ${expanded ? 'rotate-90' : ''}`}>
+          <ChevronRightIcon />
         </span>
       </button>
       <button
@@ -121,7 +122,9 @@ function TreeRow({
         onClick={onOpen}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 text-left"
       >
-        <span className="shrink-0 text-zinc-600">{icon}</span>
+        <span className={`shrink-0 [&_svg]:size-3.5 ${active ? 'text-brand' : 'text-faint'}`}>
+          {icon}
+        </span>
         <span className="truncate">{label}</span>
       </button>
       {trailing}
@@ -182,7 +185,7 @@ function FolderChildren({
   const indent = { paddingLeft: depth * INDENT_PER_DEPTH + 24 };
   if (query.isLoading) {
     return (
-      <p className="mono py-1 text-[10px] text-zinc-600" style={indent}>
+      <p className="mono py-1 text-[10px] text-faint" style={indent}>
         Loading…
       </p>
     );
@@ -201,7 +204,7 @@ function FolderChildren({
   );
   if (folders.length === 0) {
     return (
-      <p className="mono py-1 text-[10px] text-zinc-700" style={indent}>
+      <p className="mono py-1 text-[10px] text-faint" style={indent}>
         No sub-folders
       </p>
     );
@@ -249,7 +252,7 @@ function TreeFolder({
           context.onNavigate(disk, folder.prefix);
           if (!expanded) context.toggle(id);
         }}
-        icon={expanded ? '▾' : '▸'}
+        icon={<FolderIcon />}
         label={folder.name}
         dropProps={dropPropsFor(context, id, disk, folder.prefix)}
       />
@@ -282,13 +285,13 @@ function DiskRoot({ disk, context }: { disk: DiskInfo; context: TreeContext }) {
           context.onNavigate(disk.name, '');
           if (canList && !expanded) context.toggle(id);
         }}
-        icon="🪣"
+        icon={<HardDriveIcon />}
         label={disk.name}
         dropProps={dropPropsFor(context, id, disk.name, '')}
         trailing={
           <span className="flex shrink-0 items-center gap-1.5">
             {disk.default && (
-              <span className="text-[9px] uppercase tracking-wider text-zinc-600">default</span>
+              <span className="text-[9px] uppercase tracking-wider text-faint">default</span>
             )}
             {!canList && (
               <span title="Listing unsupported on this disk">

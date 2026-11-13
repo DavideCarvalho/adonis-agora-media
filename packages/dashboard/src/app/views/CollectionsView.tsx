@@ -1,6 +1,26 @@
 import { useEffect, useState } from 'react';
-import type { CollectionFilter } from '../../types';
+import { type Column, DataTable } from '../../agora-kit/blocks/data-table';
+import { EmptyState } from '../../agora-kit/blocks/empty-state';
+import { ErrorBoundary, RegionError } from '../../agora-kit/blocks/error-boundary';
+import { MetricCard, MetricGrid, MetricGridSkeleton } from '../../agora-kit/blocks/metric-card';
+import { PageHeader, Toolbar } from '../../agora-kit/blocks/page-header';
+import { LoadMore } from '../../agora-kit/blocks/pager';
+import { Panel } from '../../agora-kit/blocks/panel';
+import { QueryBoundary } from '../../agora-kit/blocks/query-boundary';
+import { FilterIcon } from '../../agora-kit/icons';
+import { PageBody } from '../../agora-kit/shell/app-shell';
+import { Badge } from '../../agora-kit/ui/badge';
+import { Button } from '../../agora-kit/ui/button';
+import { Input } from '../../agora-kit/ui/input';
+import { Skeleton } from '../../agora-kit/ui/skeleton';
+import type {
+  CollectionFilter,
+  CollectionSummary,
+  MediaDetailResponse,
+  MediaEntry,
+} from '../../types';
 import { navigate, type Route } from '../hash-route';
+import { ArrowLeftIcon, ExternalIcon, LayersIcon } from '../icons';
 import {
   useCollections,
   useCollectionsSummary,
@@ -9,7 +29,7 @@ import {
   useTopology,
 } from '../queries';
 import { tenantLabel, useShowsTenantColumn, useTenantPicker } from '../TenantPicker';
-import { Button, Empty, formatBytes, formatDate, Panel, useToasts } from '../ui';
+import { Empty, Field, formatBytes, formatDate, useToasts } from '../ui';
 
 const EMPTY_FILTER: CollectionFilter = {};
 
@@ -27,31 +47,55 @@ function isImage(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
-/** Set or clear `collection` on a filter without the `delete` operator (avoids de-optimizing the
- *  object's shape). */
+/** Set or clear `collection` on a filter without the `delete` operator. */
 function withCollection(filter: CollectionFilter, key: string | undefined): CollectionFilter {
   const { collection: _dropped, ...rest } = filter;
   return key ? { ...rest, collection: key } : rest;
 }
 
-/** Chips summarizing each collection's record count + total size, driving the `collection` filter
- *  with one click. Styled like the NestJS sibling console's `CollectionsBar` (pill `Button`s, not a
- *  bespoke chip component). */
-function CollectionsBar({
+/* ── Summary ────────────────────────────────────────────────────────────────────────────────── */
+
+/** Totals across every collection, presentational. */
+export function CollectionMetrics({ collections }: { collections: CollectionSummary[] }) {
+  const records = collections.reduce((sum, c) => sum + c.count, 0);
+  const bytes = collections.reduce((sum, c) => sum + c.sumSize, 0);
+  const largest = [...collections].sort((a, b) => b.sumSize - a.sumSize)[0];
+  return (
+    <MetricGrid>
+      <MetricCard label="Records" value={records} caption="stored media" tone="brand" />
+      <MetricCard label="Stored" value={formatBytes(bytes)} caption="originals, summed" />
+      <MetricCard
+        label="Collections"
+        value={collections.length}
+        caption="distinct keys"
+        tone="violet"
+      />
+      <MetricCard
+        label="Largest"
+        value={largest ? formatBytes(largest.sumSize) : '—'}
+        caption={largest ? largest.key : 'no records yet'}
+      />
+    </MetricGrid>
+  );
+}
+
+/** One chip per collection (count · size), driving the `collection` filter. Presentational. */
+export function CollectionChips({
+  collections,
   selected,
   onSelect,
 }: {
+  collections: CollectionSummary[];
   selected: string | undefined;
   onSelect: (key: string | undefined) => void;
 }) {
-  const summary = useCollectionsSummary();
-  const collections = summary.data?.data ?? [];
   if (collections.length === 0) return null;
   return (
-    <div className="mb-4 flex flex-wrap gap-1">
+    <Toolbar label="Collections">
       <Button
-        tone={selected === undefined ? 'selected' : 'quiet'}
-        className="px-2.5 py-1 text-xs"
+        variant="chip"
+        size="chip"
+        aria-pressed={selected === undefined}
         onClick={() => onSelect(undefined)}
       >
         all
@@ -59,31 +103,131 @@ function CollectionsBar({
       {collections.map((c) => (
         <Button
           key={c.key}
-          tone={selected === c.key ? 'selected' : 'quiet'}
-          className="gap-2 px-2.5 py-1 text-xs"
+          variant="chip"
+          size="chip"
+          aria-pressed={selected === c.key}
           onClick={() => onSelect(c.key)}
         >
           {c.key}
-          <span className="mono tnum text-zinc-600">
+          <span className="mono tnum text-[10.5px] text-faint">
             {c.count} · {formatBytes(c.sumSize)}
           </span>
         </Button>
       ))}
-    </div>
+    </Toolbar>
   );
 }
 
-/** Full detail of one stored record: metadata, a delete action, and its generated variants — ported
- *  to visual parity with the NestJS sibling console's `RecordDetail`. */
-function RecordDetail({ route }: { route: Route }) {
-  const recordId = route.recordId;
+/* ── Record detail ──────────────────────────────────────────────────────────────────────────── */
+
+function Fact({
+  label,
+  children,
+  mono,
+}: {
+  label: string;
+  children: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">{label}</dt>
+      <dd className={`min-w-0 truncate text-[12.5px] text-fg-2 ${mono ? 'mono text-xs' : ''}`}>
+        {children}
+      </dd>
+    </>
+  );
+}
+
+/** One stored record, presentational: its facts, delete, and its generated variants. */
+export function RecordDetailBody({
+  detail,
+  deleting,
+  deleteError,
+  onDelete,
+}: {
+  detail: MediaDetailResponse;
+  deleting: boolean;
+  deleteError: string | undefined;
+  onDelete: () => void;
+}) {
+  const { record, variants } = detail;
+  return (
+    <>
+      <Panel
+        title="Record"
+        description={record.id}
+        action={
+          <Button variant="destructive" size="sm" onClick={onDelete} disabled={deleting}>
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        }
+      >
+        <dl className="grid grid-cols-[96px_1fr] gap-x-4 gap-y-2.5 sm:grid-cols-[120px_1fr]">
+          <Fact label="Collection">{record.collection}</Fact>
+          <Fact label="Mime type" mono>
+            {record.mimeType}
+          </Fact>
+          <Fact label="Size">{formatBytes(record.sizeBytes)}</Fact>
+          <Fact label="Disk" mono>
+            {record.disk}
+          </Fact>
+          <Fact label="Path" mono>
+            {record.path}
+          </Fact>
+          <Fact label="Owner">
+            {record.ownerType} · {record.ownerId}
+          </Fact>
+          <Fact label="Created">{formatDate(record.createdAt)}</Fact>
+        </dl>
+        {deleteError && <p className="mt-3 text-xs text-bad">{deleteError}</p>}
+      </Panel>
+
+      <Panel title="Variants" description={`${variants.length} generated`}>
+        {variants.length === 0 ? (
+          <Empty>No variants.</Empty>
+        ) : (
+          <div className="flex flex-wrap gap-3">
+            {variants.map((variant) => (
+              <div
+                key={variant.name}
+                className="flex flex-col gap-2 rounded-md border border-border bg-panel-2 p-2.5"
+              >
+                <Badge variant="violet">{variant.name}</Badge>
+                {isImage(record.mimeType) ? (
+                  <img
+                    src={variant.url}
+                    alt={variant.name}
+                    className="max-h-40 rounded-sm border border-border"
+                  />
+                ) : (
+                  <a
+                    href={variant.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-xs text-brand hover:underline [&_svg]:size-3"
+                  >
+                    Open
+                    <ExternalIcon />
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </>
+  );
+}
+
+/** Container: one stored record (`#/collections/<id>`). */
+function RecordDetail({ recordId }: { recordId: string }) {
   const detail = useMediaRecord(recordId);
   const del = useDeleteMediaRecord();
   const { push } = useToasts();
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
 
   async function handleDelete(): Promise<void> {
-    if (!recordId) return;
     setDeleteError(undefined);
     try {
       await del.mutateAsync(recordId);
@@ -95,128 +239,228 @@ function RecordDetail({ route }: { route: Route }) {
   }
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => navigate({ tab: 'collections' })}
-        className="mono text-xs text-zinc-500 hover:text-zinc-300"
-      >
-        ← back to collections
-      </button>
-      {detail.isLoading && <Empty>Loading record…</Empty>}
-      {detail.isError && <p className="mt-3 text-sm s-error">Failed to load record.</p>}
-      {detail.data && (
-        <div className="mt-3">
-          <Panel className="p-4">
-            <h3 className="font-semibold text-zinc-100">{detail.data.record.fileName}</h3>
-            <dl className="mt-3 grid grid-cols-[110px_1fr] gap-x-4 gap-y-2 text-xs">
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">
-                Collection
-              </dt>
-              <dd className="truncate text-zinc-200">{detail.data.record.collection}</dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Mime type</dt>
-              <dd className="mono truncate text-zinc-200">{detail.data.record.mimeType}</dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Size</dt>
-              <dd className="truncate text-zinc-200">
-                {formatBytes(detail.data.record.sizeBytes)}
-              </dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Disk</dt>
-              <dd className="mono truncate text-zinc-200">{detail.data.record.disk}</dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Path</dt>
-              <dd className="mono truncate text-zinc-200">{detail.data.record.path}</dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Owner</dt>
-              <dd className="truncate text-zinc-200">
-                {detail.data.record.ownerType} · {detail.data.record.ownerId}
-              </dd>
-              <dt className="mono text-[10px] uppercase tracking-wider text-zinc-600">Created</dt>
-              <dd className="truncate text-zinc-200">{formatDate(detail.data.record.createdAt)}</dd>
-            </dl>
-            <div className="mt-4">
-              <Button tone="destructive" onClick={handleDelete} disabled={del.isPending}>
-                {del.isPending ? 'Deleting…' : 'Delete'}
-              </Button>
-              {deleteError && <p className="mt-2 text-xs s-error">{deleteError}</p>}
-            </div>
-          </Panel>
-
-          <h4 className="mono mb-2 mt-4 text-[10px] uppercase tracking-wider text-zinc-600">
-            variants
-          </h4>
-          {detail.data.variants.length === 0 ? (
-            <Empty>No variants.</Empty>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {detail.data.variants.map((variant) => (
-                <div
-                  key={variant.name}
-                  className="rounded-lg border border-border bg-panel p-2 text-xs"
-                >
-                  <div className="mono mb-1.5 text-[10px] uppercase tracking-wider text-zinc-500">
-                    {variant.name}
-                  </div>
-                  {isImage(detail.data.record.mimeType) ? (
-                    <img
-                      src={variant.url}
-                      alt={variant.name}
-                      className="max-h-40 rounded-sm border border-border"
-                    />
-                  ) : (
-                    <a
-                      href={variant.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-accent hover:text-accent"
-                    >
-                      Open ↗
-                    </a>
-                  )}
-                </div>
+    <PageBody>
+      <PageHeader
+        title={detail.data?.record.fileName ?? 'Record'}
+        description="A stored media record and its generated variants."
+        actions={
+          <Button variant="outline" size="sm" onClick={() => navigate({ tab: 'collections' })}>
+            <ArrowLeftIcon />
+            Back to collections
+          </Button>
+        }
+      />
+      <QueryBoundary
+        query={detail}
+        label="Record"
+        skeleton={
+          <Panel title="Record">
+            <div className="flex flex-col gap-3" aria-hidden>
+              {['a', 'b', 'c', 'd', 'e'].map((k) => (
+                <Skeleton key={k} className="h-3 w-2/3" />
               ))}
             </div>
-          )}
-        </div>
-      )}
-    </div>
+          </Panel>
+        }
+      >
+        {(data) => (
+          <RecordDetailBody
+            detail={data}
+            deleting={del.isPending}
+            deleteError={deleteError}
+            onDelete={() => void handleDelete()}
+          />
+        )}
+      </QueryBoundary>
+    </PageBody>
   );
 }
 
-function FilterField({
-  id,
-  label,
-  value,
-  onChange,
-  placeholder,
-  mono,
-}: {
+/* ── List ───────────────────────────────────────────────────────────────────────────────────── */
+
+const FIELDS: {
+  key: keyof CollectionFilter;
   id: string;
   label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
+  placeholder: string;
   mono?: boolean;
+}[] = [
+  { key: 'ownerType', id: 'filter-owner-type', label: 'Owner type', placeholder: 'e.g. Post' },
+  { key: 'ownerId', id: 'filter-owner-id', label: 'Owner id', placeholder: 'e.g. 42' },
+  { key: 'collection', id: 'filter-collection', label: 'Collection', placeholder: 'e.g. gallery' },
+  {
+    key: 'prefix',
+    id: 'filter-prefix',
+    label: 'Path prefix',
+    placeholder: 'e.g. Post/42/',
+    mono: true,
+  },
+];
+
+/** The owner / collection / prefix filter form, presentational. */
+export function CollectionFilterForm({
+  draft,
+  onChange,
+  onApply,
+  onReset,
+}: {
+  draft: CollectionFilter;
+  onChange: (next: CollectionFilter) => void;
+  onApply: () => void;
+  onReset: () => void;
 }) {
   return (
-    <label htmlFor={id} className="flex min-w-[150px] flex-col gap-1">
-      <span className="mono text-[10px] uppercase tracking-wider text-zinc-600">{label}</span>
-      <input
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        {...(placeholder ? { placeholder } : {})}
-        className={`rounded-md border border-border bg-black/30 px-3 py-2 text-sm text-zinc-100 focus:border-accent/40 focus:outline-hidden ${mono ? 'mono' : ''}`}
-      />
-    </label>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onApply();
+      }}
+      className="flex flex-wrap items-end gap-3"
+    >
+      <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-4">
+        {FIELDS.map((f) => (
+          <Field key={f.id} id={f.id} label={f.label}>
+            <Input
+              id={f.id}
+              value={draft[f.key] ?? ''}
+              placeholder={f.placeholder}
+              onChange={(event) => onChange({ ...draft, [f.key]: event.target.value })}
+              className={`h-8 text-[13px] ${f.mono ? 'mono' : ''}`}
+            />
+          </Field>
+        ))}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button type="button" variant="outline" onClick={onReset}>
+          Reset
+        </Button>
+        <Button type="submit">
+          <FilterIcon />
+          Apply
+        </Button>
+      </div>
+    </form>
   );
 }
 
+/** The records table, presentational. */
+export function RecordsTable({
+  items,
+  showTenant,
+  tenantName,
+  onOpen,
+}: {
+  items: MediaEntry[];
+  showTenant: boolean;
+  tenantName: (id: string) => string;
+  onOpen: (id: string) => void;
+}) {
+  const columns: Column<MediaEntry>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (m) => (
+        <div className="min-w-0 max-w-[22rem]">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen(m.id);
+            }}
+            className="mono truncate text-left text-[12.5px] text-fg hover:text-brand"
+          >
+            {m.name}
+          </button>
+          <div className="mono mt-0.5 truncate text-[10.5px] text-faint">{m.path}</div>
+        </div>
+      ),
+    },
+    {
+      id: 'owner',
+      header: 'Owner',
+      hideBelow: 'md',
+      cell: (m) => (
+        <span className="mono text-[11.5px]">
+          {m.ownerType}
+          <span className="text-faint"> · {m.ownerId}</span>
+        </span>
+      ),
+    },
+    ...(showTenant
+      ? [
+          {
+            id: 'tenant',
+            header: 'Organization',
+            hideBelow: 'lg' as const,
+            cell: (m: MediaEntry) => (
+              <span className="mono text-[11px]">{m.tenantId ? tenantName(m.tenantId) : '—'}</span>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: 'collection',
+      header: 'Collection',
+      cell: (m) => <Badge variant="violet">{m.collection}</Badge>,
+    },
+    {
+      id: 'conversions',
+      header: 'Conversions',
+      hideBelow: 'lg',
+      cell: (m) =>
+        m.conversions.length === 0 ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {m.conversions.map((c) => (
+              <Badge key={c} variant="neutral">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ),
+    },
+    {
+      id: 'size',
+      header: 'Size',
+      align: 'right',
+      hideBelow: 'sm',
+      cell: (m) => <span className="mono tnum">{formatBytes(m.sizeBytes)}</span>,
+    },
+    {
+      id: 'created',
+      header: 'Created',
+      align: 'right',
+      hideBelow: 'md',
+      cell: (m) => <span className="mono tnum text-faint">{formatDate(m.createdAt)}</span>,
+    },
+  ];
+  return (
+    <DataTable<MediaEntry>
+      label="Stored media"
+      columns={columns}
+      rows={items}
+      rowKey={(m) => m.id}
+      onRowClick={(m) => onOpen(m.id)}
+    />
+  );
+}
+
+const SKELETON_COLUMNS: Column<never>[] = ['Name', 'Owner', 'Collection', 'Size'].map((header) => ({
+  id: header,
+  header,
+  cell: () => null,
+}));
+
 /**
- * The MediaStore library view: browses stored `MediaRecord`s across every owner and collection via the
- * cursor-paginated `/collections` route (backed by `MediaStore.list`). A chip bar (record count + size
- * per collection) drives the `collection` filter; owner/prefix filters compose with it. Clicking a row
- * opens its full detail (metadata, delete, generated variants).
+ * Collections (LIBRARY): the stored `MediaRecord`s across every owner and collection, via the
+ * cursor-paged `/collections` route (`MediaStore.list`). Chips (count · size per collection) drive
+ * the `collection` filter; owner/prefix filters compose with it; a row opens its detail.
+ * Container: owns the summary and list queries; everything it renders is presentational.
  */
 export function CollectionsView({ route }: { route: Route }) {
   const topology = useTopology();
+  const summary = useCollectionsSummary();
   const picker = useTenantPicker();
   const showTenant = useShowsTenantColumn();
   const initial = withCollection(EMPTY_FILTER, route.collection);
@@ -230,161 +474,102 @@ export function CollectionsView({ route }: { route: Route }) {
     setApplied(next);
   }, [route.collection]);
 
-  const { items, isLoading, isError, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useCollections(applied);
+  const records = useCollections(applied);
 
-  if (route.recordId) return <RecordDetail route={route} />;
+  if (route.recordId) return <RecordDetail recordId={route.recordId} />;
 
-  const apply = (event: React.FormEvent) => {
-    event.preventDefault();
-    setApplied(cleanFilter(draft));
-  };
-
-  const reset = () => {
-    setDraft(EMPTY_FILTER);
-    setApplied(EMPTY_FILTER);
+  const collections = summary.data?.data ?? [];
+  const listQuery = {
+    data: records.data ? records.items : undefined,
+    error: records.error,
+    isPending: records.isPending,
+    refetch: records.refetch,
   };
 
   return (
-    <section className="rise">
-      <CollectionsBar
-        selected={applied.collection}
-        onSelect={(key) => {
-          setDraft((d) => withCollection(d, key));
-          setApplied((a) => withCollection(a, key));
-        }}
+    <PageBody>
+      <PageHeader
+        title="Collections"
+        description="Stored media records across every owner and collection, newest first."
       />
-
-      <form onSubmit={apply} className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-wrap gap-3">
-          <FilterField
-            id="filter-owner-type"
-            label="Owner type"
-            placeholder="e.g. Post"
-            value={draft.ownerType ?? ''}
-            onChange={(value) => setDraft((d) => ({ ...d, ownerType: value }))}
+      <ErrorBoundary label="Collection totals">
+        {summary.data ? (
+          <CollectionMetrics collections={collections} />
+        ) : summary.error ? (
+          <RegionError
+            title="Collection totals could not be loaded"
+            error={summary.error}
+            onRetry={() => void summary.refetch()}
           />
-          <FilterField
-            id="filter-owner-id"
-            label="Owner id"
-            placeholder="e.g. 42"
-            value={draft.ownerId ?? ''}
-            onChange={(value) => setDraft((d) => ({ ...d, ownerId: value }))}
-          />
-          <FilterField
-            id="filter-collection"
-            label="Collection"
-            placeholder="e.g. gallery"
-            value={draft.collection ?? ''}
-            onChange={(value) => setDraft((d) => ({ ...d, collection: value }))}
-          />
-          <FilterField
-            id="filter-prefix"
-            label="Path prefix"
-            placeholder="e.g. Post/42/"
-            mono
-            value={draft.prefix ?? ''}
-            onChange={(value) => setDraft((d) => ({ ...d, prefix: value }))}
-          />
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button type="button" onClick={reset}>
-            Reset
-          </Button>
-          <Button type="submit" tone="accent">
-            Apply
-          </Button>
-        </div>
-      </form>
-
-      <Panel className="p-3">
-        <h3 className="mono mb-3 text-[10px] uppercase tracking-wider text-zinc-600">
-          Stored media
-        </h3>
-        {isLoading ? (
-          <Empty>Loading records…</Empty>
-        ) : isError ? (
-          <p className="text-sm s-error">Failed to list records: {(error as Error)?.message}</p>
-        ) : items.length === 0 ? (
-          <Empty>No media records match this filter.</Empty>
         ) : (
-          <>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="mono border-b border-border text-[10px] uppercase tracking-wider text-zinc-600">
-                  <th className="py-2 pr-2 font-normal">Name</th>
-                  <th className="py-2 pr-2 font-normal">Owner</th>
-                  {showTenant && <th className="py-2 pr-2 font-normal">Organization</th>}
-                  <th className="py-2 pr-2 font-normal">Collection</th>
-                  <th className="py-2 pr-2 font-normal">Conversions</th>
-                  <th className="py-2 pr-2 font-normal">Size</th>
-                  <th className="py-2 pr-2 font-normal">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-soft">
-                {items.map((m) => (
-                  <tr key={m.id} className="hover:bg-zinc-900/40">
-                    <td className="py-2 pr-2">
-                      <button
-                        type="button"
-                        onClick={() => navigate({ tab: 'collections', recordId: m.id })}
-                        className="flex items-center gap-2 text-zinc-200 hover:text-accent"
-                      >
-                        <span className="mono">{m.name}</span>
-                      </button>
-                      <div className="mono mt-0.5 text-[10px] text-zinc-600">{m.path}</div>
-                    </td>
-                    <td className="mono py-2 pr-2 text-xs text-zinc-400">
-                      {m.ownerType}
-                      <span className="text-zinc-600"> · {m.ownerId}</span>
-                    </td>
-                    {showTenant && (
-                      <td className="mono py-2 pr-2 text-xs text-zinc-400">
-                        {m.tenantId ? tenantLabel(picker, m.tenantId) : '—'}
-                      </td>
-                    )}
-                    <td className="py-2 pr-2 text-zinc-300">{m.collection}</td>
-                    <td className="py-2 pr-2">
-                      {m.conversions.length === 0 ? (
-                        <span className="text-zinc-700">—</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {m.conversions.map((c) => (
-                            <span
-                              key={c}
-                              className="mono rounded-full border border-border px-2 py-0.5 text-[10px] text-zinc-400"
-                            >
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="mono tnum py-2 pr-2 text-xs text-zinc-500">
-                      {formatBytes(m.sizeBytes)}
-                    </td>
-                    <td className="tnum py-2 pr-2 text-xs text-zinc-600">
-                      {formatDate(m.createdAt)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {hasNextPage && (
-              <div className="mt-3">
-                <Button disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
-                  {isFetchingNextPage ? 'Loading…' : 'Load more'}
-                </Button>
-              </div>
-            )}
-          </>
+          <MetricGridSkeleton count={4} />
         )}
+      </ErrorBoundary>
+
+      <ErrorBoundary label="Filters">
+        <div className="flex flex-col gap-3">
+          <CollectionChips
+            collections={collections}
+            selected={applied.collection}
+            onSelect={(key) => {
+              setDraft((d) => withCollection(d, key));
+              setApplied((a) => withCollection(a, key));
+            }}
+          />
+          <CollectionFilterForm
+            draft={draft}
+            onChange={setDraft}
+            onApply={() => setApplied(cleanFilter(draft))}
+            onReset={() => {
+              setDraft(EMPTY_FILTER);
+              setApplied(EMPTY_FILTER);
+            }}
+          />
+        </div>
+      </ErrorBoundary>
+
+      <Panel
+        title="Stored media"
+        description={
+          topology.data && !topology.data.actions
+            ? 'read-only console · delete is disabled'
+            : records.data
+              ? `${records.items.length} loaded`
+              : undefined
+        }
+        flush
+      >
+        <QueryBoundary
+          query={listQuery}
+          label="Records"
+          skeleton={<DataTable columns={SKELETON_COLUMNS} rows={undefined} rowKey={() => ''} />}
+          isEmpty={(items) => items.length === 0}
+          empty={
+            <EmptyState
+              icon={<LayersIcon />}
+              title="No media records match this filter."
+              description="Clear a filter, or attach media to a model to see it here."
+            />
+          }
+        >
+          {(items) => (
+            <>
+              <RecordsTable
+                items={items}
+                showTenant={showTenant}
+                tenantName={(id) => tenantLabel(picker, id)}
+                onOpen={(id) => navigate({ tab: 'collections', recordId: id })}
+              />
+              <LoadMore
+                hasNext={records.hasNextPage}
+                loading={records.isFetchingNextPage}
+                onLoadMore={() => void records.fetchNextPage()}
+                className="border-t border-border"
+              />
+            </>
+          )}
+        </QueryBoundary>
       </Panel>
-      {topology.data && !topology.data.actions && (
-        <p className="mono mt-2 text-[10px] text-zinc-600">
-          Delete is disabled on a read-only console.
-        </p>
-      )}
-    </section>
+    </PageBody>
   );
 }

@@ -4,6 +4,7 @@ import type {
   AccessDeniedRenderer as GenericAccessDeniedRenderer,
 } from './access_denied_page.js';
 import type { ConsoleAuthorize } from './console_authorize.js';
+import type { ConsoleViewer, SignOutOption, ViewerHook } from './console_shell.js';
 import type { ObjectInsightProvider } from './object_insights.js';
 import type { ObjectUrlStrategy } from './object_urls.js';
 
@@ -103,7 +104,21 @@ export interface MediaDashboardConfig {
    * value always wins.
    */
   objectUrls?: ObjectUrlStrategy;
+  /**
+   * Who the console's sidebar footer shows as signed in. Omit it to read `ctx.auth.user`
+   * structurally (`fullName`/`name`/`email`, first of `role`/`roles`) when the request is already
+   * authenticated; return `null` for no user row. A throw is treated as `null`.
+   */
+  viewer?: ViewerHook;
+  /**
+   * The footer's "Sign out": a POST action path (`'/logout'`, sent with the CSRF token), `{ href }`
+   * for a plain link, or `false` for none. Omit it to use the sign-out an account console (authkit)
+   * announces on the `agora.consoles` registry, when there is one. Same-origin paths only.
+   */
+  signOut?: SignOutOption;
 }
+
+export type { ConsoleViewer, SignOutOption, ViewerHook };
 
 /** Identity helper for authoring a typed `config/media_dashboard.ts`. */
 export function defineConfig(config: MediaDashboardConfig = {}): MediaDashboardConfig {

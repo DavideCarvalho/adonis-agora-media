@@ -1,8 +1,35 @@
-import { useRef, useState } from 'react';
-import type { DiskInfo, ObjectEntry } from '../../types';
+import { type ReactNode, useRef, useState } from 'react';
+import { EmptyState } from '../../agora-kit/blocks/empty-state';
+import { ErrorBoundary, RegionError } from '../../agora-kit/blocks/error-boundary';
+import { MetricCard, MetricGrid, MetricGridSkeleton } from '../../agora-kit/blocks/metric-card';
+import { PageHeader } from '../../agora-kit/blocks/page-header';
+import { LoadMore } from '../../agora-kit/blocks/pager';
+import { Panel } from '../../agora-kit/blocks/panel';
+import { ChevronRightIcon, MoreHorizontalIcon } from '../../agora-kit/icons';
+import { PageBody } from '../../agora-kit/shell/app-shell';
+import { Button } from '../../agora-kit/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../../agora-kit/ui/dropdown-menu';
+import { Input } from '../../agora-kit/ui/input';
+import { Skeleton } from '../../agora-kit/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../agora-kit/ui/table';
+import type { DiskInfo, ObjectEntry, ObjectFolder } from '../../types';
 import { useDashboard } from '../context';
 import { DRAG_MIME, type DragItem, FolderTree } from '../FolderTree';
 import { navigate } from '../hash-route';
+import { EyeIcon, FileIcon, FolderIcon, PlusIcon, UploadIcon } from '../icons';
 import { Lightbox, type PreviewItem } from '../Lightbox';
 import {
   useCopy,
@@ -17,7 +44,7 @@ import {
   useTopology,
   useUploadObject,
 } from '../queries';
-import { Alert, Button, Empty, formatBytes, formatDate, Modal, Panel, useToasts } from '../ui';
+import { Alert, Field, formatBytes, formatDate, Modal, useToasts } from '../ui';
 
 interface Crumb {
   label: string;
@@ -126,10 +153,10 @@ function UploadDialog({
       onClose={onClose}
       footer={
         <>
-          <Button size="sm" onClick={onClose} disabled={busy}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button size="sm" tone="accent" onClick={submit} disabled={busy || files.length === 0}>
+          <Button onClick={submit} disabled={busy || files.length === 0}>
             {busy ? `Uploading ${progress.done}/${progress.total}…` : 'Upload'}
           </Button>
         </>
@@ -149,10 +176,10 @@ function UploadDialog({
           setDragOver(false);
           addFiles(e.dataTransfer.files);
         }}
-        className={`mono cursor-pointer rounded-md border border-dashed px-3 py-6 text-center text-xs transition-colors ${
+        className={`cursor-pointer rounded-md border border-dashed px-3 py-8 text-center text-xs transition-colors ${
           dragOver
-            ? 'border-accent/50 bg-accent/5 text-accent'
-            : 'border-border text-zinc-500 hover:text-zinc-300'
+            ? 'border-brand-border bg-brand-soft text-brand'
+            : 'border-line-strong text-dim hover:border-brand-border hover:text-fg'
         }`}
       >
         Drop files here, or click to choose
@@ -173,17 +200,17 @@ function UploadDialog({
             <li
               // biome-ignore lint/suspicious/noArrayIndexKey: the same file can be picked twice and `File` has no id; the index is the only thing that disambiguates duplicates
               key={`${file.name}-${index}`}
-              className="mono flex items-center justify-between gap-2 rounded-sm border border-border px-2 py-1 text-[11px]"
+              className="mono flex items-center justify-between gap-2 rounded-md border border-border bg-panel-2 px-2 py-1 text-[11px]"
             >
-              <span className="truncate text-zinc-300">{file.name}</span>
+              <span className="truncate text-fg-2">{file.name}</span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="tnum text-zinc-600">{formatBytes(file.size)}</span>
+                <span className="tnum text-faint">{formatBytes(file.size)}</span>
                 {!busy && (
                   <button
                     type="button"
                     aria-label={`Remove ${file.name}`}
                     onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
-                    className="text-zinc-600 hover:text-bad"
+                    className="text-faint hover:text-bad"
                   >
                     ✕
                   </button>
@@ -239,26 +266,17 @@ function FolderDialog({
       initialFocus={inputRef}
       footer={
         <>
-          <Button size="sm" onClick={onClose} disabled={create.isPending}>
+          <Button variant="outline" onClick={onClose} disabled={create.isPending}>
             Cancel
           </Button>
-          <Button
-            size="sm"
-            tone="accent"
-            onClick={submit}
-            disabled={create.isPending || name.trim() === ''}
-          >
+          <Button onClick={submit} disabled={create.isPending || name.trim() === ''}>
             {create.isPending ? 'Creating…' : 'Create'}
           </Button>
         </>
       }
     >
-      <label
-        htmlFor="folder-name"
-        className="mono flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-600"
-      >
-        Folder name
-        <input
+      <Field id="folder-name" label="Folder name">
+        <Input
           id="folder-name"
           ref={inputRef}
           value={name}
@@ -267,12 +285,12 @@ function FolderDialog({
             if (e.key === 'Enter') submit();
           }}
           placeholder="reports"
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
+          className="mono h-8 text-[13px]"
         />
-      </label>
-      <p className="mono mt-2 text-[10px] text-zinc-600">
+      </Field>
+      <p className="mono mt-2 text-[10.5px] text-faint">
         Creates {prefix ? `/${prefix}/` : ''}
-        <span className="text-zinc-400">{name.trim() || 'name'}</span>/
+        <span className="text-fg-2">{name.trim() || 'name'}</span>/
       </p>
       {error && (
         <Alert variant="error" className="mt-3">
@@ -355,12 +373,11 @@ function CopyMoveDialog({
       initialFocus={inputRef}
       footer={
         <>
-          <Button size="sm" onClick={onClose} disabled={pending}>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
           <Button
-            size="sm"
-            tone={kind === 'move' ? 'destructive' : 'accent'}
+            variant={kind === 'move' ? 'destructive' : 'default'}
             onClick={submit}
             disabled={pending || blocked}
           >
@@ -369,17 +386,17 @@ function CopyMoveDialog({
         </>
       }
     >
-      <p className="mono mb-2 text-[11px] text-zinc-500">
+      <p className="mono mb-3 text-[11px] text-dim">
         From{' '}
-        <span className="text-zinc-300">
+        <span className="text-fg-2">
           {sourceDisk}/{source}
           {target.type === 'folder' ? '/' : ''}
         </span>
       </p>
-      <div className="mono mb-1 text-[10px] uppercase tracking-wider text-zinc-600">
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
         Destination folder
       </div>
-      <div className="max-h-56 overflow-auto rounded-md border border-border bg-black/20 p-1">
+      <div className="max-h-56 overflow-auto rounded-md border border-border bg-sunken/20 p-1">
         <FolderTree
           disks={disks}
           selectedDisk={destDisk}
@@ -390,12 +407,8 @@ function CopyMoveDialog({
           }}
         />
       </div>
-      <label
-        htmlFor="copy-move-name"
-        className="mono mt-3 flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-600"
-      >
-        Name
-        <input
+      <Field id="copy-move-name" label="Name" className="mt-3">
+        <Input
           id="copy-move-name"
           ref={inputRef}
           value={name}
@@ -403,12 +416,12 @@ function CopyMoveDialog({
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
+          className="mono h-8 text-[13px]"
         />
-      </label>
-      <p className="mono mt-2 text-[10px] text-zinc-600">
+      </Field>
+      <p className="mono mt-2 text-[10.5px] text-faint">
         To{' '}
-        <span className="text-zinc-400">
+        <span className="text-fg-2">
           {destDisk}/{destination || '—'}
         </span>
         {unchanged && ' (same as source — pick a different folder or name)'}
@@ -475,21 +488,17 @@ function RenameDialog({
       initialFocus={inputRef}
       footer={
         <>
-          <Button size="sm" onClick={onClose} disabled={pending}>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button size="sm" tone="accent" onClick={submit} disabled={pending || blocked}>
+          <Button onClick={submit} disabled={pending || blocked}>
             {pending ? 'Renaming…' : 'Rename'}
           </Button>
         </>
       }
     >
-      <label
-        htmlFor="rename-name"
-        className="mono flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-600"
-      >
-        New name
-        <input
+      <Field id="rename-name" label="New name">
+        <Input
           id="rename-name"
           ref={inputRef}
           value={name}
@@ -497,11 +506,11 @@ function RenameDialog({
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
           }}
-          className="mono rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
+          className="mono h-8 text-[13px]"
         />
-      </label>
-      <p className="mono mt-2 text-[10px] text-zinc-600">
-        To <span className="text-zinc-400">{destination || '—'}</span>
+      </Field>
+      <p className="mono mt-2 text-[10.5px] text-faint">
+        To <span className="text-fg-2">{destination || '—'}</span>
         {target.type === 'folder' ? '/' : ''}
       </p>
       {error && (
@@ -513,11 +522,309 @@ function RenameDialog({
   );
 }
 
+/* ── Presentational pieces of the browser ───────────────────────────────────────────────────── */
+
+/** What the current folder holds, plus the disk count. Counts are of the loaded pages. */
+export function LibraryMetrics({
+  disks,
+  browsable,
+  folders,
+  files,
+  more,
+}: {
+  disks: number;
+  browsable: number;
+  folders: number;
+  files: ObjectEntry[];
+  more: boolean;
+}) {
+  const bytes = files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0);
+  const plus = more ? '+' : '';
+  return (
+    <MetricGrid>
+      <MetricCard label="Disks" value={disks} caption={`${browsable} browsable`} tone="brand" />
+      <MetricCard
+        label="Folders"
+        value={`${folders}${plus}`}
+        caption="in this folder"
+        tone="violet"
+      />
+      <MetricCard label="Files" value={`${files.length}${plus}`} caption="in this folder" />
+      <MetricCard
+        label="Size"
+        value={formatBytes(bytes)}
+        caption={more ? 'of the loaded files' : 'files in this folder'}
+      />
+    </MetricGrid>
+  );
+}
+
+/** Clickable path: disk / folder / folder. */
+function Breadcrumbs({
+  crumbs,
+  onOpen,
+}: {
+  crumbs: Crumb[];
+  onOpen: (prefix: string | undefined) => void;
+}) {
+  return (
+    <nav
+      aria-label="Path"
+      className="mono flex min-w-0 flex-wrap items-center gap-0.5 text-[12px] text-dim"
+    >
+      {crumbs.map((crumb, index) => (
+        <span key={crumb.prefix ?? '__root__'} className="flex items-center gap-0.5">
+          {index > 0 && (
+            <span className="text-faint [&_svg]:size-3" aria-hidden>
+              <ChevronRightIcon />
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => onOpen(crumb.prefix)}
+            aria-current={index === crumbs.length - 1 ? 'location' : undefined}
+            className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-fg aria-[current=location]:font-semibold aria-[current=location]:text-fg"
+          >
+            {crumb.label}
+          </button>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+type RowAction = { label: string; onSelect: () => void; destructive?: boolean };
+
+/** A row's secondary actions behind a "…" menu (shadcn DropdownMenu). */
+function RowMenu({ name, items }: { name: string; items: RowAction[] }) {
+  const safe = items.filter((i) => !i.destructive);
+  const danger = items.filter((i) => i.destructive);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-xs" aria-label={`Actions for ${name}`} />}
+      >
+        <MoreHorizontalIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        {safe.map((item) => (
+          <DropdownMenuItem key={item.label} onClick={item.onSelect} className="text-[12.5px]">
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+        {danger.length > 0 && safe.length > 0 && <DropdownMenuSeparator />}
+        {danger.map((item) => (
+          <DropdownMenuItem
+            key={item.label}
+            variant="destructive"
+            onClick={item.onSelect}
+            className="text-[12.5px]"
+          >
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+const headClass =
+  'h-auto px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint';
+
+/** The folder's contents (folders first, then files), presentational. Rows drag onto the tree. */
+export function ObjectsTable({
+  disk,
+  folders,
+  files,
+  actions,
+  busyKey,
+  onOpenFolder,
+  onPreview,
+  onRowAction,
+}: {
+  disk: string;
+  folders: ObjectFolder[];
+  files: ObjectEntry[];
+  actions: boolean;
+  busyKey: string | null;
+  onOpenFolder: (prefix: string) => void;
+  onPreview: (file: ObjectEntry) => void;
+  onRowAction: (dialog: DialogState | { kind: 'copy-key'; key: string }) => void;
+}) {
+  const moveActions = (target: MoveTarget): RowAction[] => [
+    { label: 'Copy to…', onSelect: () => onRowAction({ kind: 'copy', target }) },
+    { label: 'Move to…', onSelect: () => onRowAction({ kind: 'move', target }) },
+    { label: 'Rename', onSelect: () => onRowAction({ kind: 'rename', target }) },
+  ];
+  return (
+    <Table aria-label="Objects">
+      <TableHeader>
+        <TableRow className="border-border hover:bg-transparent">
+          <TableHead className={headClass}>Name</TableHead>
+          <TableHead className={`${headClass} hidden text-right sm:table-cell`}>Size</TableHead>
+          <TableHead className={`${headClass} hidden text-right md:table-cell`}>
+            Last modified
+          </TableHead>
+          <TableHead className={`${headClass} w-px text-right`}>
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {folders.map((folder) => (
+          <TableRow
+            key={folder.prefix}
+            draggable={actions}
+            onDragStart={
+              actions
+                ? (e) =>
+                    startRowDrag(e, {
+                      kind: 'folder',
+                      disk,
+                      prefix: folder.prefix,
+                      name: folder.name,
+                    })
+                : undefined
+            }
+            className={`border-border hover:bg-hover ${actions ? 'cursor-grab' : ''}`}
+          >
+            <TableCell className="px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onOpenFolder(folder.prefix)}
+                className="flex items-center gap-2 text-[12.5px] font-medium text-fg hover:text-brand [&_svg]:size-3.5"
+              >
+                <span className="text-brand" aria-hidden>
+                  <FolderIcon />
+                </span>
+                {folder.name}
+              </button>
+            </TableCell>
+            <TableCell className="hidden px-3 py-2 text-right text-faint sm:table-cell">
+              —
+            </TableCell>
+            <TableCell className="hidden px-3 py-2 text-right text-faint md:table-cell">
+              —
+            </TableCell>
+            <TableCell className="px-3 py-1.5 text-right">
+              {actions && (
+                <RowMenu
+                  name={folder.name}
+                  items={[
+                    ...moveActions({ type: 'folder', prefix: folder.prefix, name: folder.name }),
+                    {
+                      label: 'Delete',
+                      destructive: true,
+                      onSelect: () =>
+                        onRowAction({
+                          kind: 'delete-folder',
+                          prefix: folder.prefix,
+                          name: folder.name,
+                        }),
+                    },
+                  ]}
+                />
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+        {files.map((file) => (
+          <TableRow
+            key={file.key}
+            draggable={actions}
+            onDragStart={
+              actions
+                ? (e) => startRowDrag(e, { kind: 'file', disk, key: file.key, name: file.name })
+                : undefined
+            }
+            className={`border-border hover:bg-hover ${actions ? 'cursor-grab' : ''}`}
+          >
+            <TableCell className="max-w-[16rem] px-3 py-2 sm:max-w-none">
+              <span className="flex min-w-0 items-center gap-2 [&_svg]:size-3.5">
+                <span className="shrink-0 text-faint" aria-hidden>
+                  <FileIcon />
+                </span>
+                <span className="mono truncate text-[12.5px] text-fg-2">{file.name}</span>
+              </span>
+            </TableCell>
+            <TableCell className="mono tnum hidden px-3 py-2 text-right text-[11.5px] text-dim sm:table-cell">
+              {formatBytes(file.sizeBytes)}
+            </TableCell>
+            <TableCell className="mono tnum hidden px-3 py-2 text-right text-[11.5px] text-faint md:table-cell">
+              {formatDate(file.lastModified)}
+            </TableCell>
+            <TableCell className="px-3 py-1.5">
+              <div className="flex items-center justify-end gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busyKey === file.key}
+                  onClick={() => onPreview(file)}
+                >
+                  <EyeIcon />
+                  <span className="hidden sm:inline">Preview</span>
+                  <span className="sr-only sm:hidden">Preview</span>
+                </Button>
+                <RowMenu
+                  name={file.name}
+                  items={[
+                    {
+                      label: 'Copy key',
+                      onSelect: () => onRowAction({ kind: 'copy-key', key: file.key }),
+                    },
+                    ...(actions
+                      ? [
+                          ...moveActions({ type: 'file', key: file.key, name: file.name }),
+                          {
+                            label: 'Delete',
+                            destructive: true,
+                            onSelect: () =>
+                              onRowAction({ kind: 'delete-file', key: file.key, name: file.name }),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function RowsSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 px-4 py-4" aria-hidden>
+      {['a', 'b', 'c', 'd', 'e'].map((k, i) => (
+        <div key={k} className="flex items-center gap-3">
+          <Skeleton className="size-4 rounded-sm" />
+          <Skeleton className={`h-3 ${i % 2 ? 'w-40' : 'w-56'}`} />
+          <Skeleton className="ml-auto h-3 w-14" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TreeSkeleton() {
+  return (
+    <div className="flex flex-col gap-2.5 p-2" aria-hidden>
+      <Skeleton className="h-3 w-28" />
+      <Skeleton className="ml-4 h-3 w-20" />
+      <Skeleton className="ml-4 h-3 w-24" />
+      <Skeleton className="h-3 w-24" />
+    </div>
+  );
+}
+
 /**
- * The media-library browser: a folder tree over every browsable disk on the left, the selected
- * folder's contents on the right. Ported to visual parity with the NestJS sibling console's
- * `DisksView.tsx` — preview (Lightbox), create/rename/copy/move/delete for both files and folders,
- * drag-and-drop upload, and drag-a-row-onto-the-tree to move.
+ * Library (LIBRARY): the disk browser. A folder tree over every browsable disk on the left, the
+ * selected folder's contents on the right — preview (Lightbox), create / rename / copy / move /
+ * delete for files and folders, drag-and-drop upload, and drag-a-row-onto-the-tree to move.
+ * Container: owns the disk/topology/object queries, the mutations and the open dialog; the
+ * metrics, breadcrumbs, table and dialogs are presentational.
  */
 export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: string }) {
   const disks = useDisks();
@@ -530,17 +837,8 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
   const browsable = allDisks.filter((d) => d.capabilities.list);
   const activeDisk = disk ?? browsable.find((d) => d.default)?.name ?? browsable[0]?.name;
 
-  const {
-    folders,
-    files,
-    isLoading,
-    isError,
-    error,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-    refetch,
-  } = useObjects(activeDisk, prefix);
+  const objects = useObjects(activeDisk, prefix);
+  const { folders, files, hasNextPage, isFetchingNextPage, fetchNextPage, refetch } = objects;
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -564,8 +862,12 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
   }
 
   async function handleCopyKey(key: string): Promise<void> {
-    await navigator.clipboard.writeText(key);
-    notify(`Copied "${key}" to clipboard`);
+    try {
+      await navigator.clipboard.writeText(key);
+      notify(`Copied "${key}" to clipboard`);
+    } catch {
+      notify('The clipboard is not available here', 'error');
+    }
   }
 
   async function handleTreeDrop(
@@ -625,308 +927,198 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
     }
   }
 
-  if (disks.isLoading) return <Empty>Loading disks…</Empty>;
-  if (browsable.length === 0)
-    return <Empty>No list-capable disks are configured for the console.</Empty>;
-  if (!activeDisk) return <Empty>Select a disk to browse.</Empty>;
+  const header = (
+    <PageHeader
+      title="Library"
+      description="Browse every disk, preview objects, and copy or move them across buckets."
+      actions={
+        actions && activeDisk ? (
+          <>
+            <Button variant="outline" onClick={() => setDialog({ kind: 'folder' })}>
+              <PlusIcon />
+              New folder
+            </Button>
+            <Button onClick={() => setDialog({ kind: 'upload' })}>
+              <UploadIcon />
+              Upload
+            </Button>
+          </>
+        ) : undefined
+      }
+    />
+  );
 
-  const crumbs = crumbsFor(activeDisk, prefix);
-  const isEmpty = !isLoading && !isError && folders.length === 0 && files.length === 0;
-  const deletePending = del.isPending || deleteFolder.isPending;
+  let body: ReactNode;
+  if (disks.error && !disks.data) {
+    body = (
+      <RegionError
+        title="Disks could not be loaded"
+        error={disks.error}
+        onRetry={() => void disks.refetch()}
+      />
+    );
+  } else if (!disks.data) {
+    body = (
+      <>
+        <MetricGridSkeleton count={4} />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[240px_1fr]">
+          <Panel title="Explorer" bodyClassName="p-2">
+            <TreeSkeleton />
+          </Panel>
+          <Panel title="Objects" flush>
+            <RowsSkeleton />
+          </Panel>
+        </div>
+      </>
+    );
+  } else if (browsable.length === 0 || !activeDisk) {
+    body = (
+      <Panel title="Objects">
+        <EmptyState
+          title="No list-capable disks are configured for the console."
+          description="Only disks whose driver can list keys (S3, local fs, GCS…) are browsable."
+        />
+      </Panel>
+    );
+  } else {
+    const crumbs = crumbsFor(activeDisk, prefix);
+    const loaded = objects.data !== undefined;
+    const isEmpty = loaded && folders.length === 0 && files.length === 0;
+    const open = (navPrefix: string | undefined) =>
+      navigate({ tab: 'browse', disk: activeDisk, ...(navPrefix ? { prefix: navPrefix } : {}) });
 
-  return (
-    <section className="rise">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
-        <Panel className="h-fit p-2">
-          <h3 className="mono px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600">
-            explorer
-          </h3>
-          <FolderTree
-            disks={browsable}
-            selectedDisk={activeDisk}
-            currentPrefix={prefix}
-            onNavigate={(navDisk, navPrefix) =>
-              navigate({
-                tab: 'browse',
-                disk: navDisk,
-                ...(navPrefix ? { prefix: navPrefix } : {}),
-              })
-            }
-            onDropMove={actions ? handleTreeDrop : undefined}
-          />
-        </Panel>
+    body = (
+      <>
+        <ErrorBoundary label="Library metrics">
+          {loaded ? (
+            <LibraryMetrics
+              disks={allDisks.length}
+              browsable={browsable.length}
+              folders={folders.length}
+              files={files}
+              more={hasNextPage}
+            />
+          ) : (
+            <MetricGridSkeleton count={4} />
+          )}
+        </ErrorBoundary>
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[240px_1fr]">
+          <ErrorBoundary label="Explorer">
+            {/* On phones the folder list comes first; the tree follows it. */}
+            <Panel
+              title="Explorer"
+              description={`${browsable.length} browsable`}
+              bodyClassName="p-2"
+              className="order-2 md:order-none"
+            >
+              <FolderTree
+                disks={browsable}
+                selectedDisk={activeDisk}
+                currentPrefix={prefix}
+                onNavigate={(navDisk, navPrefix) =>
+                  navigate({
+                    tab: 'browse',
+                    disk: navDisk,
+                    ...(navPrefix ? { prefix: navPrefix } : {}),
+                  })
+                }
+                onDropMove={actions ? handleTreeDrop : undefined}
+              />
+            </Panel>
+          </ErrorBoundary>
 
-        <Panel className="p-3">
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: whole-panel drop target for uploads; ARIA has no role for drag-and-drop targets and every control inside stays keyboard-reachable */}
-          <div
-            onDragOver={
-              actions
-                ? (e) => {
-                    e.preventDefault();
-                    setDragOver(true);
-                  }
-                : undefined
-            }
-            onDragLeave={actions ? () => setDragOver(false) : undefined}
-            onDrop={
-              actions
-                ? (e) => {
-                    e.preventDefault();
-                    setDragOver(false);
-                    void handleDropUpload(activeDisk, e.dataTransfer.files);
-                  }
-                : undefined
-            }
-            className={`rounded-md ${dragOver ? 'ring-2 ring-inset ring-accent/50' : ''}`}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <nav className="mono flex flex-wrap items-center gap-1 text-xs text-zinc-500">
-                {crumbs.map((crumb, index) => (
-                  <span key={crumb.prefix ?? '__root__'} className="flex items-center gap-1">
-                    {index > 0 && <span className="text-zinc-700">/</span>}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigate({
-                          tab: 'browse',
-                          disk: activeDisk,
-                          ...(crumb.prefix ? { prefix: crumb.prefix } : {}),
-                        })
+          <ErrorBoundary label="Objects" resetKeys={[activeDisk, prefix]}>
+            <Panel
+              title="Objects"
+              description={actions ? 'drop files here to upload' : 'read-only'}
+              flush
+              className={dragOver ? 'ring-2 ring-brand-border' : ''}
+            >
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: whole-panel drop target for uploads; ARIA has no role for drag-and-drop targets and every control inside stays keyboard-reachable */}
+              <div
+                onDragOver={
+                  actions
+                    ? (e) => {
+                        e.preventDefault();
+                        setDragOver(true);
                       }
-                      className={`rounded px-1.5 py-0.5 hover:bg-zinc-800/60 ${
-                        index === crumbs.length - 1 ? 'text-zinc-100' : ''
-                      }`}
-                    >
-                      {crumb.label}
-                    </button>
-                  </span>
-                ))}
-              </nav>
-              {actions && (
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button tone="accent" onClick={() => setDialog({ kind: 'upload' })}>
-                    ↑ Upload
-                  </Button>
-                  <Button onClick={() => setDialog({ kind: 'folder' })}>+ New folder</Button>
+                    : undefined
+                }
+                onDragLeave={actions ? () => setDragOver(false) : undefined}
+                onDrop={
+                  actions
+                    ? (e) => {
+                        e.preventDefault();
+                        setDragOver(false);
+                        void handleDropUpload(activeDisk, e.dataTransfer.files);
+                      }
+                    : undefined
+                }
+              >
+                <div className="border-b border-border px-2.5 py-2">
+                  <Breadcrumbs crumbs={crumbs} onOpen={open} />
                 </div>
-              )}
-            </div>
-
-            {isLoading ? (
-              <Empty>Loading objects…</Empty>
-            ) : isError ? (
-              <p className="text-sm s-error">Failed to list objects: {(error as Error)?.message}</p>
-            ) : isEmpty ? (
-              <Empty>This folder is empty.</Empty>
-            ) : (
-              <>
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="mono border-b border-border text-[10px] uppercase tracking-wider text-zinc-600">
-                      <th className="py-2 pr-2 font-normal">Name</th>
-                      <th className="py-2 pr-2 font-normal">Size</th>
-                      <th className="py-2 pr-2 font-normal">Last modified</th>
-                      <th className="py-2 pr-2 font-normal">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line-soft">
-                    {folders.map((folder) => (
-                      <tr
-                        key={folder.prefix}
-                        draggable={actions}
-                        onDragStart={
-                          actions
-                            ? (e) =>
-                                startRowDrag(e, {
-                                  kind: 'folder',
-                                  disk: activeDisk,
-                                  prefix: folder.prefix,
-                                  name: folder.name,
-                                })
-                            : undefined
-                        }
-                        className={`hover:bg-zinc-900/40 ${actions ? 'cursor-grab' : ''}`}
-                      >
-                        <td className="py-2 pr-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              navigate({ tab: 'browse', disk: activeDisk, prefix: folder.prefix })
-                            }
-                            className="flex items-center gap-2 text-zinc-200 hover:text-accent"
-                          >
-                            <span aria-hidden className="text-zinc-600">
-                              ▸
-                            </span>
-                            {folder.name}
-                          </button>
-                        </td>
-                        <td className="py-2 pr-2 text-zinc-700">—</td>
-                        <td className="py-2 pr-2 text-zinc-700">—</td>
-                        <td className="py-2 pr-2">
-                          {actions && (
-                            <div className="flex flex-wrap gap-1.5">
-                              <Button
-                                onClick={() =>
-                                  setDialog({
-                                    kind: 'copy',
-                                    target: {
-                                      type: 'folder',
-                                      prefix: folder.prefix,
-                                      name: folder.name,
-                                    },
-                                  })
-                                }
-                              >
-                                Copy to…
-                              </Button>
-                              <Button
-                                onClick={() =>
-                                  setDialog({
-                                    kind: 'move',
-                                    target: {
-                                      type: 'folder',
-                                      prefix: folder.prefix,
-                                      name: folder.name,
-                                    },
-                                  })
-                                }
-                              >
-                                Move to…
-                              </Button>
-                              <Button
-                                onClick={() =>
-                                  setDialog({
-                                    kind: 'rename',
-                                    target: {
-                                      type: 'folder',
-                                      prefix: folder.prefix,
-                                      name: folder.name,
-                                    },
-                                  })
-                                }
-                              >
-                                Rename
-                              </Button>
-                              <Button
-                                tone="destructive"
-                                onClick={() =>
-                                  setDialog({
-                                    kind: 'delete-folder',
-                                    prefix: folder.prefix,
-                                    name: folder.name,
-                                  })
-                                }
-                              >
-                                Delete
-                              </Button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {files.map((file: ObjectEntry) => (
-                      <tr
-                        key={file.key}
-                        draggable={actions}
-                        onDragStart={
-                          actions
-                            ? (e) =>
-                                startRowDrag(e, {
-                                  kind: 'file',
-                                  disk: activeDisk,
-                                  key: file.key,
-                                  name: file.name,
-                                })
-                            : undefined
-                        }
-                        className={`hover:bg-zinc-900/40 ${actions ? 'cursor-grab' : ''}`}
-                      >
-                        <td className="mono py-2 pr-2 text-[13px] text-zinc-200">{file.name}</td>
-                        <td className="mono tnum py-2 pr-2 text-xs text-zinc-500">
-                          {formatBytes(file.sizeBytes)}
-                        </td>
-                        <td className="py-2 pr-2 text-xs text-zinc-500">
-                          {formatDate(file.lastModified)}
-                        </td>
-                        <td className="py-2 pr-2">
-                          <div className="flex flex-wrap gap-1.5">
-                            <Button
-                              disabled={busyKey === file.key}
-                              onClick={() => handlePreview(activeDisk, file.key, file.name)}
-                            >
-                              Preview
-                            </Button>
-                            <Button onClick={() => handleCopyKey(file.key)}>Copy key</Button>
-                            {actions && (
-                              <>
-                                <Button
-                                  onClick={() =>
-                                    setDialog({
-                                      kind: 'copy',
-                                      target: { type: 'file', key: file.key, name: file.name },
-                                    })
-                                  }
-                                >
-                                  Copy to…
-                                </Button>
-                                <Button
-                                  onClick={() =>
-                                    setDialog({
-                                      kind: 'move',
-                                      target: { type: 'file', key: file.key, name: file.name },
-                                    })
-                                  }
-                                >
-                                  Move to…
-                                </Button>
-                                <Button
-                                  onClick={() =>
-                                    setDialog({
-                                      kind: 'rename',
-                                      target: { type: 'file', key: file.key, name: file.name },
-                                    })
-                                  }
-                                >
-                                  Rename
-                                </Button>
-                                <Button
-                                  tone="destructive"
-                                  onClick={() =>
-                                    setDialog({
-                                      kind: 'delete-file',
-                                      key: file.key,
-                                      name: file.name,
-                                    })
-                                  }
-                                >
-                                  Delete
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {hasNextPage && (
-                  <div className="mt-3">
-                    <Button disabled={isFetchingNextPage} onClick={() => fetchNextPage()}>
-                      {isFetchingNextPage ? 'Loading…' : 'Load more'}
-                    </Button>
+                {objects.error && !loaded ? (
+                  <div className="p-4">
+                    <RegionError
+                      title="Objects could not be listed"
+                      error={objects.error}
+                      onRetry={() => void refetch()}
+                    />
                   </div>
+                ) : !loaded ? (
+                  <RowsSkeleton />
+                ) : isEmpty ? (
+                  <EmptyState
+                    icon={<FolderIcon />}
+                    title="This folder is empty."
+                    description={
+                      actions
+                        ? 'Drop files here, or use Upload above.'
+                        : 'Nothing is stored under this path.'
+                    }
+                  />
+                ) : (
+                  <>
+                    <ObjectsTable
+                      disk={activeDisk}
+                      folders={folders}
+                      files={files}
+                      actions={actions}
+                      busyKey={busyKey}
+                      onOpenFolder={(p) => open(p)}
+                      onPreview={(file) => void handlePreview(activeDisk, file.key, file.name)}
+                      onRowAction={(next) =>
+                        next.kind === 'copy-key' ? void handleCopyKey(next.key) : setDialog(next)
+                      }
+                    />
+                    <LoadMore
+                      hasNext={hasNextPage}
+                      loading={isFetchingNextPage}
+                      onLoadMore={() => void fetchNextPage()}
+                      className="border-t border-border"
+                    />
+                  </>
                 )}
                 {actions && dragOver && (
-                  <p className="mono mt-3 rounded-md border border-dashed border-accent/40 bg-accent/5 px-3 py-4 text-center text-xs text-accent/80">
+                  <p className="m-3 rounded-md border border-dashed border-brand-border bg-brand-soft px-3 py-4 text-center text-xs text-brand">
                     Drop files to upload to {prefix ? `/${prefix}` : activeDisk}
                   </p>
                 )}
-              </>
-            )}
-          </div>
-        </Panel>
-      </div>
+              </div>
+            </Panel>
+          </ErrorBoundary>
+        </div>
+      </>
+    );
+  }
+
+  const deletePending = del.isPending || deleteFolder.isPending;
+
+  return (
+    <PageBody>
+      {header}
+      {body}
 
       {activeDisk && dialog?.kind === 'upload' && (
         <UploadDialog
@@ -970,19 +1162,19 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
           onClose={() => setDialog(null)}
           footer={
             <>
-              <Button size="sm" onClick={() => setDialog(null)} disabled={deletePending}>
+              <Button variant="outline" onClick={() => setDialog(null)} disabled={deletePending}>
                 Cancel
               </Button>
-              <Button size="sm" tone="destructive" disabled={deletePending} onClick={confirmDelete}>
+              <Button variant="destructive" disabled={deletePending} onClick={confirmDelete}>
                 {deletePending ? 'Deleting…' : 'Delete'}
               </Button>
             </>
           }
         >
-          <p className="text-sm text-zinc-300">
-            Delete <span className="mono text-zinc-100">{dialog.name}</span>?
+          <p className="text-sm text-fg-2">
+            Delete <span className="mono text-fg">{dialog.name}</span>?
           </p>
-          <p className="mono mt-2 text-[11px] text-zinc-600">
+          <p className="mono mt-2 text-[11px] text-faint">
             {dialog.kind === 'delete-folder'
               ? 'Every object inside this folder is removed. This cannot be undone.'
               : 'This cannot be undone.'}
@@ -991,6 +1183,6 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
       )}
 
       <Lightbox item={preview} onClose={() => setPreview(null)} />
-    </section>
+    </PageBody>
   );
 }

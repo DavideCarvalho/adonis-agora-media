@@ -1,22 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
+import { XIcon } from '../agora-kit/icons';
+import { Button } from '../agora-kit/ui/button';
+import { Dialog, DialogClose, DialogContent, DialogTitle } from '../agora-kit/ui/dialog';
 import type { ObjectInsight } from '../types';
 import { useDashboard } from './context';
 import { DataTable } from './DataTable';
+import { ExternalIcon, FileIcon } from './icons';
 import { useObjectInsights } from './queries';
-import { Alert, Button, Empty, formatBytes } from './ui';
-import {
-  DialogBackdrop,
-  DialogClose,
-  DialogPopup,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from './ui/dialog';
+import { Alert, Empty, formatBytes } from './ui';
 
 /**
- * A modal preview of a disk object, ported to visual parity with the NestJS sibling console's
- * `Lightbox.tsx`. Renders inline previews by content type (image/video/audio/PDF/text/CSV/TSV);
+ * A modal preview of a disk object. Renders inline previews by content type (image/video/audio/PDF/text/CSV/TSV);
  * everything else falls back to an "Open original ↗" link. Unlike the NestJS version this build does
  * NOT bundle a spreadsheet (XLSX/ODS) parser — that preview kind falls back to the same "Open
  * original" card rather than pulling in a new dependency for one preview tab.
@@ -71,13 +66,12 @@ function FallbackCard({ item, message }: { item: PreviewItem; message: string })
   return (
     <div className="grid h-full min-h-[320px] place-items-center gap-4 px-6 text-center">
       <div className="flex flex-col items-center gap-4">
-        <div className="grid h-14 w-14 place-items-center rounded-lg border border-border bg-zinc-900 text-2xl text-zinc-600">
-          ⬡
+        <div className="grid size-14 place-items-center rounded-lg border border-border bg-panel-2 text-faint [&_svg]:size-6">
+          <FileIcon />
         </div>
-        <div className="mono max-w-md text-sm text-zinc-400">{message}</div>
+        <div className="mono max-w-md text-sm text-dim">{message}</div>
         <Button
-          tone="accent"
-          size="sm"
+          nativeButton={false}
           render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
         >
           Open original ↗
@@ -165,7 +159,7 @@ function TextPreview({ item }: { item: PreviewItem }) {
     ) : flavor === 'tsv' ? (
       <DelimitedTable text={source} delimiter={'\t'} />
     ) : (
-      <pre className="mono min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md border border-border bg-black/30 p-3 text-xs text-zinc-300">
+      <pre className="mono min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md border border-border bg-sunken/20 p-3 text-xs text-fg-2">
         {flavor === 'json' ? prettyJson(source) : source}
       </pre>
     );
@@ -245,16 +239,18 @@ function ObjectInsights({ disk, objectKey }: { disk: string; objectKey: string }
       {insights.map((insight: ObjectInsight) => (
         <div
           key={insight.title}
-          className="min-w-56 flex-1 rounded-md border border-border bg-panel px-3 py-2"
+          className="min-w-56 flex-1 rounded-md border border-border bg-panel-2 px-3 py-2"
         >
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500">{insight.title}</div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
+            {insight.title}
+          </div>
           {insight.facts?.map((fact) => (
             <div key={fact.label} className="mt-1 flex items-baseline gap-2 text-xs">
-              <span className="text-zinc-500">{fact.label}</span>
-              <span className="mono tnum truncate text-zinc-200">{fact.value}</span>
+              <span className="text-dim">{fact.label}</span>
+              <span className="mono tnum truncate text-fg">{fact.value}</span>
             </div>
           ))}
-          {insight.note && <p className="mt-1.5 text-[11px] text-zinc-500">{insight.note}</p>}
+          {insight.note && <p className="mt-1.5 text-[11px] text-dim">{insight.note}</p>}
           {insight.links && insight.links.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {insight.links.map((link) => (
@@ -263,7 +259,7 @@ function ObjectInsights({ disk, objectKey }: { disk: string; objectKey: string }
                   href={link.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-sky-400 underline underline-offset-2 hover:text-sky-300"
+                  className="text-xs text-brand underline underline-offset-2 hover:opacity-80"
                 >
                   {link.label}
                 </a>
@@ -286,57 +282,56 @@ export function Lightbox({ item, onClose }: { item: PreviewItem | null; onClose:
   const kind = previewKind(item);
 
   return (
-    <DialogRoot
+    <Dialog
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
-      <DialogPortal>
-        <DialogBackdrop />
-        <DialogPopup
-          ref={popupRef}
-          // Focus the panel itself, not the first tabbable thing in it — that is the "Open ↗" link,
-          // and opening a preview should not leave Enter armed to launch a new tab.
-          initialFocus={popupRef}
-          className="h-[86vh] max-h-[calc(100vh-3rem)] max-w-5xl"
-        >
-          <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-            <div className="min-w-0 flex-1">
-              <DialogTitle className="truncate normal-case tracking-normal text-sm text-zinc-200">
-                {item.name}
-              </DialogTitle>
-              <div className="mono tnum mt-0.5 flex items-center gap-2 text-[10px] text-zinc-600">
-                <span>{formatBytes(item.size)}</span>
-                {item.contentType && (
-                  <span className="rounded-sm border border-border px-1 text-zinc-500">
-                    {item.contentType}
-                  </span>
-                )}
-              </div>
+      <DialogContent
+        ref={popupRef}
+        showCloseButton={false}
+        // Focus the panel itself, not the first tabbable thing in it — that is the "Open" link, and
+        // opening a preview should not leave Enter armed to launch a new tab.
+        initialFocus={popupRef}
+        className="flex h-[86vh] max-h-[calc(100vh-3rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
+      >
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <DialogTitle className="mono truncate text-[13px] font-semibold text-fg">
+              {item.name}
+            </DialogTitle>
+            <div className="mono tnum mt-1 flex items-center gap-2 text-[10.5px] text-faint">
+              <span>{formatBytes(item.size)}</span>
+              {item.contentType && (
+                <span className="rounded-sm border border-border px-1 text-dim">
+                  {item.contentType}
+                </span>
+              )}
             </div>
-            <Button
-              tone="ghost"
-              className="shrink-0"
-              render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
-            >
-              Open ↗
-            </Button>
-            <Button
-              render={<DialogClose />}
-              tone="ghost"
-              aria-label="Close preview"
-              className="shrink-0"
-            >
-              ✕
-            </Button>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-            <ObjectInsights disk={item.disk} objectKey={item.key} />
-            <PreviewBody item={item} kind={kind} />
-          </div>
-        </DialogPopup>
-      </DialogPortal>
-    </DialogRoot>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            nativeButton={false}
+            render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
+          >
+            Open
+            <ExternalIcon />
+          </Button>
+          <DialogClose
+            render={<Button variant="ghost" size="icon-sm" className="shrink-0" />}
+            aria-label="Close preview"
+          >
+            <XIcon />
+          </DialogClose>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+          <ObjectInsights disk={item.disk} objectKey={item.key} />
+          <PreviewBody item={item} kind={kind} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

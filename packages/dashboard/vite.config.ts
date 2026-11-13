@@ -9,6 +9,11 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: '/__MEDIA_DASHBOARD__/',
   plugins: [react()],
+  // URLs inside the built CSS (the bundled Sora / JetBrains Mono fonts) are written relative to the
+  // stylesheet: the provider rewrites the placeholder base only in `index.html`, never in the CSS.
+  experimental: {
+    renderBuiltUrl: (_file, { hostType }) => (hostType === 'css' ? { relative: true } : undefined),
+  },
   build: {
     outDir: 'dist/spa',
     emptyOutDir: true,

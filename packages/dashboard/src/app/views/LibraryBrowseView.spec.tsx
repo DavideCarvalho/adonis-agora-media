@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { configure, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DiskListResponse, ObjectListResponse, Topology } from '../../types';
 import { renderView } from '../testkit';
@@ -41,6 +41,16 @@ function baseClient(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// The first render pulls in the whole kit (Base UI menu, dialog, table); give a cold, busy worker
+// more than the default second to settle.
+configure({ asyncUtilTimeout: 5000 });
+
+/** Open a row's "…" menu and pick an item from it. */
+async function rowAction(name: string, action: string): Promise<void> {
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: action }));
+}
+
 describe('LibraryBrowseView', () => {
   it('lists folders and files for the default disk', async () => {
     const client = baseClient();
@@ -54,9 +64,7 @@ describe('LibraryBrowseView', () => {
     const client = baseClient();
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('a.txt')).toBeTruthy());
-    const fileRow = within(screen.getByText('a.txt').closest('tr') as HTMLElement);
-
-    fireEvent.click(fileRow.getByRole('button', { name: 'Copy to…' }));
+    await rowAction('a.txt', 'Copy to…');
     const nameInput = (await screen.findByLabelText('Name')) as HTMLInputElement;
     expect(nameInput.value).toBe('a.txt');
     fireEvent.change(nameInput, { target: { value: 'copies/a.txt' } });
@@ -76,13 +84,9 @@ describe('LibraryBrowseView', () => {
     const client = baseClient();
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('a.txt')).toBeTruthy());
-    const fileRow = within(screen.getByText('a.txt').closest('tr') as HTMLElement);
-
-    fireEvent.click(fileRow.getByRole('button', { name: 'Delete' }));
-    // The confirm dialog's own "Delete" button is the last on the page (the two row-level "Delete"
-    // buttons — folder and file — plus the dialog's).
-    const confirmButtons = await screen.findAllByRole('button', { name: 'Delete' });
-    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+    await rowAction('a.txt', 'Delete');
+    // The row-level Delete lives in the "…" menu, so the only Delete button is the dialog's.
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() =>
       expect(client.remove).toHaveBeenCalledWith({ disk: 's3', keys: ['a.txt'] }),
@@ -93,6 +97,11 @@ describe('LibraryBrowseView', () => {
     const client = baseClient({ topology: vi.fn(async () => ({ ...TOPOLOGY, actions: false })) });
     renderView(<LibraryBrowseView />, client);
     await waitFor(() => expect(screen.getByText('a.txt')).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Copy to…' })).toBeNull();
+    // The file row keeps Preview and "Copy key"; the folder row has no menu at all.
+    expect(screen.queryByRole('button', { name: 'Actions for 2024' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for a.txt' }));
+    expect(await screen.findByRole('menuitem', { name: 'Copy key' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Copy to…' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
   });
 });
