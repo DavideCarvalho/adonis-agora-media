@@ -348,6 +348,9 @@ describe('media console commands', () => {
       expect(result.exitCode).toBe(0);
       expect(result.json()).toEqual({ disk: 's3', key: 'docs/upload.json', size: 8 });
       expect(w.disk.objects.get('docs/upload.json')?.contentType).toBe('application/json');
+      const both = await run(w, MediaObjectsUpload, [file, '--key=x.json', '--prefix=docs/']);
+      expect(both.exitCode).toBe(1);
+      expect(both.output).toContain('not both');
     });
 
     it('copies, moves and renames objects and folders', async () => {

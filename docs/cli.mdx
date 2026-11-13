@@ -46,7 +46,7 @@ These commands need `actions: true` in `config/media_dashboard.ts`, like the con
 
 ```sh
 # Upload a local file (100 MB max). The content type comes from the extension unless you pass --type.
-node ace media:objects:upload ./report.pdf --prefix=reports/2026
+node ace media:objects:upload ./report.pdf --prefix=reports/2026   # or --key=<full key>, not both
 node ace media:objects:upload ./export.bin --key=exports/latest.bin --type=application/octet-stream
 
 # Copy and move, on one disk or across disks. --folder copies or moves everything under a prefix.
@@ -66,7 +66,8 @@ node ace media:objects:delete reports/a.pdf reports/b.pdf --force
 node ace media:objects:delete reports/2025 --folder --force
 ```
 
-Deleting objects removes the bytes only. Media records that point at them stay.
+Upload, copy, move and rename write over an object already at the destination key, as the console
+does. Deleting objects removes the bytes only. Media records that point at them stay.
 
 ## Collections and media records
 

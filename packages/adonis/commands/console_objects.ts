@@ -127,6 +127,9 @@ export class MediaObjectsUpload extends MediaConsoleCommand {
     this.assertActions(service);
     const info = await stat(this.file).catch(() => null);
     if (!info?.isFile()) throw new CommandRefusal(`not a file: ${this.file}`);
+    if (this.key !== undefined && this.prefix !== undefined) {
+      throw new CommandRefusal('pass --key or --prefix, not both');
+    }
     const disk = this.disk ?? this.defaultDisk(service);
     const folder = this.prefix !== undefined ? bareFolder(this.prefix) : '';
     const key = this.key ?? `${folder === '' ? '' : `${folder}/`}${basename(this.file)}`;
