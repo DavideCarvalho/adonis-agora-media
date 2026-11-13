@@ -1,29 +1,116 @@
 import { useMediaUpload } from '@adonis-agora/media-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
+import { PageHeader } from '../../agora-kit/blocks/page-header';
+import { Panel } from '../../agora-kit/blocks/panel';
+import { QueryBoundary } from '../../agora-kit/blocks/query-boundary';
+import { PageBody } from '../../agora-kit/shell/app-shell';
+import { Badge } from '../../agora-kit/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../agora-kit/ui/select';
+import { Skeleton } from '../../agora-kit/ui/skeleton';
 import { csrfHeader } from '../../client/dashboard-client';
+import type { DiskInfo } from '../../types';
 import { useDashboard } from '../context';
+import { UploadIcon } from '../icons';
 import { useDisks } from '../queries';
-import { Bar, Empty, Panel, useToasts } from '../ui';
+import { Bar, Empty, Field, useToasts } from '../ui';
 
 interface QueueItem {
   name: string;
   status: 'done' | 'error';
 }
 
+/** The destination picker, presentational. */
+function DiskSelect({
+  disks,
+  value,
+  onChange,
+}: {
+  disks: DiskInfo[];
+  value: string;
+  onChange: (disk: string) => void;
+}) {
+  return (
+    <Field id="upload-disk" label="Destination disk">
+      <Select value={value} onValueChange={(next) => onChange(String(next ?? ''))}>
+        <SelectTrigger id="upload-disk" size="sm" className="mono w-full max-w-xs text-[13px]">
+          <SelectValue placeholder="(no disks)" />
+        </SelectTrigger>
+        <SelectContent>
+          {disks.map((d) => (
+            <SelectItem key={d.name} value={d.name} className="mono text-[13px]">
+              {d.name}
+              {d.default ? ' (default)' : ''}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
+
+/** The drop zone, presentational: click or drop files to hand them to `onFiles`. */
+function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => inputRef.current?.click()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length) onFiles(files);
+      }}
+      className={`flex w-full flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-10 text-center transition-colors ${
+        over
+          ? 'border-brand-border bg-brand-soft text-brand'
+          : 'border-line-strong text-dim hover:border-brand-border hover:text-fg'
+      }`}
+    >
+      <span className="grid size-10 place-items-center rounded-md border border-border bg-panel-2 text-brand [&_svg]:size-4.5">
+        <UploadIcon />
+      </span>
+      <span className="text-[13px] font-medium">Drop files here, or click to choose</span>
+      <span className="text-[11px] text-faint">Uploaded one by one, resumable (TUS).</span>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) onFiles(files);
+          e.target.value = '';
+        }}
+      />
+    </button>
+  );
+}
+
 /**
- * Upload panel — reuses `@adonis-agora/media-react`'s `useMediaUpload` (resumable TUS) against the
- * core upload routes. Files dropped or picked are uploaded sequentially into the chosen disk; on
- * completion the library/uploads queries are invalidated so the new objects appear. Styled to match
- * the console's other dialogs' dropzone (see `UploadDialog` in `LibraryBrowseView.tsx`).
+ * Upload (TRANSFERS) — `@adonis-agora/media-react`'s `useMediaUpload` (resumable TUS) against the
+ * core upload routes. Files dropped or picked upload one after the other into the chosen disk; on
+ * completion the library and uploads queries are invalidated so the new objects appear.
+ * Container: owns the disk query, the uploader and the session's queue.
  */
 export function UploadPanel() {
   const { bootstrap } = useDashboard();
   const disks = useDisks();
   const qc = useQueryClient();
   const { push } = useToasts();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [over, setOver] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
 
@@ -62,97 +149,52 @@ export function UploadPanel() {
     qc.invalidateQueries({ queryKey: ['uploads'] });
   };
 
+  const percent = Math.round(uploader.progress * 100);
+
   return (
-    <section className="rise mx-auto max-w-xl">
-      <Panel className="p-4">
-        <h3 className="mono mb-3 text-[10px] uppercase tracking-wider text-zinc-600">Upload</h3>
-        <div className="flex flex-col gap-3">
-          <label
-            htmlFor="upload-disk"
-            className="mono flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-600"
-          >
-            Destination disk
-            <select
-              id="upload-disk"
-              value={targetDisk}
-              onChange={(e) => setDisk(e.target.value)}
-              className="mono max-w-xs rounded-md border border-border bg-black/30 px-3 py-2 text-sm normal-case tracking-normal text-zinc-100 focus:border-accent/40 focus:outline-hidden"
-            >
-              {browsable.length === 0 && <option value="">(no disks)</option>}
-              {browsable.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                  {d.default ? ' (default)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: click opens the native file picker; keyboard users reach it via the hidden input's label semantics */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone; ARIA has no role for drag-and-drop targets and the hidden input is the accessible control */}
-          <div
-            onClick={() => inputRef.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setOver(true);
-            }}
-            onDragLeave={() => setOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setOver(false);
-              const files = Array.from(e.dataTransfer.files);
-              if (files.length) void handleFiles(files);
-            }}
-            className={`mono cursor-pointer rounded-md border border-dashed px-3 py-8 text-center text-xs transition-colors ${
-              over
-                ? 'border-accent/50 bg-accent/5 text-accent'
-                : 'border-border text-zinc-500 hover:text-zinc-300'
-            }`}
-          >
-            Drop files here, or click to choose
-            <input
-              ref={inputRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                if (files.length) void handleFiles(files);
-                e.target.value = '';
-              }}
-            />
-          </div>
-
+    <PageBody className="max-w-3xl">
+      <PageHeader
+        title="Upload"
+        description="Send files straight to a disk through the resumable upload routes."
+      />
+      <Panel title="New upload" description={targetDisk ? `into ${targetDisk}` : undefined}>
+        <div className="flex flex-col gap-4">
+          <QueryBoundary query={disks} label="Disks" skeleton={<Skeleton className="h-8 w-60" />}>
+            {() => <DiskSelect disks={browsable} value={targetDisk} onChange={setDisk} />}
+          </QueryBoundary>
+          <DropZone onFiles={(files) => void handleFiles(files)} />
           {active && (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="mono min-w-0 flex-1 truncate text-zinc-300">{active}</span>
-              <Bar percent={Math.round(uploader.progress * 100)} />
-              <span className="mono tnum shrink-0 text-[10px] text-zinc-500">
-                {Math.round(uploader.progress * 100)}%
-              </span>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="mono min-w-0 flex-1 truncate text-fg-2">{active}</span>
+              <Bar percent={percent} />
+              <span className="mono tnum shrink-0 text-[10.5px] text-faint">{percent}%</span>
             </div>
-          )}
-
-          {queue.length === 0 && !active ? (
-            <Empty>No uploads yet.</Empty>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {queue.map((item, i) => (
-                <li
-                  // biome-ignore lint/suspicious/noArrayIndexKey: queue rows are `{ name, status }` with no id and the same file can be re-uploaded; the index is the only stable disambiguator
-                  key={`${item.name}-${i}`}
-                  className="mono flex items-center justify-between gap-2 rounded-sm border border-border px-2 py-1 text-[11px]"
-                >
-                  <span className="min-w-0 flex-1 truncate text-zinc-300">{item.name}</span>
-                  <span className={item.status === 'done' ? 's-ok' : 's-error'}>
-                    {item.status === 'done' ? 'Uploaded' : 'Failed'}
-                  </span>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
       </Panel>
-    </section>
+      <Panel
+        title="This session"
+        description={queue.length > 0 ? `${queue.length} files` : undefined}
+      >
+        {queue.length === 0 && !active ? (
+          <Empty className="py-2">No uploads yet.</Empty>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border">
+            {queue.map((item, i) => (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: queue rows are `{ name, status }` with no id and the same file can be re-uploaded; the index is the only stable disambiguator
+                key={`${item.name}-${i}`}
+                className="flex items-center justify-between gap-2 py-2 text-xs"
+              >
+                <span className="mono min-w-0 flex-1 truncate text-fg-2">{item.name}</span>
+                <Badge variant={item.status === 'done' ? 'good' : 'destructive'}>
+                  {item.status === 'done' ? 'Uploaded' : 'Failed'}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </PageBody>
   );
 }

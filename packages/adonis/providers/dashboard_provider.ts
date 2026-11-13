@@ -12,6 +12,7 @@ import {
   type ConsoleAuthorizeDecision,
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
+import { resolveSignOut, resolveViewer } from '../src/dashboard/console_shell.js';
 import {
   listVisibleConsoles,
   mediaConsoleSearch,
@@ -323,7 +324,7 @@ export default class MediaDashboardProvider {
     const service = this.#service(config);
 
     this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware]);
-    this.#mountSpa(router, basePath, { apiBase, uploadsBase, tusBase, actions }, [
+    this.#mountSpa(router, basePath, config, { apiBase, uploadsBase, tusBase, actions }, [
       ...authorizeGate('page'),
       ...middleware,
     ]);
@@ -642,6 +643,7 @@ export default class MediaDashboardProvider {
   #mountSpa(
     router: HttpRouterService,
     basePath: string,
+    config: MediaDashboardConfig,
     bootstrap: { apiBase: string; uploadsBase: string; tusBase: string; actions: boolean },
     middleware: unknown[],
   ) {
@@ -654,6 +656,12 @@ export default class MediaDashboardProvider {
           .status(404)
           .send('media dashboard SPA is not built (run the package build to emit dist/assets/spa)');
       }
+      // The console shell's fields: the switcher, ⌘K search (whenever a console registry exists —
+      // this console registers its own search), the signed-in viewer and the sign-out (the host's
+      // option, else the one an account console announced on the registry).
+      const registry = await readAgoraConsoles(this.app.container);
+      const viewer = await resolveViewer(ctx, config.viewer);
+      const signOut = resolveSignOut(ctx, config.signOut, registry);
       return ctx.response
         .header('content-type', 'text/html; charset=utf-8')
         .header('cache-control', 'no-store, must-revalidate')
@@ -662,8 +670,11 @@ export default class MediaDashboardProvider {
             ...bootstrap,
             switcher: {
               endpoint: `${bootstrap.apiBase}/consoles`,
-              others: otherConsoles(await readAgoraConsoles(this.app.container), CONSOLE_ID),
+              others: otherConsoles(registry, CONSOLE_ID),
             },
+            ...(registry ? { search: { endpoint: `${bootstrap.apiBase}/consoles/search` } } : {}),
+            ...(viewer ? { viewer } : {}),
+            ...(signOut ? { signOut } : {}),
           }),
         );
     };
