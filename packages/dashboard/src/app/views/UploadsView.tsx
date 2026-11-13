@@ -124,7 +124,7 @@ function UploadDetail({ uploadId }: { uploadId: string }) {
  */
 export function UploadsView({ route }: { route: Route }) {
   const { data, isLoading, isError, error } = useUploads();
-  const uploads = data?.uploads ?? [];
+  const uploads = data?.data ?? [];
   const picker = useTenantPicker();
   const showTenant = useShowsTenantColumn();
 

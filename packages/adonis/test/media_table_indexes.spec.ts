@@ -165,8 +165,8 @@ describe('collectionsSummary — exact totals over a large library', () => {
 
     const summary = await dashboardOver(store).collectionsSummary();
 
-    expect(summary.collections).toEqual(expectedTotals(records));
-    expect(summary.collections.reduce((n, c) => n + c.count, 0)).toBe(RECORDS);
+    expect(summary.data).toEqual(expectedTotals(records));
+    expect(summary.data.reduce((n, c) => n + c.count, 0)).toBe(RECORDS);
     expect(listCalls).toBe(0);
   });
 
@@ -176,6 +176,6 @@ describe('collectionsSummary — exact totals over a large library', () => {
 
     const summary = await dashboardOver(store).collectionsSummary();
 
-    expect(summary.collections).toEqual(expectedTotals(records));
+    expect(summary.data).toEqual(expectedTotals(records));
   });
 });

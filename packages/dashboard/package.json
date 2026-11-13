@@ -56,6 +56,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.spa.json --noEmit"
   },
   "devDependencies": {
+    "@adonis-agora/filter-client": "1.0.0-rc.1",
     "@adonis-agora/media-react": "workspace:*",
     "@base-ui/react": "1.9.0",
     "@tailwindcss/postcss": "4.3.5",

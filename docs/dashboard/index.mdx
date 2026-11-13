@@ -75,15 +75,15 @@ The provider registers a JSON API under `apiBasePath` (default `<basePath>/api`)
 | `GET` | `/consoles` | the other Agora consoles this viewer may open ([switcher](#switching-between-consoles)) |
 | `GET` | `/consoles/search?q=` | search across those consoles and this one |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
-| `GET` | `/objects?disk&prefix&after&first` | disk `list` ([cursor pagination](#cursor-pagination)) |
+| `GET` | `/objects?filter[disk]&filter[prefix]&after&first` | disk `list` ([list routes](#list-routes)) |
 | `GET` | `/object?disk&key` | disk `stat` + the object's `url` (signed, or the proxy — see [`objectUrls`](#object-urls)) |
 | `POST` | `/object?disk&key&type` | raw-body object upload (the console's convenience upload) — `actions` only |
 | `GET` | `/object/raw?disk&key` | streams the object's bytes through the app, `content-disposition: inline` |
 | `GET` | `/object/insights?disk&key` | the registered [object-insight providers](#object-insights) |
-| `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
+| `GET` | `/uploads?filter[disk]&filter[prefix]&sort` | `ResumableUploadManager.list()` ([list routes](#list-routes)) |
 | `GET` | `/uploads/:id` | one session in full, plus its recorded parts |
 | `POST` | `/uploads/:id/abort` | discard an in-flight session — `actions` only |
-| `GET` | `/collections?collection&ownerType&ownerId&prefix&after&first` | `MediaStore.list`, [cursor-paginated](#cursor-pagination) (see [Collections view](/docs/media/dashboard/collections)) |
+| `GET` | `/collections?filter[collection]&filter[ownerType]&filter[ownerId]&filter[prefix]&after&first` | `MediaStore.list` ([list routes](#list-routes); see [Collections view](/docs/media/dashboard/collections)) |
 | `GET` | `/collections/summary` | per-collection rollup (count + total bytes) for the filter chips |
 | `GET` | `/media-record?id` | one `MediaRecord` plus a signed URL per conversion |
 | `POST` | `/media-record/delete` | `MediaStore.delete` — `actions` only |
@@ -101,41 +101,53 @@ Two upload paths coexist, on purpose. `POST /object` is the console's own conven
 
 ---
 
-## Cursor pagination
+## List routes
 
-The two listing routes — `GET /objects` and `GET /collections` — page through the **cursor**
-interface shared by every `@adonis-agora/*` library (it mirrors [`@adonis-agora/filter`][filter]'s
-`CursorParams` / `CursorPage`, structurally: the console does not depend on that package, it just
-refuses to invent a second vocabulary for the same idea).
+The list routes speak the [`@adonis-agora/filter`][filter] list format, like every
+`@adonis-agora/*` console.
 
-| Query param | Meaning |
-|---|---|
-| `after` | Opaque cursor from the previous page's `nextCursor`. Omit for the first page. |
-| `first` | Page size (the console SPA asks for 50). |
+| Route | Filters | Sort | Paging |
+|---|---|---|---|
+| `GET /objects` | `filter[disk]` (required), `filter[prefix]` | `key` only | cursor, `first` up to 1000 (default 1000) |
+| `GET /collections` | `filter[collection]`, `filter[ownerType]`, `filter[ownerId]`, `filter[prefix]` | `-createdAt` only | cursor, `first` up to 200 (default 50) |
+| `GET /uploads` | `filter[disk]`, `filter[prefix]` | `createdAt` or `-createdAt` (default) | none |
+| `GET /disks`, `GET /collections/summary` | none | none | none |
 
-Every paginated response carries the same envelope:
+An unknown filter field, an operator other than equality, or a sort outside the column above is
+answered with `400`.
+
+```http
+GET /media/dashboard/api/objects?filter[disk]=s3&filter[prefix]=photos/&first=100
+GET /media/dashboard/api/collections?filter[collection]=avatar&after=eyJ…&first=50
+```
+
+Paged routes answer `{ data, meta }`; the others answer `{ data }`:
 
 ```jsonc
 {
-  // …the page's payload: `items` for /collections, `folders` + `files` for /objects
-  "nextCursor": "eyJ…",  // hand back as ?after= — null on the last page
-  "prevCursor": null,    // always null here — see below
-  "hasNext": true,
-  "hasPrev": false       // always false here — see below
+  "data": [
+    { "type": "folder", "name": "2024", "prefix": "photos/2024/" },
+    { "type": "file", "key": "photos/a.jpg", "name": "a.jpg", "sizeBytes": 1024, "lastModified": "…" }
+  ],
+  "meta": {
+    "nextCursor": "eyJ…", // send it back as ?after= — null on the last page
+    "prevCursor": null,
+    "hasNext": true,
+    "hasPrev": false
+  }
 }
 ```
 
-<Callout type="warn" title="Forward-only, by the backend's nature">
-  This console pages **forward only**. Its listings are backed by S3's `ListObjectsV2` continuation
-  token (and, for `/collections`, an equally forward-only `createdAt`/`id` keyset): an opaque handle
-  to "what comes next" with no inverse and no notion of an offset. So `before` / `last` are **not
-  accepted** — rather than accepted and silently ignored — and `prevCursor` / `hasPrev` are always
-  `null` / `false`. They stay in the response so the shape is the ecosystem's `CursorPage`, not a
-  near-miss of it. Walk forward and keep the pages you've seen (which is exactly what the SPA does).
+`/objects` returns folders first, then files, each row tagged with `type`. `/collections` returns
+`MediaEntry` rows, newest first.
+
+<Callout type="warn" title="Forward only">
+  The listings page forward only: S3's continuation token and the media store's newest-first keyset
+  cannot step back. `before` and `last` are answered with `400`, `prevCursor` is always `null` and
+  `hasPrev` always `false`. Keep the pages you have already loaded, as the console does.
 </Callout>
 
-The cursor is **opaque**: never parse it, never construct one — hand a `nextCursor` straight back as
-`after`.
+The cursor is opaque: send `meta.nextCursor` back as `after` as it is.
 
 [filter]: https://github.com/DavideCarvalho/adonis-agora-filter
 

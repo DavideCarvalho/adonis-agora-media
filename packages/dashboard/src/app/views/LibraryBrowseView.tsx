@@ -526,7 +526,7 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
   const { push } = useToasts();
   const notify = (message: string, tone: 'ok' | 'error' = 'ok') => push(message, tone);
 
-  const allDisks = disks.data?.disks ?? [];
+  const allDisks = disks.data?.data ?? [];
   const browsable = allDisks.filter((d) => d.capabilities.list);
   const activeDisk = disk ?? browsable.find((d) => d.default)?.name ?? browsable[0]?.name;
 

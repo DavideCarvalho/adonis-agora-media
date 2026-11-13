@@ -88,24 +88,21 @@ own admin screens get the same paging and transfer engine:
 
 ```ts title="start/routes.ts"
 import { MediaManager } from '@adonis-agora/media'
-import { DashboardService, DashboardError } from '@adonis-agora/media/dashboard'
+import { DashboardService, DashboardError, readObjectsQuery } from '@adonis-agora/media/dashboard'
 
 const media = await app.container.make(MediaManager)
 const dashboard = new DashboardService(media, { diskNames: ['s3'], actions: true })
 
-// Listings page through the ecosystem cursor interface: `{ after, first }` in, a page with
-// `{ nextCursor, prevCursor, hasNext, hasPrev }` out. Forward-only (S3 continuation token), so
-// there is no `before`/`last` and `prevCursor`/`hasPrev` are always `null`/`false`.
-router.get('/admin/storage/objects', async ({ request, response }) => {
+// Same wire format as the console: `filter[disk]`, `filter[prefix]`, `after`, `first` in,
+// `{ data, meta: { nextCursor, prevCursor, hasNext, hasPrev } }` out. Forward only: `before`/`last`
+// are a 400 and `prevCursor`/`hasPrev` are always `null`/`false`.
+router.get('/admin/storage/objects', async (ctx) => {
   try {
-    return await dashboard.objects(request.input('disk'), {
-      prefix: request.input('prefix', ''),
-      after: request.input('after'),
-      first: 100,
-    })
+    const { disk, params } = await readObjectsQuery(ctx)
+    return await dashboard.objects(disk, params)
   } catch (error) {
     if (error instanceof DashboardError) {
-      return response.status(error.status).json({ error: error.message })
+      return ctx.response.status(error.status).json({ error: error.message })
     }
     throw error
   }

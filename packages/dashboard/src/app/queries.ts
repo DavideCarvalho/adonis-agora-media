@@ -8,6 +8,7 @@ import type {
   MediaEntry,
   ObjectEntry,
   ObjectFolder,
+  UploadFilter,
 } from '../types';
 import { useDashboard } from './context';
 
@@ -25,7 +26,7 @@ export function useDisks() {
   return useQuery({ queryKey: ['disks'], queryFn: () => client.disks() });
 }
 
-/** Page size requested as `first` — the `limit` of the pre-cursor-interface API, renamed only. */
+/** Page size requested as `first`. */
 const PAGE_SIZE = 50;
 
 /** Cursor-paginated listing of one disk under `prefix`, flattened across loaded pages. */
@@ -41,15 +42,34 @@ export function useObjects(disk: string | undefined, prefix: string | undefined)
         ...(pageParam ? { after: pageParam } : {}),
         first: PAGE_SIZE,
       }),
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    getNextPageParam: (last) => last.meta.nextCursor ?? undefined,
   });
 
   const folders = useMemo<ObjectFolder[]>(
-    () => (query.data?.pages ?? []).flatMap((p) => p.folders),
+    () =>
+      (query.data?.pages ?? []).flatMap((p) =>
+        p.data.flatMap((item) =>
+          item.type === 'folder' ? [{ name: item.name, prefix: item.prefix }] : [],
+        ),
+      ),
     [query.data],
   );
   const files = useMemo<ObjectEntry[]>(
-    () => (query.data?.pages ?? []).flatMap((p) => p.files),
+    () =>
+      (query.data?.pages ?? []).flatMap((p) =>
+        p.data.flatMap((item) =>
+          item.type === 'file'
+            ? [
+                {
+                  key: item.key,
+                  name: item.name,
+                  sizeBytes: item.sizeBytes,
+                  lastModified: item.lastModified,
+                },
+              ]
+            : [],
+        ),
+      ),
     [query.data],
   );
 
@@ -74,18 +94,18 @@ export function useCollections(filter: CollectionFilter) {
         ...(pageParam ? { after: pageParam } : {}),
         first: PAGE_SIZE,
       }),
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    getNextPageParam: (last) => last.meta.nextCursor ?? undefined,
   });
 
   const items = useMemo<MediaEntry[]>(
-    () => (query.data?.pages ?? []).flatMap((p) => p.items),
+    () => (query.data?.pages ?? []).flatMap((p) => p.data),
     [query.data],
   );
 
   return { ...query, items };
 }
 
-export function useUploads(filter: { disk?: string; prefix?: string } = {}) {
+export function useUploads(filter: UploadFilter = {}) {
   const { client } = useDashboard();
   return useQuery({
     queryKey: ['uploads', filter.disk ?? '', filter.prefix ?? ''],

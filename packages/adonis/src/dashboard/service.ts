@@ -13,19 +13,20 @@ import type {
   CollectionFilter,
   CollectionListResponse,
   CollectionsSummaryResponse,
+  CursorPageResponse,
   CursorParams,
   DiskInfo,
   DiskListResponse,
   MediaDetailResponse,
   MediaEntry,
   ObjectDetailResponse,
-  ObjectEntry,
-  ObjectFolder,
   ObjectInsight,
   ObjectInsightsResponse,
+  ObjectListItem,
   ObjectListResponse,
   Topology,
   UploadDetailResponse,
+  UploadFilter,
   UploadInfo,
   UploadListResponse,
 } from './types.js';
@@ -174,17 +175,13 @@ export class DashboardService {
         : { presign: false, multipart: false, publicUrls: false, list: false };
       return { name, default: name === defaultDisk, capabilities };
     });
-    return { disks };
+    return { data: disks };
   }
 
   /**
-   * List one page of a bucket under `prefix` (folders rolled up on the `/` delimiter), paginated
-   * through the ecosystem's cursor interface ({@link CursorParams} → the `CursorPageInfo` envelope):
-   * `after` is the previous page's `nextCursor`, `first` its size.
-   *
-   * `after`/`first` map onto the driver's own `cursor`/`limit` — S3's `ListObjectsV2` continuation
-   * token — which is why the response's `prevCursor`/`hasPrev` are pinned to `null`/`false`: there is
-   * no backwards token to hand out.
+   * List one page of a bucket under `prefix` (folders rolled up on the `/` delimiter): folders first,
+   * then files, as one `{ data, meta }` cursor page. `after` is the previous page's
+   * `meta.nextCursor`, `first` its size. Forward-only: `meta.prevCursor` is always `null`.
    */
   async objects(
     diskName: string,
@@ -205,25 +202,17 @@ export class DashboardService {
     // reference that infinite-loops the browser (endless re-list of root). Filtering it out removes
     // the trap; those leading-slash keys are unreachable from the console anyway (the driver strips
     // the leading slash).
-    const folders: ObjectFolder[] = result.folders
-      .map((prefix) => ({ name: folderName(prefix), prefix }))
+    const folders: ObjectListItem[] = result.folders
+      .map((prefix) => ({ type: 'folder' as const, name: folderName(prefix), prefix }))
       .filter((folder) => folder.name !== '');
-    const files: ObjectEntry[] = result.files.map((entry) => ({
+    const files: ObjectListItem[] = result.files.map((entry) => ({
+      type: 'file' as const,
       key: entry.key,
       name: entry.name,
       sizeBytes: entry.sizeBytes,
       lastModified: entry.lastModified ? entry.lastModified.toISOString() : null,
     }));
-    return {
-      folders,
-      files,
-      nextCursor: result.cursor ?? null,
-      // Forward-only backend: the continuation token walks one way, so there is never a previous
-      // cursor to report. The fields stay, pinned, so the shape matches the ecosystem's page type.
-      prevCursor: null,
-      hasNext: result.cursor !== undefined,
-      hasPrev: false,
-    };
+    return forwardPage([...folders, ...files], result.cursor ?? null);
   }
 
   /**
@@ -308,16 +297,32 @@ export class DashboardService {
     };
   }
 
-  /** In-progress resumable uploads, projected from the session store (empty when unconfigured). */
-  async uploads(filter: { disk?: string; prefix?: string } = {}): Promise<UploadListResponse> {
-    if (!this.manager.hasResumable) return { uploads: [] };
+  /**
+   * In-progress resumable uploads, projected from the session store (empty when unconfigured),
+   * ordered by `createdAt`: newest first by default, oldest first with `order: 'asc'`. Sessions
+   * without a creation time sort last.
+   */
+  async uploads(
+    filter: UploadFilter & { order?: 'asc' | 'desc' } = {},
+  ): Promise<UploadListResponse> {
+    if (!this.manager.hasResumable) return { data: [] };
     const sessions = await withUploadSessionTables(() =>
       this.manager.resumable.list({
         ...(filter.disk !== undefined ? { disk: filter.disk } : {}),
         ...(filter.prefix !== undefined ? { keyPrefix: filter.prefix } : {}),
       }),
     );
-    return { uploads: sessions.map(toUploadInfo) };
+    const sign = filter.order === 'asc' ? 1 : -1;
+    const time = (upload: UploadInfo) =>
+      upload.createdAt === undefined ? Number.NaN : Date.parse(upload.createdAt);
+    const data = sessions.map(toUploadInfo).sort((a, b) => {
+      const ta = time(a);
+      const tb = time(b);
+      if (Number.isNaN(ta) || Number.isNaN(tb))
+        return Number.isNaN(ta) ? (Number.isNaN(tb) ? 0 : 1) : -1;
+      return (ta - tb) * sign;
+    });
+    return { data };
   }
 
   /** Full detail (+ recorded parts) of one resumable upload session. */
@@ -341,12 +346,9 @@ export class DashboardService {
   }
 
   /**
-   * One cursor-paginated page of stored media-library records across owners/collections, projected to
-   * the SPA's {@link MediaEntry}. Delegates to the real {@link MediaStore.list} — no bespoke query.
-   *
-   * Paginated through the ecosystem's cursor interface ({@link CursorParams} → `CursorPage`):
-   * `after`/`first` map onto the store's `cursor`/`limit` keyset page, which — like the disk listing —
-   * only walks forward, hence the pinned `prevCursor: null` / `hasPrev: false`.
+   * One page of stored media-library records across owners/collections, newest first, projected to
+   * the SPA's {@link MediaEntry}. Delegates to the real {@link MediaStore.list}: `after` / `first`
+   * become the store's `cursor` / `limit`. Forward-only, like {@link objects}.
    */
   async collections(params: CollectionFilter & CursorParams = {}): Promise<CollectionListResponse> {
     const page = await this.manager.store.list({
@@ -357,13 +359,7 @@ export class DashboardService {
       ...(params.after !== undefined ? { cursor: params.after } : {}),
       ...(params.first !== undefined ? { limit: params.first } : {}),
     });
-    return {
-      items: page.items.map(toMediaEntry),
-      nextCursor: page.nextCursor,
-      prevCursor: null,
-      hasNext: page.nextCursor !== null,
-      hasPrev: false,
-    };
+    return forwardPage(page.items.map(toMediaEntry), page.nextCursor);
   }
 
   /**
@@ -378,7 +374,7 @@ export class DashboardService {
     if (typeof store.collectionTotals === 'function') {
       const rows = await store.collectionTotals();
       return {
-        collections: rows.map(({ collection, count, sumSize }) => ({
+        data: rows.map(({ collection, count, sumSize }) => ({
           key: collection,
           count,
           sumSize,
@@ -403,7 +399,7 @@ export class DashboardService {
       cursor = page.nextCursor ?? undefined;
     } while (cursor !== undefined && scanned < COLLECTIONS_SUMMARY_SCAN_LIMIT);
     return {
-      collections: Array.from(totals.entries()).map(([key, agg]) => ({ key, ...agg })),
+      data: Array.from(totals.entries()).map(([key, agg]) => ({ key, ...agg })),
     };
   }
 
@@ -678,14 +674,7 @@ export class DashboardService {
     if (prefixes === undefined) return undefined;
     const normalized = prefix.replace(/^\/+/, '');
     if (prefixes.some((p) => normalized.startsWith(p))) return undefined;
-    const empty = {
-      folders: [],
-      files: [],
-      nextCursor: null,
-      prevCursor: null,
-      hasNext: false,
-      hasPrev: false,
-    };
+    const empty = forwardPage<ObjectListItem>([], null);
     // Nothing in scope (no organization, or a pick outside the grant): an empty root, like the
     // record listings.
     if (prefixes.length === 0) {
@@ -696,15 +685,10 @@ export class DashboardService {
     if (below.length === 0) throw new DashboardError('not found', 404);
     const folders = Array.from(
       new Set(below.map((p) => normalized + p.slice(normalized.length).split('/')[0] + '/')),
-    ).map((folder) => ({ name: folderName(folder), prefix: folder }));
-    return {
-      folders,
-      files: [],
-      nextCursor: null,
-      prevCursor: null,
-      hasNext: false,
-      hasPrev: false,
-    };
+    ).map(
+      (folder): ObjectListItem => ({ type: 'folder', name: folderName(folder), prefix: folder }),
+    );
+    return forwardPage(folders, null);
   }
 
   private assertActions(): void {
@@ -737,6 +721,14 @@ function toMediaEntry(record: MediaRecord): MediaEntry {
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     ...(record.tenantId !== undefined ? { tenantId: record.tenantId } : {}),
+  };
+}
+
+/** A forward-only cursor page: there is never a previous cursor to hand out. */
+function forwardPage<T>(data: T[], nextCursor: string | null): CursorPageResponse<T> {
+  return {
+    data,
+    meta: { nextCursor, prevCursor: null, hasNext: nextCursor !== null, hasPrev: false },
   };
 }
 

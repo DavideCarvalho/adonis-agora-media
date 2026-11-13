@@ -8,58 +8,43 @@
  */
 
 /**
- * Cursor (keyset) pagination parameters for every paginated console listing.
+ * Cursor paging input of the console's paginated listings (`objects`, `collections`): `after` is a
+ * previous page's `meta.nextCursor`, `first` the page size. On the wire these are the `after` /
+ * `first` query params of the `@adonis-agora/filter` list format.
  *
- * These fields intentionally MIRROR `@adonis-agora/filter`'s `CursorParams` so that every
- * `@adonis-agora/*` library paginates through the same interface. The mirroring is *structural* on
- * purpose — this package does not depend on `@adonis-agora/filter`, it just refuses to invent a
- * second vocabulary for the same idea.
- *
- * Only the FORWARD half of that interface exists here: the console's listings are backed by S3's
- * `ListObjectsV2` continuation token, an opaque, forward-only handle. There is no token for "the
- * page before this one" and no way to seek to an arbitrary offset, so `before` / `last` are
- * deliberately ABSENT rather than accepted-and-silently-ignored.
+ * Forward-only: the listings are backed by S3's `ListObjectsV2` continuation token and by the media
+ * store's newest-first keyset, neither of which can step backward. The routes answer `400` to
+ * `before` / `last`.
  */
 export interface CursorParams {
-  /** Opaque cursor from a previous page's `nextCursor`; omit for the first page. */
+  /** Opaque cursor from a previous page's `meta.nextCursor`; omit for the first page. */
   after?: string;
-  /** Page size for the forward page. */
+  /** Page size. */
   first?: number;
 }
 
 /**
- * One page of a cursor-paginated console listing.
- *
- * Mirrors `@adonis-agora/filter`'s `CursorPage<T>` field-for-field (again structurally, not through
- * a dependency), so generic pagination code written against the ecosystem's cursor interface works
- * here unchanged.
- *
- * Because the backend is forward-only (see {@link CursorParams}), `prevCursor` is ALWAYS `null` and
- * `hasPrev` ALWAYS `false`. They are still present — dropping them would make this a different
- * interface from filter's, and a caller that walks pages forward and keeps them client-side (which
- * is what the SPA does) needs no backward paging anyway.
- *
- * The cursor value is opaque: never parse it, never build one, just hand a `nextCursor` back as
- * `after`.
+ * The `meta` of a cursor page, field for field `@adonis-agora/filter`'s `CursorPageMeta`. The
+ * console's listings page forward only, so `prevCursor` is always `null` and `hasPrev` `false`.
  */
-export interface CursorPage<T> {
-  items: T[];
-  /** Opaque cursor for the next forward page, or `null` when this is the last page. */
+export interface CursorPageMeta {
+  /** Opaque cursor for the next page (send it as `after`), or `null` on the last page. */
   nextCursor: string | null;
-  /** Always `null` — the backend is forward-only. */
   prevCursor: string | null;
   hasNext: boolean;
-  /** Always `false` — the backend is forward-only. */
   hasPrev: boolean;
 }
 
-/**
- * The pagination envelope of {@link CursorPage} without `items` — for a page that carries more than
- * one kind of item and so cannot collapse into a single `items` array. Only the object listing needs
- * it: a delimiter listing returns folders (common prefixes) AND files in the same page, and merging
- * two different shapes into one array would lose that distinction for every consumer.
- */
-export type CursorPageInfo = Omit<CursorPage<never>, 'items'>;
+/** A cursor-paged list response: `{ data, meta }`, as `@adonis-agora/filter`'s `CursorPageResponse<T>`. */
+export interface CursorPageResponse<T> {
+  data: T[];
+  meta: CursorPageMeta;
+}
+
+/** A small list that is not paged (disks, collection totals, uploads in progress): `{ data }`. */
+export interface ListResponse<T> {
+  data: T[];
+}
 
 /** Coarse capability descriptor for a disk, mirroring `@adonis-agora/media`'s `DiskCapabilities`. */
 export interface DiskCapabilities {
@@ -78,9 +63,8 @@ export interface DiskInfo {
   capabilities: DiskCapabilities;
 }
 
-export interface DiskListResponse {
-  disks: DiskInfo[];
-}
+/** `GET /disks`. */
+export type DiskListResponse = ListResponse<DiskInfo>;
 
 /** A sub-folder under the browsed prefix (a `CommonPrefix`; `prefix` carries the trailing slash). */
 export interface ObjectFolder {
@@ -97,15 +81,14 @@ export interface ObjectEntry {
   lastModified: string | null;
 }
 
+/** One row of a bucket listing: a folder (common prefix) or a file, told apart by `type`. */
+export type ObjectListItem = ({ type: 'folder' } & ObjectFolder) | ({ type: 'file' } & ObjectEntry);
+
 /**
- * One page of a bucket listing (cursor-based, from the disk `list`), carrying the shared
- * {@link CursorPageInfo} envelope. `nextCursor` is `null` on the last page; `prevCursor` / `hasPrev`
- * are always `null` / `false` because S3's continuation token only walks forward.
+ * `GET /objects`: one page of a bucket listing, folders first, then files, in key order. Folders and
+ * files share one page because S3 returns both from the same request.
  */
-export interface ObjectListResponse extends CursorPageInfo {
-  folders: ObjectFolder[];
-  files: ObjectEntry[];
-}
+export type ObjectListResponse = CursorPageResponse<ObjectListItem>;
 
 /** Object metadata plus a short-lived signed URL for preview/download. */
 export interface ObjectDetailResponse {
@@ -132,9 +115,8 @@ export interface UploadInfo {
   tenantId?: string | null;
 }
 
-export interface UploadListResponse {
-  uploads: UploadInfo[];
-}
+/** `GET /uploads`: resumable uploads in progress. */
+export type UploadListResponse = ListResponse<UploadInfo>;
 
 /** A stored media-library record, projected from `@adonis-agora/media`'s `MediaRecord` for the console. */
 export interface MediaEntry {
@@ -157,13 +139,10 @@ export interface MediaEntry {
   tenantId?: string | null;
 }
 
-/**
- * One page of the cross-owner collections listing (cursor-based, from the `MediaStore.list`) — the
- * canonical {@link CursorPage} shape, with `prevCursor` / `hasPrev` always `null` / `false`.
- */
-export type CollectionListResponse = CursorPage<MediaEntry>;
+/** `GET /collections`: one page of stored media records, newest first. */
+export type CollectionListResponse = CursorPageResponse<MediaEntry>;
 
-/** Filters for the collections listing — every field optional and `AND`ed server-side. */
+/** Filters for the collections listing (`filter[collection]` …), every field optional and `AND`ed. */
 export interface CollectionFilter {
   collection?: string;
   ownerType?: string;
@@ -230,8 +209,13 @@ export interface CollectionSummary {
   sumSize: number;
 }
 
-export interface CollectionsSummaryResponse {
-  collections: CollectionSummary[];
+/** `GET /collections/summary`. */
+export type CollectionsSummaryResponse = ListResponse<CollectionSummary>;
+
+/** Filters for the uploads listing (`filter[disk]`, `filter[prefix]`), both optional. */
+export interface UploadFilter {
+  disk?: string;
+  prefix?: string;
 }
 
 /** One label/value row of an {@link ObjectInsight}. Rendered verbatim as text — no markup. */

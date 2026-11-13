@@ -194,8 +194,10 @@ function FolderChildren({
       </p>
     );
   }
-  const folders = (query.data?.folders ?? []).filter(
-    (folder) => !ancestorIds.has(nodeId(disk, folder.prefix)),
+  const folders = (query.data?.data ?? []).flatMap((item) =>
+    item.type === 'folder' && !ancestorIds.has(nodeId(disk, item.prefix))
+      ? [{ name: item.name, prefix: item.prefix }]
+      : [],
   );
   if (folders.length === 0) {
     return (

@@ -11,28 +11,36 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('DashboardClient', () => {
   it('builds object listing requests with query params and same-origin credentials', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ folders: [], files: [] }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: [], meta: {} }));
     const client = new DashboardClient({ apiBase: '/media/dashboard/api', fetchImpl });
     await client.objects('s3', { prefix: 'photos/', after: 'c1', first: 50 });
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/media/dashboard/api/objects?disk=s3&prefix=photos%2F&after=c1&first=50');
+    expect(decodeURIComponent(url as string)).toBe(
+      '/media/dashboard/api/objects?filter[disk]=s3&filter[prefix]=photos/&after=c1&first=50',
+    );
     expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
   });
 
   it('builds collections requests with only the present filters', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ items: [], nextCursor: null }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: [], meta: {} }));
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });
     await client.collections({ ownerType: 'Post', ownerId: '42', after: 'c1', first: 50 });
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('/api/collections?ownerType=Post&ownerId=42&after=c1&first=50');
+    expect(decodeURIComponent(url as string)).toBe(
+      '/api/collections?filter[ownerType]=Post&filter[ownerId]=42&after=c1&first=50',
+    );
     expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin' });
   });
 
   it('omits empty query params', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ uploads: [] }));
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: [] }));
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });
-    await client.uploads({});
+    await client.uploads({ prefix: '' });
     expect(fetchImpl.mock.calls[0][0]).toBe('/api/uploads');
+    await client.uploads({ disk: 's3' });
+    expect(decodeURIComponent(fetchImpl.mock.calls[1][0] as string)).toBe(
+      '/api/uploads?filter[disk]=s3',
+    );
   });
 
   it('posts copy/move/delete as JSON bodies', async () => {

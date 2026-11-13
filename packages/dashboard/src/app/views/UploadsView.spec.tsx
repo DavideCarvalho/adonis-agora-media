@@ -8,7 +8,7 @@ describe('UploadsView', () => {
   it('renders in-progress upload sessions from the client', async () => {
     const client = {
       uploads: vi.fn(async () => ({
-        uploads: [
+        data: [
           {
             id: 'u1',
             disk: 's3',
@@ -30,7 +30,7 @@ describe('UploadsView', () => {
   });
 
   it('shows an empty state when there are no sessions', async () => {
-    const client = { uploads: vi.fn(async () => ({ uploads: [] })) };
+    const client = { uploads: vi.fn(async () => ({ data: [] })) };
     renderView(<UploadsView route={{ tab: 'uploads' }} />, client);
     await waitFor(() => expect(screen.getByText('No resumable uploads in progress.')).toBeTruthy());
   });

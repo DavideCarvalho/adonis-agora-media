@@ -15,3 +15,6 @@ allowBuilds:
   # conferem a plataforma e baixam um binário de ffmpeg para o CLI próprio, que não usamos.
   node-av: false
   sharp: true
+minimumReleaseAgeExclude:
+  - '@adonis-agora/filter@1.0.0-rc.5'
+  - '@adonis-agora/filter-client@1.0.0-rc.1'

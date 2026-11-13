@@ -369,10 +369,10 @@ describe('console tenant scope', () => {
       keyPrefixes: consoleKeyPrefixes(ids) as string[],
     });
     await expect(svc.mediaRecord('a')).rejects.toThrow('unknown media record');
-    expect((await svc.collections()).items).toEqual([]);
-    expect((await svc.objects('fs')).folders).toEqual([{ name: 't', prefix: 't/' }]);
-    expect((await svc.objects('fs', { prefix: 't/' })).folders).toEqual([
-      { name: 'acme', prefix: 't/acme/' },
+    expect((await svc.collections()).data).toEqual([]);
+    expect((await svc.objects('fs')).data).toEqual([{ type: 'folder', name: 't', prefix: 't/' }]);
+    expect((await svc.objects('fs', { prefix: 't/' })).data).toEqual([
+      { type: 'folder', name: 'acme', prefix: 't/acme/' },
     ]);
     await expect(svc.objects('fs', { prefix: 't/globex/' })).rejects.toThrow('not found');
     await expect(svc.remove({ disk: 'fs', keys: ['t/globex/x'] })).rejects.toThrow('not found');
@@ -382,7 +382,7 @@ describe('console tenant scope', () => {
       actions: false,
       keyPrefixes: [],
     });
-    expect((await none.objects('fs')).folders).toEqual([]);
+    expect((await none.objects('fs')).data).toEqual([]);
   });
 });
 
