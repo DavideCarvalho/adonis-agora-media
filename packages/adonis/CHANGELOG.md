@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.12
+
+### Minor Changes
+
+- [#306](https://github.com/DavideCarvalho/adonis-agora-media/pull/306) [`71900c9`](https://github.com/DavideCarvalho/adonis-agora-media/commit/71900c94effc0bc6dc180f5397bc4b70ad94edb3) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Every media console action is now a `node ace` command: `media:disks:list`, `media:objects:list`, `media:objects:show`, `media:objects:upload`, `media:objects:copy`, `media:objects:move`, `media:objects:rename`, `media:objects:delete`, `media:folders:create`, `media:collections:list`, `media:records:list`, `media:records:show`, `media:records:delete`, `media:uploads:list`, `media:uploads:show` and `media:uploads:abort`. They use the console's settings from `config/media_dashboard.ts` (its disks, its `actions` switch, its object URLs), print `--json` in the console API's `{ data, meta }` shape, take `--tenant=<id>` with tenancy on, ask before a destructive change unless `--force`, and exit with code `1` on failure. See the new CLI page in the docs.
+
 ## 1.0.0-rc.11
 
 ### Minor Changes
