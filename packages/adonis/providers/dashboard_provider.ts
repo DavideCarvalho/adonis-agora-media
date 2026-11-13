@@ -12,6 +12,12 @@ import {
   type ConsoleAuthorizeDecision,
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
+import {
+  buildConsoleService,
+  type ConsoleServiceConfig,
+  consoleDiskNames,
+  readConsoleServiceConfig,
+} from '../src/dashboard/console_service.js';
 import { resolveSignOut, resolveViewer } from '../src/dashboard/console_shell.js';
 import {
   listVisibleConsoles,
@@ -28,14 +34,11 @@ import {
   readObjectsQuery,
   readUploadsQuery,
 } from '../src/dashboard/list_api.js';
-import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
-import { DashboardError, DashboardService } from '../src/dashboard/service.js';
+import { DashboardError, type DashboardService } from '../src/dashboard/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
 import {
   type ConsoleTenantScope,
-  consoleKeyPrefixes,
   resolveConsoleTenantScope,
-  scopedManager,
 } from '../src/dashboard/tenant_scope.js';
 import type { TenantPickerResponse } from '../src/dashboard/types.js';
 import { MediaManager } from '../src/media_manager.js';
@@ -124,26 +127,18 @@ export default class MediaDashboardProvider {
    * {@link #consoleScope}); without a request (no viewer), it sees nothing of a tenant.
    */
   #service(config: MediaDashboardConfig): (ctx?: HttpContext) => Promise<DashboardService> {
-    const basePath = normalizePath(config.basePath ?? '/media/dashboard');
-    const apiBase = normalizePath(config.apiBasePath ?? `${basePath}/api`);
-    const diskNames = this.#resolveDiskNames(config);
-    const objectUrls = { strategy: this.#resolveObjectUrlStrategy(config), apiBasePath: apiBase };
+    const settings = this.#serviceConfig(config);
     return async (ctx) => {
       const manager = await this.app.container.make(MediaManager);
-      const options = { diskNames, actions: config.actions ?? false, objectUrls };
-      if (!manager.tenancy?.enabled) {
-        // Strategy and mount path travel together: a strategy without the path it needs would be
-        // a half-configured state that builds `/object/raw` URLs rooted at nothing.
-        return new DashboardService(manager, options, config.objectInsights ?? []);
-      }
+      if (!manager.tenancy?.enabled) return buildConsoleService(manager, settings);
       const ids = ctx ? (await this.#consoleScope(ctx))?.ids : [];
-      const keyPrefixes = consoleKeyPrefixes(ids);
-      return new DashboardService(
-        scopedManager(manager, ids),
-        { ...options, ...(keyPrefixes !== undefined ? { keyPrefixes } : {}) },
-        config.objectInsights ?? [],
-      );
+      return buildConsoleService(manager, settings, ids);
     };
+  }
+
+  /** The config the console's service is built from (this console's own, over the app's). */
+  #serviceConfig(config: MediaDashboardConfig): ConsoleServiceConfig {
+    return { ...readConsoleServiceConfig(this.app.config), console: config };
   }
 
   /**
@@ -704,30 +699,9 @@ export default class MediaDashboardProvider {
     applyMiddleware(group, middleware);
   }
 
-  /**
-   * Which `url` the console reports for an object's bytes. An explicit `objectUrls` always wins;
-   * when unset, the console follows the core media config: a host already streaming every read
-   * through the app (`delivery.mode: 'proxy'`) has declared its store unreachable from a browser,
-   * so a signed URL minted for the internal endpoint would be a link the console cannot open.
-   * Anything else keeps the historical `'auto'`.
-   */
-  #resolveObjectUrlStrategy(config: MediaDashboardConfig): ObjectUrlStrategy {
-    if (config.objectUrls) return config.objectUrls;
-    const media = this.app.config.get<{ delivery?: { mode?: string } }>('media', {});
-    return media.delivery?.mode === 'proxy' ? 'proxy' : 'auto';
-  }
-
   /** Derive browsable disk names from the media config when the console config does not list them. */
   #resolveDiskNames(config: MediaDashboardConfig): string[] {
-    if (config.disks && config.disks.length > 0) return config.disks;
-    const media = this.app.config.get<{ disk?: string; disks?: Record<string, unknown> }>(
-      'media',
-      {},
-    );
-    const drive = this.app.config.get<{ default?: string }>('drive', {});
-    const defaultName = media.disk ?? drive.default ?? 'default';
-    const configured = media.disks ? Object.keys(media.disks) : [];
-    return Array.from(new Set([defaultName, ...configured]));
+    return consoleDiskNames(this.#serviceConfig(config));
   }
 }
 
