@@ -101,7 +101,7 @@ describe('DashboardService', () => {
       diskNames: ['s3', 'backup'],
       actions: false,
     });
-    const { disks } = svc.disks();
+    const { data: disks } = svc.disks();
     expect(disks[0]).toMatchObject({ name: 's3', default: true, capabilities: { list: true } });
     expect(disks[1]).toMatchObject({ name: 'backup', default: false });
   });
@@ -115,19 +115,23 @@ describe('DashboardService', () => {
     // `{ after, first }` in — the ecosystem cursor interface — `{ cursor, limit }` down to the driver.
     const res = await svc.objects('s3', { prefix: 'photos/', first: 50 });
     expect(disk.list).toHaveBeenCalledWith('photos/', { delimiter: '/', limit: 50 });
-    expect(res.folders).toEqual([{ name: '2024', prefix: 'photos/2024/' }]);
-    expect(res.files[0]).toEqual({
+    // Folders first, then files, in one `{ data, meta }` cursor page.
+    expect(res.data[0]).toEqual({ type: 'folder', name: '2024', prefix: 'photos/2024/' });
+    expect(res.data[1]).toEqual({
+      type: 'file',
       key: 'a.txt',
       name: 'a.txt',
       sizeBytes: 12,
       lastModified: '2026-07-13T10:00:00.000Z',
     });
-    expect(res.files[1].lastModified).toBeNull();
-    expect(res.nextCursor).toBe('next-token');
-    expect(res.hasNext).toBe(true);
+    expect(res.data[2]).toMatchObject({ type: 'file', lastModified: null });
     // Forward-only backend (S3 continuation token): the backward half is always pinned.
-    expect(res.prevCursor).toBeNull();
-    expect(res.hasPrev).toBe(false);
+    expect(res.meta).toEqual({
+      nextCursor: 'next-token',
+      prevCursor: null,
+      hasNext: true,
+      hasPrev: false,
+    });
   });
 
   it('forwards `after` as the driver cursor, and reports a last page as such', async () => {
@@ -140,10 +144,10 @@ describe('DashboardService', () => {
     });
     const res = await svc.objects('s3', { after: 'next-token' });
     expect(disk.list).toHaveBeenCalledWith('', { delimiter: '/', cursor: 'next-token' });
-    expect(res.nextCursor).toBeNull();
-    expect(res.hasNext).toBe(false);
-    expect(res.prevCursor).toBeNull();
-    expect(res.hasPrev).toBe(false);
+    expect(res).toEqual({
+      data: [],
+      meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
+    });
   });
 
   it('drops phantom empty-name folders (leading-slash CommonPrefix) from a listing', async () => {
@@ -161,8 +165,10 @@ describe('DashboardService', () => {
       actions: false,
     });
     const res = await svc.objects('s3', {});
-    expect(res.folders.map((folder) => folder.prefix)).toEqual(['bases/', 'templates/']);
-    expect(res.folders.every((folder) => folder.name !== '')).toBe(true);
+    expect(res.data).toEqual([
+      { type: 'folder', name: 'bases', prefix: 'bases/' },
+      { type: 'folder', name: 'templates', prefix: 'templates/' },
+    ]);
   });
 
   it('returns object detail with a signed url', async () => {
@@ -229,13 +235,42 @@ describe('DashboardService', () => {
     });
     const res = await svc.uploads({ disk: 's3' });
     expect(resumable.list).toHaveBeenCalledWith({ disk: 's3' });
-    expect(res.uploads[0]).toMatchObject({
+    expect(res.data[0]).toMatchObject({
       id: 'u1',
       percent: 50,
       multipart: true,
       createdAt: '2026-07-13T09:00:00.000Z',
     });
-    expect(res.uploads[1]).toMatchObject({ id: 'u2', percent: null, size: null, multipart: false });
+    expect(res.data[1]).toMatchObject({ id: 'u2', percent: null, size: null, multipart: false });
+  });
+
+  it('orders uploads by createdAt, newest first unless asked for oldest first', async () => {
+    const session = (id: string, at?: string) => ({
+      id,
+      disk: 's3',
+      key: `${id}.bin`,
+      offset: 0,
+      size: 1,
+      parts: 0,
+      ...(at !== undefined ? { createdAt: new Date(at) } : {}),
+    });
+    const resumable = {
+      list: vi.fn(async () => [
+        session('old', '2026-01-01T00:00:00Z'),
+        session('undated'),
+        session('new', '2026-03-01T00:00:00Z'),
+      ]),
+    };
+    const svc = new DashboardService(managerWith({ s3: fakeDisk() }, resumable), {
+      diskNames: ['s3'],
+      actions: false,
+    });
+    expect((await svc.uploads()).data.map((u) => u.id)).toEqual(['new', 'old', 'undated']);
+    expect((await svc.uploads({ order: 'asc' })).data.map((u) => u.id)).toEqual([
+      'old',
+      'new',
+      'undated',
+    ]);
   });
 
   it.each([
@@ -299,7 +334,7 @@ describe('DashboardService', () => {
       diskNames: ['s3'],
       actions: false,
     });
-    await expect(svc.uploads()).resolves.toEqual({ uploads: [] });
+    await expect(svc.uploads()).resolves.toEqual({ data: [] });
   });
 
   it('lists stored records via MediaStore.list, projecting conversions + ISO dates', async () => {
@@ -312,12 +347,14 @@ describe('DashboardService', () => {
     });
     const res = await svc.collections({ ownerType: 'Post', ownerId: '42', first: 25 });
     expect(store.list).toHaveBeenCalledWith({ ownerType: 'Post', ownerId: '42', limit: 25 });
-    expect(res.nextCursor).toBe('cursor-2');
-    expect(res.hasNext).toBe(true);
     // Forward-only: the keyset page only walks one way, so the backward half is pinned.
-    expect(res.prevCursor).toBeNull();
-    expect(res.hasPrev).toBe(false);
-    expect(res.items[0]).toEqual({
+    expect(res.meta).toEqual({
+      nextCursor: 'cursor-2',
+      prevCursor: null,
+      hasNext: true,
+      hasPrev: false,
+    });
+    expect(res.data[0]).toEqual({
       id: 'm1',
       ownerType: 'Post',
       ownerId: '42',
@@ -343,11 +380,8 @@ describe('DashboardService', () => {
     const res = await svc.collections({ collection: 'gallery' });
     expect(store.list).toHaveBeenCalledWith({ collection: 'gallery' });
     expect(res).toEqual({
-      items: [],
-      nextCursor: null,
-      prevCursor: null,
-      hasNext: false,
-      hasPrev: false,
+      data: [],
+      meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
     });
   });
 
@@ -660,7 +694,7 @@ describe('DashboardService', () => {
       actions: false,
     });
     const result = await svc.collectionsSummary();
-    expect(result.collections).toEqual(
+    expect(result.data).toEqual(
       expect.arrayContaining([
         { key: 'gallery', count: 2, sumSize: 150 },
         { key: 'docs', count: 1, sumSize: 10 },

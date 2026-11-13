@@ -27,7 +27,7 @@ export function UploadPanel() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [active, setActive] = useState<string | null>(null);
 
-  const browsable = useMemo(() => disks.data?.disks ?? [], [disks.data]);
+  const browsable = useMemo(() => disks.data?.data ?? [], [disks.data]);
   const [disk, setDisk] = useState<string>('');
   const targetDisk = disk || browsable.find((d) => d.default)?.name || browsable[0]?.name || '';
 

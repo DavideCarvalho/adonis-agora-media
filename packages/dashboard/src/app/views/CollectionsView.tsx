@@ -45,7 +45,7 @@ function CollectionsBar({
   onSelect: (key: string | undefined) => void;
 }) {
   const summary = useCollectionsSummary();
-  const collections = summary.data?.collections ?? [];
+  const collections = summary.data?.data ?? [];
   if (collections.length === 0) return null;
   return (
     <div className="mb-4 flex flex-wrap gap-1">

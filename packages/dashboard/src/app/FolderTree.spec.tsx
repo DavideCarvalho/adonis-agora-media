@@ -21,12 +21,8 @@ const DISKS: DiskInfo[] = [
 /** An empty object page — the cursor envelope pinned as the forward-only backend always reports it. */
 function emptyPage(): ObjectListResponse {
   return {
-    folders: [],
-    files: [],
-    nextCursor: null,
-    prevCursor: null,
-    hasNext: false,
-    hasPrev: false,
+    data: [],
+    meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
   };
 }
 
@@ -46,7 +42,7 @@ describe('FolderTree', () => {
     const client = {
       objects: vi.fn(async () => ({
         ...emptyPage(),
-        folders: [{ name: '2024', prefix: 'photos/2024/' }],
+        data: [{ type: 'folder', name: '2024', prefix: 'photos/2024/' }],
       })),
     };
     renderView(

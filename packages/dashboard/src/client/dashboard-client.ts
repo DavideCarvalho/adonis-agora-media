@@ -1,3 +1,4 @@
+import { filterQuery } from '@adonis-agora/filter-client';
 import type {
   CollectionFilter,
   CollectionListResponse,
@@ -14,6 +15,7 @@ import type {
   TenantPickerResponse,
   Topology,
   UploadDetailResponse,
+  UploadFilter,
   UploadListResponse,
 } from '../types.js';
 
@@ -147,6 +149,20 @@ async function readRedirectTo(res: Response): Promise<string | undefined> {
 
 const UNAUTHENTICATED_MESSAGE = 'Not signed in; redirecting.';
 
+/**
+ * The query string of a list request in the `@adonis-agora/filter` wire format: each present filter
+ * as `filter[field]=value`, plus the forward cursor (`after`, `first`). Empty filters are left out.
+ */
+function listQuery(filters: Record<string, string | undefined>, cursor: CursorParams = {}): string {
+  const query = filterQuery();
+  for (const [field, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.where(field, value);
+  }
+  if (cursor.after) query.after(cursor.after);
+  if (cursor.first !== undefined) query.first(cursor.first);
+  return query.toQueryString();
+}
+
 function withQuery(base: string, params: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -183,9 +199,13 @@ export class DashboardClient {
 
   private async get<T>(
     path: string,
-    params: Record<string, string | number | undefined> = {},
+    params: Record<string, string | number | undefined> | string = {},
   ): Promise<T> {
-    const res = await this.fetchImpl(withQuery(`${this.apiBase}${path}`, params), {
+    const url =
+      typeof params === 'string'
+        ? `${this.apiBase}${path}${params ? `?${params}` : ''}`
+        : withQuery(`${this.apiBase}${path}`, params);
+    const res = await this.fetchImpl(url, {
       method: 'GET',
       credentials: 'same-origin',
       redirect: 'manual',
@@ -240,34 +260,43 @@ export class DashboardClient {
     return this.get<DiskListResponse>('/disks');
   }
 
-  /** One page of a disk listing. Cursor-paginated through the ecosystem's `{ after, first }`
-   *  interface (mirrors `@adonis-agora/filter`'s `CursorParams`); forward-only, so there is no
-   *  `before`/`last`. Pass a previous page's `nextCursor` as `after`. */
+  /** One page of a disk listing (folders, then files). Pass a previous page's `meta.nextCursor`
+   *  as `after`; the listing pages forward only. */
   objects(
     disk: string,
     params: CursorParams & { prefix?: string } = {},
   ): Promise<ObjectListResponse> {
-    return this.get<ObjectListResponse>('/objects', { disk, ...params });
+    const { prefix, ...cursor } = params;
+    return this.get<ObjectListResponse>('/objects', listQuery({ disk, prefix }, cursor));
   }
 
   object(disk: string, key: string): Promise<ObjectDetailResponse> {
     return this.get<ObjectDetailResponse>('/object', { disk, key });
   }
 
-  uploads(params: { disk?: string; prefix?: string } = {}): Promise<UploadListResponse> {
-    return this.get<UploadListResponse>('/uploads', params);
+  /** Resumable uploads in progress, newest first. */
+  uploads(filter: UploadFilter = {}): Promise<UploadListResponse> {
+    return this.get<UploadListResponse>(
+      '/uploads',
+      listQuery({ disk: filter.disk, prefix: filter.prefix }),
+    );
   }
 
-  /** One page of stored media records. Same `{ after, first }` cursor interface as {@link objects}. */
+  /** One page of stored media records, newest first. Same forward cursor as {@link objects}. */
   collections(params: CollectionFilter & CursorParams = {}): Promise<CollectionListResponse> {
-    return this.get<CollectionListResponse>('/collections', {
-      collection: params.collection,
-      ownerType: params.ownerType,
-      ownerId: params.ownerId,
-      prefix: params.prefix,
-      after: params.after,
-      first: params.first,
-    });
+    const { after, first, ...filters } = params;
+    return this.get<CollectionListResponse>(
+      '/collections',
+      listQuery(
+        {
+          collection: filters.collection,
+          ownerType: filters.ownerType,
+          ownerId: filters.ownerId,
+          prefix: filters.prefix,
+        },
+        { ...(after !== undefined ? { after } : {}), ...(first !== undefined ? { first } : {}) },
+      ),
+    );
   }
 
   copy(body: CopyMoveBody): Promise<void> {

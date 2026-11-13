@@ -22,6 +22,11 @@ import {
 } from '../src/dashboard/console_switcher.js';
 import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
 import { registerMediaDevTools } from '../src/dashboard/dev_tools.js';
+import {
+  readCollectionsQuery,
+  readObjectsQuery,
+  readUploadsQuery,
+} from '../src/dashboard/list_api.js';
 import type { ObjectUrlStrategy } from '../src/dashboard/object_urls.js';
 import { DashboardError, DashboardService } from '../src/dashboard/service.js';
 import { contentTypeFor, normalizePath, renderIndexHtml } from '../src/dashboard/spa.js';
@@ -249,7 +254,7 @@ export default class MediaDashboardProvider {
                   ? { id: entry.id, collection: entry.collection, fileName: entry.fileName }
                   : null;
               },
-              collections: async () => (await svc.collectionsSummary()).collections,
+              collections: async () => (await svc.collectionsSummary()).data,
               disks: () => diskNames,
             };
           }, basePath),
@@ -443,18 +448,8 @@ export default class MediaDashboardProvider {
         .get(
           '/objects',
           json(async (svc, ctx) => {
-            const disk = str(ctx, 'disk');
-            if (!disk) throw new DashboardError('disk is required', 400);
-            const prefix = str(ctx, 'prefix');
-            // `?after=&first=` — the ecosystem's cursor pagination interface (mirrors
-            // `@adonis-agora/filter`'s `CursorParams`). Forward-only: no `before`/`last`.
-            const after = str(ctx, 'after');
-            const first = ctx.request.input('first');
-            return svc.objects(disk, {
-              ...(prefix !== undefined ? { prefix } : {}),
-              ...(after !== undefined ? { after } : {}),
-              ...(first !== undefined ? { first: Number(first) } : {}),
-            });
+            const { disk, params } = await readObjectsQuery(ctx);
+            return svc.objects(disk, params);
           }),
         )
         .as('media.dashboard.objects');
@@ -525,14 +520,7 @@ export default class MediaDashboardProvider {
       router
         .get(
           '/uploads',
-          json(async (svc, ctx) => {
-            const disk = str(ctx, 'disk');
-            const prefix = str(ctx, 'prefix');
-            return svc.uploads({
-              ...(disk !== undefined ? { disk } : {}),
-              ...(prefix !== undefined ? { prefix } : {}),
-            });
-          }),
+          json(async (svc, ctx) => svc.uploads(await readUploadsQuery(ctx))),
         )
         .as('media.dashboard.uploads');
       router
@@ -552,23 +540,7 @@ export default class MediaDashboardProvider {
       router
         .get(
           '/collections',
-          json(async (svc, ctx) => {
-            const collection = str(ctx, 'collection');
-            const ownerType = str(ctx, 'ownerType');
-            const ownerId = str(ctx, 'ownerId');
-            const prefix = str(ctx, 'prefix');
-            // Same `?after=&first=` cursor interface as `/objects` — see that route.
-            const after = str(ctx, 'after');
-            const first = ctx.request.input('first');
-            return svc.collections({
-              ...(collection !== undefined ? { collection } : {}),
-              ...(ownerType !== undefined ? { ownerType } : {}),
-              ...(ownerId !== undefined ? { ownerId } : {}),
-              ...(prefix !== undefined ? { prefix } : {}),
-              ...(after !== undefined ? { after } : {}),
-              ...(first !== undefined ? { first: Number(first) } : {}),
-            });
-          }),
+          json(async (svc, ctx) => svc.collections(await readCollectionsQuery(ctx))),
         )
         .as('media.dashboard.collections');
       router

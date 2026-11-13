@@ -203,6 +203,83 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
     expect(body?.url).toBe('/media/api/object/raw?disk=s3&key=a.txt');
   });
 
+  it('serves the list routes in the filter wire format: { data, meta } pages, 400 on unknown fields', async () => {
+    const { default: MediaDashboardProvider } = await import(
+      '../../providers/dashboard_provider.js'
+    );
+    const { router } = makeFakeRouter();
+    const disk = {
+      capabilities: { presign: true, multipart: true, publicUrls: true, list: true },
+      copy: vi.fn(),
+      move: vi.fn(),
+      deleteMany: vi.fn(),
+      list: vi.fn(async () => ({
+        folders: ['a/'],
+        files: [{ key: 'b.txt', name: 'b.txt', sizeBytes: 1, lastModified: undefined }],
+        cursor: 'next',
+      })),
+      size: vi.fn(),
+      stat: vi.fn(),
+      getSignedUrl: vi.fn(),
+    };
+    const store = { list: vi.fn(async () => ({ items: [], nextCursor: null })) };
+    const manager = {
+      storage: { defaultDisk: 's3', disk: () => disk },
+      hasResumable: false,
+      store,
+    };
+    const { app, bootedHandlers } = makeFakeApp({ media_dashboard: {} }, router, manager);
+    const provider = new MediaDashboardProvider(app as never);
+    await provider.boot();
+    await bootedHandlers[0]?.();
+
+    const call = async (path: string, qs: Record<string, unknown>) => {
+      const handler = router.get.mock.calls.find((c) => c[0] === path)?.[1] as (
+        ctx: unknown,
+      ) => Promise<unknown>;
+      let status = 0;
+      let body: unknown;
+      await handler({
+        request: { qs: () => qs, input: (key: string) => qs[key] },
+        response: {
+          status: (code: number) => {
+            status = code;
+            return { json: (payload: unknown) => (body = payload) };
+          },
+        },
+      });
+      return { status, body };
+    };
+
+    const objects = await call('/objects', { filter: { disk: 's3', prefix: '' }, first: '10' });
+    expect(objects.status).toBe(200);
+    expect(objects.body).toEqual({
+      data: [
+        { type: 'folder', name: 'a', prefix: 'a/' },
+        { type: 'file', key: 'b.txt', name: 'b.txt', sizeBytes: 1, lastModified: null },
+      ],
+      meta: { nextCursor: 'next', prevCursor: null, hasNext: true, hasPrev: false },
+    });
+    expect(disk.list).toHaveBeenCalledWith('', { delimiter: '/', limit: 10 });
+
+    const collections = await call('/collections', { filter: { collection: 'gallery' } });
+    expect(collections).toEqual({
+      status: 200,
+      body: {
+        data: [],
+        meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
+      },
+    });
+    expect(store.list).toHaveBeenCalledWith({ collection: 'gallery', limit: 50 });
+
+    expect((await call('/collections', { filter: { owner: 'x' } })).status).toBe(400);
+    expect((await call('/collections', { sort: 'name' })).status).toBe(400);
+    expect((await call('/objects', { filter: { disk: 's3' }, before: 'x' })).status).toBe(400);
+    expect((await call('/objects', {})).status).toBe(400);
+    expect(await call('/uploads', {})).toEqual({ status: 200, body: { data: [] } });
+    expect((await call('/disks', {})).body).toMatchObject({ data: [{ name: 'default' }] });
+  });
+
   it('an explicit objectUrls always wins over the media delivery mode', async () => {
     const { default: MediaDashboardProvider } = await import(
       '../../providers/dashboard_provider.js'

@@ -148,7 +148,7 @@ export function mediaDevTools(options: MediaDevToolsOptions): DevTool[] {
       input: { type: 'object', properties: {} },
       run: async (_input, call) => {
         const svc = await options.service(call.ctx);
-        return { items: svc.disks().disks };
+        return { items: svc.disks().data };
       },
     },
     {
@@ -178,13 +178,7 @@ export function mediaDevTools(options: MediaDevToolsOptions): DevTool[] {
             first: limitOf(input),
           }),
         );
-        return {
-          items: [
-            ...page.folders.map((folder) => ({ type: 'folder', ...folder })),
-            ...page.files.map((file) => ({ type: 'file', ...file })),
-          ],
-          next: page.nextCursor,
-        };
+        return { items: page.data, next: page.meta.nextCursor };
       },
     },
     {
@@ -231,7 +225,7 @@ export function mediaDevTools(options: MediaDevToolsOptions): DevTool[] {
             ...(prefix !== undefined ? { prefix } : {}),
           }),
         );
-        return { items: result.uploads };
+        return { items: result.data };
       },
     },
     {
@@ -281,7 +275,7 @@ export function mediaDevTools(options: MediaDevToolsOptions): DevTool[] {
             first: limitOf(input),
           }),
         );
-        return { items: page.items, next: page.nextCursor };
+        return { items: page.data, next: page.meta.nextCursor };
       },
     },
     {
@@ -293,7 +287,7 @@ export function mediaDevTools(options: MediaDevToolsOptions): DevTool[] {
       run: async (_input, call) => {
         const svc = await options.service(call.ctx);
         const summary = await guarded(() => svc.collectionsSummary());
-        return { items: summary.collections };
+        return { items: summary.data };
       },
     },
     {

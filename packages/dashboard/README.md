@@ -65,13 +65,14 @@ Registered under `apiBasePath` (default `<basePath>/api`), behind `authorize` an
 | --- | --- | --- |
 | `GET` | `/topology` | capability probe |
 | `GET` | `/disks` | `StorageManager` + `DiskCapabilities` |
-| `GET` | `/objects?disk&prefix&after&first` | disk `list` |
+| `GET` | `/objects?filter[disk]&filter[prefix]&after&first` | disk `list` |
 | `GET` | `/object?disk&key` | disk `stat` + signed URL |
-| `GET` | `/uploads?disk&prefix` | `ResumableUploadManager.list()` |
+| `GET` | `/uploads?filter[disk]&filter[prefix]&sort` | `ResumableUploadManager.list()` |
+| `GET` | `/collections?filter[collection]&filter[ownerType]&filter[ownerId]&filter[prefix]&after&first` | `MediaStore.list` |
 | `POST` | `/copy` · `/move` | disk `copy`/`move` (streamed for cross-disk) |
 | `POST` | `/delete` | disk `deleteMany` |
 
-Listings page through the ecosystem's **cursor** interface — `?after=<previous nextCursor>&first=<page size>` in, `{ …payload, nextCursor, prevCursor, hasNext, hasPrev }` out — mirroring `@adonis-agora/filter`'s `CursorParams` / `CursorPage`. The backend (S3's `ListObjectsV2` continuation token) is **forward-only**, so `before` / `last` are not accepted and `prevCursor` / `hasPrev` are always `null` / `false`.
+List routes speak the `@adonis-agora/filter` list format: filters as `filter[field]=value`, `sort` against a per-route allow-list, an unknown field or sort answered with `400`. `/objects` and `/collections` page with `?after=<meta.nextCursor>&first=<size>` and answer `{ data, meta: { nextCursor, prevCursor, hasNext, hasPrev } }`; the other lists answer `{ data }`. Paging is forward only: `before` / `last` are a `400`, and `prevCursor` / `hasPrev` are always `null` / `false`.
 
 Uploads use the core `@adonis-agora/media` TUS/direct routes via `@adonis-agora/media-react`.
 

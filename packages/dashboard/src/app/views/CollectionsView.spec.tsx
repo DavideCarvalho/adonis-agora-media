@@ -25,17 +25,14 @@ function entry(over: Partial<MediaEntry> = {}): MediaEntry {
 }
 
 const PAGE: CollectionListResponse = {
-  items: [entry()],
-  nextCursor: null,
-  prevCursor: null,
-  hasNext: false,
-  hasPrev: false,
+  data: [entry()],
+  meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
 };
 
 function baseClient(overrides: Record<string, unknown> = {}) {
   return {
     collections: vi.fn(async () => PAGE),
-    collectionsSummary: vi.fn(async () => ({ collections: [] })),
+    collectionsSummary: vi.fn(async () => ({ data: [] })),
     topology: vi.fn(async () => ({ disks: 1, hasUploads: false, actions: true })),
     ...overrides,
   };
@@ -73,11 +70,8 @@ describe('CollectionsView', () => {
       collections: vi.fn(
         async () =>
           ({
-            items: [],
-            nextCursor: null,
-            prevCursor: null,
-            hasNext: false,
-            hasPrev: false,
+            data: [],
+            meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
           }) as CollectionListResponse,
       ),
     });
@@ -91,22 +85,16 @@ describe('CollectionsView', () => {
     const collections = vi
       .fn()
       .mockResolvedValueOnce({
-        items: [entry({ id: 'm1', name: 'first' })],
-        nextCursor: 'c2',
-        prevCursor: null,
-        hasNext: true,
-        hasPrev: false,
+        data: [entry({ id: 'm1', name: 'first' })],
+        meta: { nextCursor: 'c2', prevCursor: null, hasNext: true, hasPrev: false },
       })
       .mockResolvedValueOnce({
-        items: [entry({ id: 'm2', name: 'second' })],
-        nextCursor: null,
-        prevCursor: null,
-        hasNext: false,
-        hasPrev: false,
+        data: [entry({ id: 'm2', name: 'second' })],
+        meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
       });
     renderView(<CollectionsView route={{ tab: 'collections' }} />, {
       collections,
-      collectionsSummary: vi.fn(async () => ({ collections: [] })),
+      collectionsSummary: vi.fn(async () => ({ data: [] })),
     });
     await waitFor(() => expect(screen.getByText('first')).toBeTruthy());
 

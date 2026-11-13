@@ -6,7 +6,7 @@ import { renderView } from '../testkit';
 import { LibraryBrowseView } from './LibraryBrowseView';
 
 const DISKS: DiskListResponse = {
-  disks: [
+  data: [
     {
       name: 's3',
       default: true,
@@ -16,12 +16,17 @@ const DISKS: DiskListResponse = {
 };
 const TOPOLOGY: Topology = { disks: 1, hasUploads: true, actions: true };
 const OBJECTS: ObjectListResponse = {
-  folders: [{ name: '2024', prefix: 'photos/2024/' }],
-  files: [{ key: 'a.txt', name: 'a.txt', sizeBytes: 12, lastModified: '2026-07-13T10:00:00.000Z' }],
-  nextCursor: null,
-  prevCursor: null,
-  hasNext: false,
-  hasPrev: false,
+  data: [
+    { type: 'folder', name: '2024', prefix: 'photos/2024/' },
+    {
+      type: 'file',
+      key: 'a.txt',
+      name: 'a.txt',
+      sizeBytes: 12,
+      lastModified: '2026-07-13T10:00:00.000Z',
+    },
+  ],
+  meta: { nextCursor: null, prevCursor: null, hasNext: false, hasPrev: false },
 };
 
 function baseClient(overrides: Record<string, unknown> = {}) {
