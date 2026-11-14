@@ -1,5 +1,13 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.13
+
+### Patch Changes
+
+- [#307](https://github.com/DavideCarvalho/adonis-agora-media/pull/307) [`9b9c638`](https://github.com/DavideCarvalho/adonis-agora-media/commit/9b9c63829e644925f24014c24ee633be175e5e2d) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console footer: the signed-in user's role now shows when no `viewer` hook is set. The structural read of `ctx.auth.user` takes `role`, `roles` (strings, `{ name }` or authz `{ role }` rows) and `globalRoles`, plus the global roles of authkit's per-request identity on `ctx.authkit` (read structurally, 250 ms cap). One role is shown: an admin-like one first, else the first.
+  
+  Console: inline SVG favicon in the console accent, so the browser no longer probes `/favicon.ico` and logs a 404 in the host app.
+
 ## 1.0.0-rc.12
 
 ### Minor Changes
