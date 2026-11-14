@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.15
+
+### Patch Changes
+
+- [#309](https://github.com/DavideCarvalho/adonis-agora-media/pull/309) [`3950127`](https://github.com/DavideCarvalho/adonis-agora-media/commit/39501275ffbe5e1ce1d8e0e86361ba9b325c438d) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Server: the `agora.consoles` registry accepts the `flags` and `cms` icon keys, so those consoles show their own tile instead of `generic`. Console: the console switcher shows the CMS console with its own orange tile and glyph, and the kit gains a 16px `DocumentIcon`; the collapsible nav section toggle has a test pinning its focus ring (Agora console kit round 3).
+
 ## 1.0.0-rc.14
 
 ### Patch Changes
