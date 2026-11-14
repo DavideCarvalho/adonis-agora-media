@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.7
+
+### Patch Changes
+
+- [#308](https://github.com/DavideCarvalho/adonis-agora-media/pull/308) [`ac3a139`](https://github.com/DavideCarvalho/adonis-agora-media/commit/ac3a139fa656bc925d3d728e1e6517cebcce0232) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console ⌘K shows its loading state: a spinner in the search box while a request is in flight, skeleton rows until the first answer, earlier hits kept but dimmed during a re-search, "Nothing found" only after an empty answer, and a quiet "didn't answer" line with Retry when the search fails. Synced with the shared console kit (DataTable `rowClassName`/`subRow`, ⌘K console-local `commands`, collapsible nav sections).
+
 ## 10.0.0-rc.6
 
 ### Patch Changes
