@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.11
+
+### Patch Changes
+
+- [#321](https://github.com/DavideCarvalho/adonis-agora-media/pull/321) [`baba960`](https://github.com/DavideCarvalho/adonis-agora-media/commit/baba9604ffb3832c529494ba2b6543972c918054) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - ⌘K now navigates: it lists every page of the console's sidebar and every other Agora console you can open ("Go to Workflows", found by "durable" too), matched case- and accent-insensitively, before the console's own commands and the cross-console search hits. ⌘K opens even without a search endpoint, and shows the pages and consoles before anything is typed.
+
 ## 10.0.0-rc.10
 
 ### Patch Changes
