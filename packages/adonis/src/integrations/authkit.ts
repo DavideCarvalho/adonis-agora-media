@@ -16,6 +16,8 @@ interface AuthkitClientModule {
       userId: string;
       globalRoles?: string[];
       orgId?: string | null;
+      /** The human behind an impersonation (the token's `act` claim). */
+      actor?: { sub: string; email?: string } | null;
     } | null>;
   }>;
 }
@@ -58,8 +60,9 @@ const importClient = () =>
  *
  * On the server side, `id` is the account the request acts as (an impersonating admin sees the
  * user's files) and `realId` the human behind it (what `@adonis-agora/media/authz` checks
- * permissions for). On the client side both are the token's `sub`, with its global roles and
- * active organization as `roles` / `tenantId`.
+ * permissions for). On the client side `id` is the token's `sub` and `realId` its actor (the
+ * impersonating human from the `act` claim) or the `sub` when nobody impersonates, with its global
+ * roles and active organization as `roles` / `tenantId`.
  */
 export function authkitIdentity(options: AuthkitIdentityOptions = {}): MediaIdentityResolver {
   const side = options.side ?? 'auto';
@@ -80,7 +83,7 @@ export function authkitIdentity(options: AuthkitIdentityOptions = {}): MediaIden
     if (!identity) return null;
     return {
       id: identity.userId,
-      realId: identity.userId,
+      realId: identity.actor?.sub ?? identity.userId,
       roles: identity.globalRoles ?? [],
       tenantId: identity.orgId ?? null,
       ...(type ? { type } : {}),

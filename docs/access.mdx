@@ -70,6 +70,7 @@ defineConfig({ access: { identity: authkitIdentity() } })
   - `realId` is the human behind it (`realAccountId`), which is what permission checks are made for.
 - **An app that signs in against one** (`@adonis-agora/authkit-client`):
   - `id` is the token's `sub`;
+  - `realId` is the token's actor (its `act` claim, the admin impersonating), or the `sub` when nobody impersonates;
   - `roles` are its global roles;
   - `tenantId` is its active organization.
 - **Picking the side:** `side: 'auto'` (the default) uses the client when the request carries `ctx.authkit`, the server when its package is installed, and the client otherwise. Pin it with `side: 'server' | 'client'`.
