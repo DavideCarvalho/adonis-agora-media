@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.17
+
+### Patch Changes
+
+- [#315](https://github.com/DavideCarvalho/adonis-agora-media/pull/315) [`14a9a6d`](https://github.com/DavideCarvalho/adonis-agora-media/commit/14a9a6ddea1540a7b662137f58fa047158ef3f60) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `authkitIdentity()` on the authkit-client side sets `realId` from the identity's actor (the token's `act` claim), falling back to `sub`. Under impersonation through a remote authkit, permission checks are made for the impersonating human, as they already were on the authkit-server side.
+
 ## 1.0.0-rc.16
 
 ### Patch Changes
