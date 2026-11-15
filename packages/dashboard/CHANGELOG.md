@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.10
+
+### Patch Changes
+
+- [#320](https://github.com/DavideCarvalho/adonis-agora-media/pull/320) [`01e035e`](https://github.com/DavideCarvalho/adonis-agora-media/commit/01e035e5294d55322e701130eed411e36529a00f) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - The console kit gains charts on TanStack Charts (`agora-kit/charts`: TimeSeriesChart, BarChart, Sparkline, DonutChart) with a themed tooltip on hover and keyboard focus. No chart in this console uses it yet; nothing changes on screen and its JS bundle stays the same (the chart styles add a few lines of CSS).
+
 ## 10.0.0-rc.9
 
 ### Patch Changes
