@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.18
+
+### Patch Changes
+
+- [#322](https://github.com/DavideCarvalho/adonis-agora-media/pull/322) [`d38b22c`](https://github.com/DavideCarvalho/adonis-agora-media/commit/d38b22caaccb7ff347f879ebefc9705b37ef6a95) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Ships the current console: chart tooltips (TanStack Charts) and ⌘K navigation to pages and consoles. The console is bundled into this package, so the dashboard-only release did not reach apps.
+
 ## 1.0.0-rc.17
 
 ### Patch Changes
