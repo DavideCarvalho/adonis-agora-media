@@ -417,6 +417,22 @@ describe('@adonis-agora/media/authkit', () => {
     });
   });
 
+  it('client side under impersonation: the sub owns, the actor is checked', async () => {
+    const resolve = authkitIdentity({ side: 'client', load: { client: async () => client } });
+    const identity = {
+      userId: 'u-2',
+      globalRoles: [],
+      orgId: null,
+      actor: { sub: 'admin-1', email: 'admin@example.com' },
+    };
+    expect(await resolve({ identity })).toEqual({
+      id: 'u-2',
+      realId: 'admin-1',
+      roles: [],
+      tenantId: null,
+    });
+  });
+
   it('auto: the client when ctx.authkit is there, otherwise the server, falling back to the client', async () => {
     const identity = { userId: 'sub-1' };
     const both = authkitIdentity({
