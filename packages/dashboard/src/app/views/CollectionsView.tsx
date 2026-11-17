@@ -1,3 +1,4 @@
+import { parseAsString, useQueryStates } from 'nuqs';
 import { useEffect, useState } from 'react';
 import { type Column, DataTable } from '../../agora-kit/blocks/data-table';
 import { EmptyState } from '../../agora-kit/blocks/empty-state';
@@ -51,6 +52,41 @@ function isImage(mimeType: string): boolean {
 function withCollection(filter: CollectionFilter, key: string | undefined): CollectionFilter {
   const { collection: _dropped, ...rest } = filter;
   return key ? { ...rest, collection: key } : rest;
+}
+
+/**
+ * The Collections filter's URL params. `collection` is the param search hits already link with;
+ * the storage-key prefix is `keyPrefix`, since the Library tab's `prefix` names a folder.
+ */
+export const collectionParams = {
+  collection: parseAsString,
+  ownerType: parseAsString,
+  ownerId: parseAsString,
+  keyPrefix: parseAsString,
+};
+
+function filterFromParams(params: {
+  collection: string | null;
+  ownerType: string | null;
+  ownerId: string | null;
+  keyPrefix: string | null;
+}): CollectionFilter {
+  return cleanFilter({
+    ...(params.collection ? { collection: params.collection } : {}),
+    ...(params.ownerType ? { ownerType: params.ownerType } : {}),
+    ...(params.ownerId ? { ownerId: params.ownerId } : {}),
+    ...(params.keyPrefix ? { prefix: params.keyPrefix } : {}),
+  });
+}
+
+function paramsFromFilter(filter: CollectionFilter) {
+  const clean = cleanFilter(filter);
+  return {
+    collection: clean.collection ?? null,
+    ownerType: clean.ownerType ?? null,
+    ownerId: clean.ownerId ?? null,
+    keyPrefix: clean.prefix ?? null,
+  };
 }
 
 /* ── Summary ────────────────────────────────────────────────────────────────────────────────── */
@@ -463,16 +499,17 @@ export function CollectionsView({ route }: { route: Route }) {
   const summary = useCollectionsSummary();
   const picker = useTenantPicker();
   const showTenant = useShowsTenantColumn();
-  const initial = withCollection(EMPTY_FILTER, route.collection);
-  const [draft, setDraft] = useState<CollectionFilter>(initial);
-  const [applied, setApplied] = useState<CollectionFilter>(initial);
-  // A collection link (`#/collections?collection=…`, e.g. a search hit) followed while this view is
-  // already open re-applies the filter.
-  useEffect(() => {
-    const next = withCollection(EMPTY_FILTER, route.collection);
-    setDraft(next);
-    setApplied(next);
-  }, [route.collection]);
+  // The applied filter is the URL's (`#/collections?collection=gallery&ownerType=Post&ownerId=42`):
+  // a filtered view is a link, and a collection link (a search hit) followed while this view is
+  // open simply re-applies. Each apply/chip/reset adds a history entry. The form's draft stays
+  // local until applied, and follows the URL when it changes underneath (a link, back/forward).
+  const [params, setParams] = useQueryStates(collectionParams, { history: 'push' });
+  const applied = filterFromParams(params);
+  const appliedKey = JSON.stringify(applied);
+  const [draft, setDraft] = useState<CollectionFilter>(applied);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-sync only when the applied filter changes.
+  useEffect(() => setDraft(applied), [appliedKey]);
+  const setApplied = (filter: CollectionFilter) => void setParams(paramsFromFilter(filter));
 
   const records = useCollections(applied);
 
@@ -511,10 +548,7 @@ export function CollectionsView({ route }: { route: Route }) {
           <CollectionChips
             collections={collections}
             selected={applied.collection}
-            onSelect={(key) => {
-              setDraft((d) => withCollection(d, key));
-              setApplied((a) => withCollection(a, key));
-            }}
+            onSelect={(key) => setApplied(withCollection(applied, key))}
           />
           <CollectionFilterForm
             draft={draft}
