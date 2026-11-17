@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.19
+
+### Patch Changes
+
+- [#335](https://github.com/DavideCarvalho/adonis-agora-media/pull/335) [`fede0d9`](https://github.com/DavideCarvalho/adonis-agora-media/commit/fede0d95a7ceda70d8737026cb6efc3641a4c5e5) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Ships the console with its filters in the URL (copy the link to share a filtered view). The console is bundled into this package at build time, so it needs its own release to reach apps.
+
 ## 1.0.0-rc.18
 
 ### Patch Changes
