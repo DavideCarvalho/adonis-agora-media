@@ -1,0 +1,139 @@
+---
+title: Federated Console
+description: Show other apps' media in one console, with an App selector. Each app keeps its own tables, disks and credentials; the console reads their records and asks the app itself for the rest.
+icon: Network
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+One app's media console can also show the media of other apps. An **App** selector appears in the
+console's top bar, and the picked app goes in the URL as `?app=<key>`, so a link opens the same app.
+
+Each app keeps its own `media` table, its own disks and its own storage credentials. The console:
+
+- reads the other app's **records, collections and upload sessions** straight from that app's
+  tables, read-only;
+- asks **the app itself**, over Redis, for anything that needs its disks: listing them, browsing
+  objects, opening an object, the URLs of a record's conversions, and every action.
+
+## The console app
+
+List the other apps in `config/media_dashboard.ts`:
+
+```ts title="config/media_dashboard.ts"
+import { stores, uploadSessions } from '@adonis-agora/media'
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+  appLabel: 'Hub',
+  apps: {
+    'entre-textos': {
+      label: 'Entre Textos',
+      store: stores.lucid({ connection: 'pg', schema: 'entretextos' }),
+      uploadSessions: uploadSessions.lucid({ connection: 'pg', schema: 'entretextos' }),
+      controlPlane: { connection: 'main', prefix: 'entretextos' },
+      origin: 'https://entretextos.example.com',
+    },
+  },
+})
+```
+
+| Option | What it is |
+| --- | --- |
+| `label` | The name in the selector. Defaults to the key. |
+| `store` | Where that app's `media` table is. Only read: the console never creates or alters a table there. |
+| `uploadSessions` | Where that app's upload sessions are. Omit it and the Uploads page is empty for that app. |
+| `controlPlane` | The `@adonisjs/redis` connection to publish on (`connection`, default connection when omitted) and that app's `prefix`. |
+| `origin` | That app's public origin. Needed when that app serves its objects through itself (`objectUrls: 'proxy'`); see below. |
+| `timeoutMs` | How long a request waits for that app to answer. Default `15000`. |
+| `appLabel` | The name of the console's own app in the selector. Defaults to `This app`. |
+
+Keys are 1–64 characters of `A-Z a-z 0-9 _ . -`. The console needs `@adonisjs/redis`. Each entry is
+checked at boot: an empty `controlPlane.prefix`, a `connection` that is not in `config/redis.ts`, a
+`timeoutMs` that is not a positive number or an `origin` that is not an `http(s)` origin fails the
+boot.
+
+The selector lists every configured app. An `authorize` that answers `apps` limits it:
+
+```ts title="config/media_dashboard.ts"
+authorize: (ctx) => ({ allowed: true, apps: ['entre-textos'] }),
+```
+
+<Callout type="warn">
+  Organization grants stop at the console's own app. A viewer granted another app sees all of that
+  app's media, whatever their organizations: `tenants` in `authorize` and the Organization picker
+  only apply to this app's media.
+</Callout>
+
+## The other app
+
+Each app shown in the console answers it from its own `config/media.ts`:
+
+```ts title="config/media.ts"
+export default defineConfig({
+  // …
+  consoleCommands: { connection: 'main', prefix: 'entretextos' },
+})
+```
+
+`prefix` is the same one the console names in `controlPlane`. It is not the Redis connection's
+`keyPrefix`. Every web process of the app listens; one of them runs each request.
+
+By default the other console may browse this app's media but not change it. To let it delete,
+copy, move or abort uploads, turn actions on here too:
+
+```ts title="config/media.ts"
+consoleCommands: { connection: 'main', prefix: 'entretextos', actions: true },
+```
+
+An action needs both switches: `actions: true` in the console app's `config/media_dashboard.ts`
+and `actions: true` in this app's `consoleCommands`. This app's log names each action and who sent
+it:
+
+```
+[media] federated console: deleteMediaRecord 01J… by ana@example.com
+```
+
+## Opening objects
+
+The console never streams another app's bytes. Opening an object sends the browser to the app's
+own URL for it:
+
+- an app that signs URLs straight to its storage hands back a signed URL, used as is;
+- an app whose console serves objects through itself (`objectUrls: 'proxy'`) hands back a path on
+  its own console. The console puts it on that app's `origin`, and the viewer must be signed in to
+  that app to open it. Without `origin`, those objects cannot be opened from here.
+
+<Callout type="info">
+  Uploading from the console stays the console app's own. With another app picked, the Upload
+  page and the drop-to-upload area are off.
+</Callout>
+
+## Database access
+
+The console reads the other app's tables with its own database connection. On Postgres, give that
+connection's role read access to them, once, as the owner of the other app's schema:
+
+```sql
+GRANT USAGE ON SCHEMA entretextos TO console_role;
+GRANT SELECT ON
+  entretextos.media,
+  entretextos.media_upload_sessions,
+  entretextos.media_upload_parts
+TO console_role;
+```
+
+No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
+
+## When something fails
+
+| Answer | When |
+| --- | --- |
+| `404` | `?app=` names an app that is not configured, or that `authorize` does not grant. |
+| `503` | The app does not answer: it is down, or `consoleCommands` is off. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
+| `502` | The app answered with an error of its own. The detail is in the console app's log. |
+| `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
+
+The app's own refusals keep their status: an unknown record is a `404`, actions it has off are a
+`403`.

@@ -1,4 +1,5 @@
 import type { HttpContext } from '@adonisjs/core/http';
+import type { FederatedConsoleApp } from '../federation/console.js';
 import type {
   AccessDeniedOption as GenericAccessDeniedOption,
   AccessDeniedRenderer as GenericAccessDeniedRenderer,
@@ -116,9 +117,36 @@ export interface MediaDashboardConfig {
    * announces on the `agora.consoles` registry, when there is one. Same-origin paths only.
    */
   signOut?: SignOutOption;
+  /**
+   * Other apps this console also shows (the federated console), by a key that becomes their
+   * `?app=` in the console's URL. Each keeps its own tables, disks and credentials: the console
+   * reads that app's records and upload sessions from its tables and asks the app itself, over
+   * Redis, to list its disks, sign URLs and run the actions (that app sets `consoleCommands` in its
+   * `config/media.ts`).
+   *
+   * ```ts
+   * apps: {
+   *   'entre-textos': {
+   *     label: 'Entre Textos',
+   *     store: stores.lucid({ connection: 'pg', schema: 'entretextos' }),
+   *     uploadSessions: uploadSessions.lucid({ connection: 'pg', schema: 'entretextos' }),
+   *     controlPlane: { connection: 'main', prefix: 'entretextos' },
+   *     origin: 'https://entretextos.example.com',
+   *   },
+   * }
+   * ```
+   *
+   * Keys are 1–64 characters of `[A-Za-z0-9_.-]`. An `authorize` that grants `apps` as a list hides
+   * the apps it does not name. Uploading from the console stays this app's own. Organization
+   * grants (`tenants`) only apply to this app: a viewer granted another app sees all of its media.
+   * Each entry is checked at boot (`controlPlane`, `timeoutMs`, `origin`).
+   */
+  apps?: Record<string, FederatedConsoleApp>;
+  /** The name of THIS app in the app selector (shown once `apps` is set). Defaults to `This app`. */
+  appLabel?: string;
 }
 
-export type { ConsoleViewer, SignOutOption, ViewerHook };
+export type { ConsoleViewer, FederatedConsoleApp, SignOutOption, ViewerHook };
 
 /** Identity helper for authoring a typed `config/media_dashboard.ts`. */
 export function defineConfig(config: MediaDashboardConfig = {}): MediaDashboardConfig {

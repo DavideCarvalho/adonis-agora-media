@@ -15,6 +15,7 @@ import {
 import { handleAccountUpload } from '../src/account_console/upload_endpoint.js';
 import { UPLOAD_SCRIPT } from '../src/account_console/upload_script.js';
 import { resolveMediaTenancy } from '../src/agora/tenancy.js';
+import { buildConsoleService, readConsoleServiceConfig } from '../src/dashboard/console_service.js';
 import type { DirectUploadPolicyModule, MediaConfig } from '../src/define_config.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
 import { DirectUploadHandler } from '../src/direct_upload_handler.js';
@@ -27,6 +28,8 @@ import {
   hasConfiguredSchema,
   mediaDoctorChecks,
 } from '../src/doctor/checks.js';
+import { mediaConsoleCommandHandler } from '../src/federation/console.js';
+import { RedisConsoleChannel, resolveRedisConnection } from '../src/federation/redis_channel.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
@@ -52,6 +55,8 @@ import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
  */
 export default class MediaProvider {
   #secret: string | undefined;
+  /** The channel this app answers other apps' federated consoles on (`consoleCommands`). */
+  #consoleChannel: RedisConsoleChannel | undefined;
 
   constructor(protected app: ApplicationService) {}
 
@@ -224,6 +229,58 @@ export default class MediaProvider {
       const router = await this.app.container.make('router');
       this.#registerRoutes(router);
     });
+  }
+
+  /**
+   * Answer another app's federated media console (`consoleCommands` in config/media.ts). Web
+   * processes only: a short-lived `ace` command that won a command's claim could exit before it
+   * answers. A connection that cannot claim a command (no `SET NX`) answers nothing, and says so.
+   */
+  async ready() {
+    const options = this.app.config.get<MediaConfig>('media', {}).consoleCommands;
+    if (!options || this.app.getEnvironment() !== 'web') return;
+    const log = async (level: 'info' | 'error', line: string) => {
+      try {
+        const logger = await this.app.container.make('logger');
+        logger[level](line);
+      } catch {
+        /* logging must never break boot */
+      }
+    };
+    try {
+      const channel = new RedisConsoleChannel({
+        client: await resolveRedisConnection(this.app.container, options.connection),
+        prefix: options.prefix,
+      });
+      const settings = readConsoleServiceConfig(this.app.config);
+      const handler = mediaConsoleCommandHandler({
+        actions: options.actions === true,
+        service: async () =>
+          buildConsoleService(await this.app.container.make(MediaManager), {
+            ...settings,
+            console: { ...settings.console, actions: options.actions === true },
+          }),
+        log: (line) => void log('info', line),
+      });
+      await channel.answer(handler, {
+        onError: (error) =>
+          void log(
+            'error',
+            `[media] federated console command failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      });
+      this.#consoleChannel = channel;
+    } catch (error) {
+      await log(
+        'error',
+        `[media] consoleCommands is on, but ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async shutdown() {
+    await this.#consoleChannel?.close();
+    this.#consoleChannel = undefined;
   }
 
   /** The `accountConsole` options when the page is configured (at least one collection). */

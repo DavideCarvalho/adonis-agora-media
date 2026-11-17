@@ -1,5 +1,5 @@
 {
   "title": "Dashboard",
   "icon": "LayoutDashboard",
-  "pages": ["index", "authentication", "collections", "programmatic"]
+  "pages": ["index", "authentication", "collections", "federated-console", "programmatic"]
 }

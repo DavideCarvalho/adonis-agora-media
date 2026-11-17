@@ -49,6 +49,7 @@ export default defineConfig({
 | `delivery` | `MediaDeliveryConfig` | `{ mode: 'auto' }` | How stored media is served back. `mode` (`auto` / `public` / `signed` / `proxy`) and the signed-URL TTL; `images` (on-demand resize: allowed `widths` / `qualities`, `formats` negotiated with `Accept`); `signing` (signed delivery URLs: `secret`, `expiresIn`, `required`); `path` (the delivery route, default `/media/:id`); `streamPath` (the [stream route](/docs/media/streaming#the-stream-route), default `/media/:id/stream/:conversion`). See [Delivery](/docs/media/delivery). |
 | `attachmentKeyPrefix` | `string` | `attachments` | Key prefix for column attachments created via the `AttachmentManager`. |
 | `emitDiagnostics` | `boolean` | `true` | Whether to emit `agora:media:*` diagnostics events. |
+| `consoleCommands` | `{ connection?, prefix, actions? }` | — | Answer another app's [federated console](/docs/media/dashboard/federated-console) over Redis: its disks, object URLs and (with `actions: true`) its actions. |
 
 Every key is optional. An empty `defineConfig({})` gives you the in-memory store on Drive's default disk, no conversions, no upload routes, `auto` delivery, and diagnostics on.
 

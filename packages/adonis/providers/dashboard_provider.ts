@@ -40,8 +40,19 @@ import {
   type ConsoleTenantScope,
   resolveConsoleTenantScope,
 } from '../src/dashboard/tenant_scope.js';
-import type { TenantPickerResponse } from '../src/dashboard/types.js';
+import type { AppPickerResponse, TenantPickerResponse } from '../src/dashboard/types.js';
+import {
+  buildFederatedMediaApp,
+  FEDERATED_APP_KEY,
+  type FederatedApp,
+  FederatedAppError,
+  FederatedConsoleService,
+  validateFederatedConsoleApp,
+} from '../src/federation/console.js';
 import { MediaManager } from '../src/media_manager.js';
+
+/** What the console's API routes run on: this app's service, or another app's (`?app=`). */
+type ConsoleService = DashboardService | FederatedConsoleService;
 
 /**
  * Directory of the built SPA (`dist/spa`, copied in by `copy:stubs` — see `package.json` — from
@@ -90,10 +101,21 @@ export default class MediaDashboardProvider {
   readonly #decisions = new WeakMap<object, ConsoleAuthorizeDecision>();
   /** Each request's console tenant scope (tenancy on). */
   readonly #scopes = new WeakMap<object, Promise<ConsoleTenantScope | undefined>>();
+  /** The configured other apps (federated console), each built once on first use. */
+  readonly #federated = new Map<string, Promise<FederatedApp>>();
 
   async boot() {
     const config = this.app.config.get<MediaDashboardConfig>('media_dashboard', {});
     if (config.enabled === false) return;
+    const redisConnections = this.#redisConnections();
+    for (const [key, entry] of Object.entries(config.apps ?? {})) {
+      if (!FEDERATED_APP_KEY.test(key)) {
+        throw new Error(
+          `[@adonis-agora/media] media_dashboard.apps: "${key}" is not a valid app key (1–64 characters of A-Z, a-z, 0-9, _ . -)`,
+        );
+      }
+      validateFederatedConsoleApp(key, entry, redisConnections);
+    }
 
     // The access check, resolved once: the console's routes, its dev tools and the switcher share
     // it. Each verdict is remembered for the request, for the console's tenant scope.
@@ -134,6 +156,99 @@ export default class MediaDashboardProvider {
       const ids = ctx ? (await this.#consoleScope(ctx))?.ids : [];
       return buildConsoleService(manager, settings, ids);
     };
+  }
+
+  /**
+   * The service an API route runs on: another app's (`?app=<key>`, federated console) or this
+   * app's. A key that is not configured, or that `authorize`'s `apps` grant does not name, is a 404.
+   */
+  #routeService(config: MediaDashboardConfig): (ctx: HttpContext) => Promise<ConsoleService> {
+    const local = this.#service(config);
+    return async (ctx) => {
+      const picked = this.#selectedApp(config, ctx);
+      if (picked === undefined) return local(ctx);
+      if (picked === null) throw new DashboardError('unknown app', 404);
+      const app = await this.#federatedApp(config, picked);
+      const viewer = await resolveViewer(ctx, config.viewer).catch(() => null);
+      return new FederatedConsoleService(app, {
+        actions: config.actions ?? false,
+        actor: viewer?.email ?? viewer?.label ?? 'anonymous',
+      });
+    };
+  }
+
+  /**
+   * The other app this request is about (`?app=`): its key, `undefined` for this app, or `null` for
+   * a key that is not configured or not granted.
+   */
+  #selectedApp(config: MediaDashboardConfig, ctx: HttpContext): string | null | undefined {
+    // Without `apps` the console is this app's only; `?app=` is not even read.
+    if (!config.apps || Object.keys(config.apps).length === 0) return undefined;
+    const picked = (ctx.request.qs() as { app?: unknown }).app;
+    if (typeof picked !== 'string' || picked === '') return undefined;
+    if (!Object.hasOwn(config.apps ?? {}, picked)) return null;
+    const granted = this.#grantedApps(ctx);
+    return granted === undefined || granted.includes(picked) ? picked : null;
+  }
+
+  /** The apps `authorize` granted this request (`undefined`: all of them). */
+  #grantedApps(ctx: HttpContext): string[] | undefined {
+    const decision = this.#decisions.get(ctx);
+    const apps = decision?.allowed ? decision.apps : undefined;
+    return apps === undefined || apps === '*' ? undefined : apps;
+  }
+
+  /** The app selector: this app, then the configured apps this viewer may see. */
+  #appPicker(config: MediaDashboardConfig, ctx: HttpContext): AppPickerResponse {
+    const granted = this.#grantedApps(ctx);
+    const apps = Object.entries(config.apps ?? {})
+      .filter(([id]) => granted === undefined || granted.includes(id))
+      .map(([id, app]) => ({ id, label: app.label ?? id }));
+    return {
+      local: { label: config.appLabel ?? 'This app' },
+      apps,
+      selected: this.#selectedApp(config, ctx) ?? null,
+    };
+  }
+
+  /** The connection names of `config/redis.ts`, or `undefined` without one. */
+  #redisConnections(): { names: string[]; default: string | undefined } | undefined {
+    const redis = this.app.config.get<
+      { connection?: unknown; connections?: Record<string, unknown> } | undefined
+    >('redis', undefined);
+    if (!redis || typeof redis !== 'object' || !redis.connections) return undefined;
+    return {
+      names: Object.keys(redis.connections),
+      default: typeof redis.connection === 'string' ? redis.connection : undefined,
+    };
+  }
+
+  /** The configured app `id`, built (its stores and channel) on first use. */
+  #federatedApp(config: MediaDashboardConfig, id: string): Promise<FederatedApp> {
+    let app = this.#federated.get(id);
+    if (!app) {
+      const spec = config.apps?.[id];
+      if (!spec) return Promise.reject(new DashboardError('unknown app', 404));
+      app = buildFederatedMediaApp(id, spec, this.app).catch((error: unknown) => {
+        // A console-side failure to reach the app (its connection, its store): a 503 naming the
+        // app, the cause in this app's log.
+        throw new FederatedAppError(
+          `${spec.label ?? id}: the console could not reach this app`,
+          503,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+      // A failed build (a bad connection name) is retried on the next request, not cached.
+      app.catch(() => this.#federated.delete(id));
+      this.#federated.set(id, app);
+    }
+    return app;
+  }
+
+  async shutdown() {
+    const apps = [...this.#federated.values()];
+    this.#federated.clear();
+    await Promise.all(apps.map((app) => app.then((a) => a.close()).catch(() => undefined)));
   }
 
   /** The config the console's service is built from (this console's own, over the app's). */
@@ -185,7 +300,15 @@ export default class MediaDashboardProvider {
   }
 
   /** The console's "Organization" control: `off`, `none`, `fixed` (one) or `pick` (several). */
-  async #tenantPicker(ctx: HttpContext): Promise<TenantPickerResponse> {
+  async #tenantPicker(
+    config: MediaDashboardConfig,
+    ctx: HttpContext,
+  ): Promise<TenantPickerResponse> {
+    // Another app's media (federated console): that app's organizations are not this app's.
+    // Gated like the routes (`#selectedApp`): without `apps`, `?app=` is not read at all.
+    if (this.#selectedApp(config, ctx) !== undefined) {
+      return { mode: 'off', all: false, selected: null, tenants: [] };
+    }
     const scope = await this.#consoleScope(ctx);
     if (!scope) return { mode: 'off', all: false, selected: null, tenants: [] };
     if (scope.authorized === 'none')
@@ -316,9 +439,9 @@ export default class MediaDashboardProvider {
             },
           ]
         : [];
-    const service = this.#service(config);
+    const service = this.#routeService(config);
 
-    this.#mountApi(router, apiBase, service, [...authorizeGate('api'), ...middleware]);
+    this.#mountApi(router, apiBase, config, service, [...authorizeGate('api'), ...middleware]);
     this.#mountSpa(router, basePath, config, { apiBase, uploadsBase, tusBase, actions }, [
       ...authorizeGate('page'),
       ...middleware,
@@ -364,11 +487,21 @@ export default class MediaDashboardProvider {
   #mountApi(
     router: HttpRouterService,
     apiBase: string,
-    service: (ctx: HttpContext) => Promise<DashboardService>,
+    config: MediaDashboardConfig,
+    service: (ctx: HttpContext) => Promise<ConsoleService>,
     middleware: unknown[],
   ) {
+    const fail = (ctx: HttpContext, error: unknown) => {
+      const status = error instanceof DashboardError ? error.status : 500;
+      const message = error instanceof Error ? error.message : 'dashboard error';
+      // The owning app's own message stays in this app's log (a 502 does not show it).
+      if (error instanceof FederatedAppError && error.detail !== undefined) {
+        this.#warn(`[@adonis-agora/media] federated console: ${message}: ${error.detail}`);
+      }
+      return ctx.response.status(status).json({ error: message });
+    };
     const json = (
-      handler: (svc: DashboardService, ctx: HttpContext) => Promise<unknown>,
+      handler: (svc: ConsoleService, ctx: HttpContext) => Promise<unknown>,
       okStatus = 200,
     ) => {
       return async (ctx: HttpContext) => {
@@ -377,9 +510,7 @@ export default class MediaDashboardProvider {
           if (result === undefined) return ctx.response.status(204).send('');
           return ctx.response.status(okStatus).json(result);
         } catch (error) {
-          const status = error instanceof DashboardError ? error.status : 500;
-          const message = error instanceof Error ? error.message : 'dashboard error';
-          return ctx.response.status(status).json({ error: message });
+          return fail(ctx, error);
         }
       };
     };
@@ -395,13 +526,13 @@ export default class MediaDashboardProvider {
       router
         .get('/tenants', async (ctx: HttpContext) => {
           ctx.response.header('cache-control', 'private, no-store');
-          return ctx.response.status(200).json(await this.#tenantPicker(ctx));
+          return ctx.response.status(200).json(await this.#tenantPicker(config, ctx));
         })
         .as('media.dashboard.tenants');
       router
         .post('/tenants/:id/select', async (ctx: HttpContext) => {
           const id = String(ctx.params.id);
-          const picker = await this.#tenantPicker(ctx);
+          const picker = await this.#tenantPicker(config, ctx);
           const allowed =
             picker.mode !== 'off' &&
             picker.mode !== 'none' &&
@@ -414,6 +545,13 @@ export default class MediaDashboardProvider {
             .json(allowed ? { tenant: id } : { error: 'not found' });
         })
         .as('media.dashboard.tenants.select');
+      // The federated console's app selector: this app, then the other apps this viewer may see.
+      router
+        .get('/apps', async (ctx: HttpContext) => {
+          ctx.response.header('cache-control', 'private, no-store');
+          return ctx.response.status(200).json(this.#appPicker(config, ctx));
+        })
+        .as('media.dashboard.apps');
       // The console switcher: the other Agora consoles this viewer may open, and a search across them.
       router
         .get('/consoles', async (ctx: HttpContext) => {
@@ -475,9 +613,7 @@ export default class MediaDashboardProvider {
             await (await service(ctx)).putObject(disk, key, ctx.request.request, type);
             return ctx.response.status(204).send('');
           } catch (error) {
-            const status = error instanceof DashboardError ? error.status : 500;
-            const message = error instanceof Error ? error.message : 'dashboard error';
-            return ctx.response.status(status).json({ error: message });
+            return fail(ctx, error);
           }
         })
         .as('media.dashboard.object.upload');
@@ -487,18 +623,18 @@ export default class MediaDashboardProvider {
             const disk = str(ctx, 'disk');
             const key = str(ctx, 'key');
             if (!disk) throw new DashboardError('disk is required', 400);
-            const { stream, contentType, size } = await (await service(ctx)).objectStream(
-              disk,
-              key ?? '',
-            );
+            const svc = await service(ctx);
+            // Another app's bytes never pass through here: the browser goes to that app's URL.
+            if (svc instanceof FederatedConsoleService) {
+              return ctx.response.redirect(await svc.objectRedirect(disk, key ?? ''));
+            }
+            const { stream, contentType, size } = await svc.objectStream(disk, key ?? '');
             ctx.response.header('content-type', contentType);
             ctx.response.header('content-disposition', 'inline');
             if (Number.isFinite(size)) ctx.response.header('content-length', String(size));
             return ctx.response.stream(stream);
           } catch (error) {
-            const status = error instanceof DashboardError ? error.status : 500;
-            const message = error instanceof Error ? error.message : 'dashboard error';
-            return ctx.response.status(status).json({ error: message });
+            return fail(ctx, error);
           }
         })
         .as('media.dashboard.object.raw');

@@ -227,6 +227,16 @@ export class DashboardService {
     return disk.getSignedUrl(key, { expiresIn: URL_TTL_SECONDS });
   }
 
+  /**
+   * The URL of one object's bytes (signed, or this console's proxy — see `objectUrls`), without
+   * reading its metadata. What another app's federated console asks this app for.
+   */
+  async objectUrlFor(diskName: string, key: string): Promise<string> {
+    if (!key) throw new DashboardError('key is required', 400);
+    this.assertKey(key);
+    return this.objectUrl(this.manager.storage.disk(diskName), diskName, key);
+  }
+
   /** Object metadata + a URL for preview/download (signed, or this console's proxy — see `objectUrls`). */
   async object(diskName: string, key: string): Promise<ObjectDetailResponse> {
     const meta = await this.objectMeta(diskName, key);
@@ -705,7 +715,7 @@ function folderName(prefix: string): string {
 }
 
 /** Project a stored `MediaRecord` to the console's `MediaEntry` (dates → ISO, conversions → names). */
-function toMediaEntry(record: MediaRecord): MediaEntry {
+export function toMediaEntry(record: MediaRecord): MediaEntry {
   return {
     id: record.id,
     ownerType: record.ownerType,
@@ -725,7 +735,7 @@ function toMediaEntry(record: MediaRecord): MediaEntry {
 }
 
 /** A forward-only cursor page: there is never a previous cursor to hand out. */
-function forwardPage<T>(data: T[], nextCursor: string | null): CursorPageResponse<T> {
+export function forwardPage<T>(data: T[], nextCursor: string | null): CursorPageResponse<T> {
   return {
     data,
     meta: { nextCursor, prevCursor: null, hasNext: nextCursor !== null, hasPrev: false },
