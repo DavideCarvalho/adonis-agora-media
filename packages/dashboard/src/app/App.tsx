@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ErrorBoundary } from '../agora-kit/blocks/error-boundary';
 import { AppShell, type NavSection } from '../agora-kit/shell/app-shell';
 import { readShellConfig } from '../agora-kit/shell-config';
+import { NuqsHashAdapter } from '../agora-kit/url-state/nuqs-hash-adapter';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
 import type { Tab } from './hash-route';
 import { navigate, toHash, useHashRoute } from './hash-route';
@@ -73,6 +74,16 @@ function LiveIndicator() {
  * its own error boundary, and every region inside it has its own.
  */
 export function App() {
+  return (
+    <NuqsHashAdapter>
+      <Console />
+    </NuqsHashAdapter>
+  );
+}
+
+/** The console itself, under the kit's `NuqsHashAdapter`: the Collections filters live in the
+ *  hash's query (`#/collections?collection=gallery&ownerType=Post`), so a filtered view is a link. */
+function Console() {
   // What the provider put in the page: switcher, ⌘K search, viewer, sign-out (all optional).
   const shell = useMemo(() => readShellConfig(CONFIG_ELEMENT_ID), []);
   const route = useHashRoute();

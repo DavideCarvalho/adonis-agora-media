@@ -70,6 +70,8 @@ GET /media/dashboard/api/collections?filter[collection]=avatar&first=50
 
 Two more routes hang off the same view. `GET /collections/summary` returns `{ data }`, a per-collection rollup (record count and total bytes), which the UI renders as one-click filter chips; it walks `list()` in pages and sums client-side, bounded so a very large library degrades to a partial summary rather than an unbounded scan. And `GET /media-record?id` drills into a single row, returning the record plus a **signed URL per conversion** (only conversions that actually wrote an artifact get one — a metadata-only probe result has nothing to link to). With `actions: true`, `POST /media-record/delete` removes the row; note that it deletes the *record*, not the object on disk.
 
+Filters are in the URL: copy the link to share a filtered view. `/media#/collections?collection=gallery&ownerType=Post&ownerId=42` opens that owner's gallery records; the path prefix is `keyPrefix`, and back/forward step through the filters you applied.
+
 The listing itself is read-only: it shows what the library has recorded, independent of the raw bucket-browsing **Library** view (which lists disk keys). Together they let you see both the storage layer and the media-library metadata over it.
 
 ---

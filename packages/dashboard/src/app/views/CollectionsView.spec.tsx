@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CollectionListResponse, MediaEntry } from '../../types';
 import { renderView } from '../testkit';
@@ -101,5 +101,62 @@ describe('CollectionsView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(screen.getByText('second')).toBeTruthy());
     expect(collections).toHaveBeenLastCalledWith(expect.objectContaining({ after: 'c2' }));
+  });
+});
+
+describe('CollectionsView: filters in the URL', () => {
+  it('opens filtered from a shared link, the form showing the applied filter', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/media#/collections?collection=gallery&ownerType=Post&keyPrefix=Post%2F42',
+    );
+    const client = baseClient();
+    renderView(<CollectionsView route={{ tab: 'collections', collection: 'gallery' }} />, client);
+    await waitFor(() =>
+      expect(client.collections).toHaveBeenCalledWith(
+        expect.objectContaining({ collection: 'gallery', ownerType: 'Post', prefix: 'Post/42' }),
+      ),
+    );
+    expect((screen.getByLabelText('Owner type') as HTMLInputElement).value).toBe('Post');
+    expect((screen.getByLabelText('Path prefix') as HTMLInputElement).value).toBe('Post/42');
+  });
+
+  it('applying writes the URL (keeping the page path); back restores the previous filter', async () => {
+    window.history.replaceState(null, '', '/media?tenant=acme#/collections');
+    const client = baseClient();
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
+    await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Owner type'), { target: { value: 'User' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/collections?ownerType=User'));
+    expect(window.location.search).toBe('?tenant=acme');
+
+    fireEvent.change(screen.getByLabelText('Owner id'), { target: { value: '42' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() =>
+      expect(window.location.hash).toBe('#/collections?ownerType=User&ownerId=42'),
+    );
+
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.hash).toBe('#/collections?ownerType=User'));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Owner id') as HTMLInputElement).value).toBe(''),
+    );
+    expect(client.collections).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ ownerId: '42' }),
+    );
+  });
+
+  it('reset takes every filter out of the URL', async () => {
+    window.history.replaceState(null, '', '/media#/collections?collection=gallery&ownerId=42');
+    renderView(
+      <CollectionsView route={{ tab: 'collections', collection: 'gallery' }} />,
+      baseClient(),
+    );
+    await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/collections'));
   });
 });
