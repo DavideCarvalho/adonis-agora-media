@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.12
+
+### Minor Changes
+
+- [#332](https://github.com/DavideCarvalho/adonis-agora-media/pull/332) [`9c6514b`](https://github.com/DavideCarvalho/adonis-agora-media/commit/9c6514bc9d07241602a25d0bcb3b59c1b70a1358) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - The Collections view's filters now live in the URL, so a filtered view can be shared, bookmarked and reloaded, and back/forward step through it: collection, owner type, owner id and path prefix sit in the hash's query (`#/collections?collection=gallery&ownerType=Post&ownerId=42`, the prefix as `keyPrefix`). The `collection` param is the one search hits already link with, so existing links open as before.
+
 ## 10.0.0-rc.11
 
 ### Patch Changes
