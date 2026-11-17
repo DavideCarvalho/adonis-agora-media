@@ -18,7 +18,7 @@ import { csrfHeader } from '../../client/dashboard-client';
 import type { DiskInfo } from '../../types';
 import { useDashboard } from '../context';
 import { UploadIcon } from '../icons';
-import { useDisks } from '../queries';
+import { useDisks, useTopology } from '../queries';
 import { Bar, Empty, Field, useToasts } from '../ui';
 
 interface QueueItem {
@@ -107,6 +107,28 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
  * Container: owns the disk query, the uploader and the session's queue.
  */
 export function UploadPanel() {
+  const topology = useTopology();
+  // Another app's media (federated console): uploads go through that app, never through this one.
+  if (topology.data?.app !== undefined) {
+    return (
+      <PageBody className="max-w-3xl">
+        <PageHeader
+          title="Upload"
+          description="Send files straight to a disk through the resumable upload routes."
+        />
+        <Panel title="Not from here">
+          <Empty className="py-2">
+            Uploads into another app happen in that app. Switch the App back to this one to upload
+            here.
+          </Empty>
+        </Panel>
+      </PageBody>
+    );
+  }
+  return <UploadForm />;
+}
+
+function UploadForm() {
   const { bootstrap } = useDashboard();
   const disks = useDisks();
   const qc = useQueryClient();

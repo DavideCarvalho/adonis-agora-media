@@ -830,6 +830,8 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
   const disks = useDisks();
   const topology = useTopology();
   const actions = topology.data?.actions ?? false;
+  // Uploading is this app's own: another app's media (federated console) is never uploaded into.
+  const uploads = actions && topology.data?.app === undefined;
   const { push } = useToasts();
   const notify = (message: string, tone: 'ok' | 'error' = 'ok') => push(message, tone);
 
@@ -938,10 +940,12 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
               <PlusIcon />
               New folder
             </Button>
-            <Button onClick={() => setDialog({ kind: 'upload' })}>
-              <UploadIcon />
-              Upload
-            </Button>
+            {uploads && (
+              <Button onClick={() => setDialog({ kind: 'upload' })}>
+                <UploadIcon />
+                Upload
+              </Button>
+            )}
           </>
         ) : undefined
       }
@@ -1030,23 +1034,23 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
           <ErrorBoundary label="Objects" resetKeys={[activeDisk, prefix]}>
             <Panel
               title="Objects"
-              description={actions ? 'drop files here to upload' : 'read-only'}
+              description={uploads ? 'drop files here to upload' : actions ? '' : 'read-only'}
               flush
               className={dragOver ? 'ring-2 ring-brand-border' : ''}
             >
               {/* biome-ignore lint/a11y/noStaticElementInteractions: whole-panel drop target for uploads; ARIA has no role for drag-and-drop targets and every control inside stays keyboard-reachable */}
               <div
                 onDragOver={
-                  actions
+                  uploads
                     ? (e) => {
                         e.preventDefault();
                         setDragOver(true);
                       }
                     : undefined
                 }
-                onDragLeave={actions ? () => setDragOver(false) : undefined}
+                onDragLeave={uploads ? () => setDragOver(false) : undefined}
                 onDrop={
-                  actions
+                  uploads
                     ? (e) => {
                         e.preventDefault();
                         setDragOver(false);
@@ -1073,7 +1077,7 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
                     icon={<FolderIcon />}
                     title="This folder is empty."
                     description={
-                      actions
+                      uploads
                         ? 'Drop files here, or use Upload above.'
                         : 'Nothing is stored under this path.'
                     }
@@ -1100,7 +1104,7 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
                     />
                   </>
                 )}
-                {actions && dragOver && (
+                {uploads && dragOver && (
                   <p className="m-3 rounded-md border border-dashed border-brand-border bg-brand-soft px-3 py-4 text-center text-xs text-brand">
                     Drop files to upload to {prefix ? `/${prefix}` : activeDisk}
                   </p>

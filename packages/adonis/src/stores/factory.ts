@@ -11,6 +11,11 @@ export interface StoreContext {
   app: ApplicationService;
   /** Media's `tenancy` is on: the store reads and writes the `tenant_id` column. */
   tenancy?: boolean;
+  /**
+   * Built for another app's federated console, which only reads: the store never creates or alters
+   * a table (`autoCreateSchema` is ignored).
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -88,9 +93,11 @@ export const stores = {
         ...(config.connection !== undefined ? { connectionName: config.connection } : {}),
         ...(config.table !== undefined ? { table: config.table } : {}),
         ...(config.schema !== undefined ? { schema: config.schema } : {}),
-        ...(config.autoCreateSchema !== undefined
-          ? { autoCreateSchema: config.autoCreateSchema }
-          : {}),
+        ...(ctx.readOnly === true
+          ? { autoCreateSchema: false }
+          : config.autoCreateSchema !== undefined
+            ? { autoCreateSchema: config.autoCreateSchema }
+            : {}),
         ...(ctx.tenancy === true ? { tenantColumn: true } : {}),
       });
     };

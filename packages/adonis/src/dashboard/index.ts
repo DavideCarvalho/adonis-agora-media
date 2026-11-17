@@ -1,5 +1,22 @@
 // Config idiom — author `config/media_dashboard.ts` against these.
 
+// The federated console: other apps' media in this console (`apps`), and the channel they answer on.
+export type { FederatedConsoleApp, MediaConsoleVerb } from '../federation/console.js';
+export {
+  ACTION_VERBS,
+  buildFederatedMediaApp,
+  FederatedApp,
+  FederatedAppError,
+  FederatedConsoleService,
+  mediaConsoleCommandHandler,
+  READ_VERBS,
+} from '../federation/console.js';
+export type {
+  MediaConsoleCommand,
+  MediaConsoleReply,
+  RedisLike,
+} from '../federation/redis_channel.js';
+export { RedisConsoleChannel } from '../federation/redis_channel.js';
 export type {
   AccessDeniedInfo,
   AccessDeniedPageOptions,
@@ -86,7 +103,6 @@ export { objectProxyUrl } from './object_urls.js';
 export type { DashboardServiceOptions, MediaManagerLike } from './service.js';
 // Dashboard read/action logic (framework-free — the provider is a thin HTTP shell around this).
 export { DashboardError, DashboardService } from './service.js';
-
 // The JSON API contract shared by the SPA client and the provider routes.
 export type {
   CollectionFilter,

@@ -19,6 +19,11 @@ export type ConsoleAuthorizeResult =
        * for every tenant plus files with no tenant. Omit for the viewer's own active tenant.
        */
       tenants?: '*' | string[];
+      /**
+       * The federated console: which of the other apps in `apps` (config/media_dashboard.ts) this
+       * viewer may pick, by key, or `'*'` for all of them. Omit for all. This app is always shown.
+       */
+      apps?: '*' | string[];
     }
   | { allowed: false; reason?: 'unauthenticated' | 'forbidden' }
   | { redirectTo: string };
@@ -50,7 +55,7 @@ export type ConsoleAuthorize =
 
 /** The outcome of a console `authorize` check, normalized. */
 export type ConsoleAuthorizeDecision =
-  | { allowed: true; tenants?: '*' | string[] }
+  | { allowed: true; tenants?: '*' | string[]; apps?: '*' | string[] }
   | { allowed: false; status: 401 | 403; reason: 'unauthenticated' | 'forbidden' }
   | { allowed: false; status: 401; reason: 'unauthenticated'; redirectTo: string };
 
@@ -78,6 +83,17 @@ async function runClass(Class: ConsoleAuthorizerClass, ctx: HttpContext): Promis
 
 const FORBIDDEN = { allowed: false, status: 403, reason: 'forbidden' } as const;
 
+/** A `'*'` or a list of ids (trimmed, deduplicated), or `undefined` for anything else. */
+function grantList(value: unknown): '*' | string[] | undefined {
+  if (value === '*') return '*';
+  if (!Array.isArray(value)) return undefined;
+  const ids = value
+    .filter((t): t is string => typeof t === 'string')
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
+  return [...new Set(ids)];
+}
+
 /** Normalize an `authorize` answer. Anything that is not an explicit allow denies. */
 export function normalizeConsoleAuthorizeResult(result: unknown): ConsoleAuthorizeDecision {
   if (result === true) return { allowed: true };
@@ -87,17 +103,16 @@ export function normalizeConsoleAuthorizeResult(result: unknown): ConsoleAuthori
     reason?: unknown;
     redirectTo?: unknown;
     tenants?: unknown;
+    apps?: unknown;
   };
   if (record.allowed === true) {
-    if (record.tenants === '*') return { allowed: true, tenants: '*' };
-    if (Array.isArray(record.tenants)) {
-      const tenants = record.tenants
-        .filter((t): t is string => typeof t === 'string')
-        .map((t) => t.trim())
-        .filter((t) => t !== '');
-      return { allowed: true, tenants: [...new Set(tenants)] };
-    }
-    return { allowed: true };
+    const tenants = grantList(record.tenants);
+    const apps = grantList(record.apps);
+    return {
+      allowed: true,
+      ...(tenants !== undefined ? { tenants } : {}),
+      ...(apps !== undefined ? { apps } : {}),
+    };
   }
   if (typeof record.redirectTo === 'string' && record.redirectTo !== '') {
     return {
@@ -206,9 +221,11 @@ export function anyAuthorize(
     for (const authorize of resolved) {
       const decision = await authorize(ctx);
       if (decision.allowed) {
-        return decision.tenants !== undefined
-          ? { allowed: true, tenants: decision.tenants }
-          : { allowed: true };
+        return {
+          allowed: true,
+          ...(decision.tenants !== undefined ? { tenants: decision.tenants } : {}),
+          ...(decision.apps !== undefined ? { apps: decision.apps } : {}),
+        };
       }
       if (decision.reason !== 'unauthenticated') continue;
       unauthenticated = true;

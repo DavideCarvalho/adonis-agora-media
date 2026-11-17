@@ -309,6 +309,35 @@ export interface MediaConfig {
    * delete and download, allowed by its own `access` rules. `false` registers nothing.
    */
   accountConsole?: false | MediaAccountConsoleOptions;
+  /**
+   * Answer another app's federated media console (its `config/media_dashboard.ts` → `apps`): that
+   * console reads this app's records from the database and sends here, over Redis, what only this
+   * app can do — list its disks, sign URLs for its objects, and (with `actions: true`) delete,
+   * copy, move or abort. Every web instance listens; one claims each command and runs it.
+   *
+   * ```ts
+   * consoleCommands: { connection: 'main', prefix: 'entretextos' },
+   * ```
+   *
+   * Needs `@adonisjs/redis`. Off when omitted.
+   */
+  consoleCommands?: MediaConsoleCommandsConfig;
+}
+
+/** {@link MediaConfig.consoleCommands}. */
+export interface MediaConsoleCommandsConfig {
+  /** The `@adonisjs/redis` connection. Defaults to its default connection. */
+  connection?: string;
+  /**
+   * This app's name on the channel (`<prefix>-media-console`): the same `prefix` the other app's
+   * console names in its `apps` entry. Not the connection's `keyPrefix`.
+   */
+  prefix: string;
+  /**
+   * Run the mutating commands too (delete a record, delete/copy/move objects and folders, abort an
+   * upload). Default `false`: the other console may browse this app's media but not change it.
+   */
+  actions?: boolean;
 }
 
 /**

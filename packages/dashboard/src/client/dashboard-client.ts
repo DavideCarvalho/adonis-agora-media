@@ -1,5 +1,6 @@
 import { filterQuery } from '@adonis-agora/filter-client';
 import type {
+  AppPickerResponse,
   CollectionFilter,
   CollectionListResponse,
   CollectionsSummaryResponse,
@@ -31,6 +32,30 @@ export function withTenant(url: string): string {
   const tenant = selectedTenant();
   if (tenant === undefined) return url;
   return `${url}${url.includes('?') ? '&' : '?'}tenant=${encodeURIComponent(tenant)}`;
+}
+
+/** The other app picked in this page's URL (`?app=`, the federated console); none = this app. */
+export function selectedApp(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = new URLSearchParams(window.location.search).get('app');
+  return value || undefined;
+}
+
+/**
+ * `url` with the picked organization (`tenant=`) and the picked app (`app=`) appended — each only
+ * when picked, and only when the URL does not carry it already.
+ */
+export function withScope(url: string): string {
+  let scoped = url;
+  const add = (name: string, value: string | undefined) => {
+    if (value === undefined) return;
+    const query = scoped.includes('?') ? scoped.slice(scoped.indexOf('?') + 1) : '';
+    if (new URLSearchParams(query).has(name)) return;
+    scoped = `${scoped}${scoped.includes('?') ? '&' : '?'}${name}=${encodeURIComponent(value)}`;
+  };
+  add('tenant', selectedTenant());
+  add('app', selectedApp());
+  return scoped;
 }
 
 /** Runtime config injected into the page by the provider (or defaulted for local dev). */
@@ -185,9 +210,10 @@ export class DashboardClient {
   constructor(options: DashboardClientOptions = {}) {
     this.apiBase = (options.apiBase ?? readBootstrap().apiBase).replace(/\/+$/, '');
     const base = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    // Every call carries the organization picked in the page URL (tenancy), when there is one.
+    // Every call carries the organization (tenancy) and the app (federated console) picked in the
+    // page URL, when there are.
     this.fetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
-      base(typeof input === 'string' ? withTenant(input) : input, init)) as typeof fetch;
+      base(typeof input === 'string' ? withScope(input) : input, init)) as typeof fetch;
     this.onUnauthenticated = options.onUnauthenticated ?? followUnauthenticated;
   }
 
@@ -254,6 +280,11 @@ export class DashboardClient {
 
   topology(): Promise<Topology> {
     return this.get<Topology>('/topology');
+  }
+
+  /** The apps this console shows (the federated console's selector). */
+  apps(): Promise<AppPickerResponse> {
+    return this.get<AppPickerResponse>('/apps');
   }
 
   disks(): Promise<DiskListResponse> {
@@ -346,7 +377,8 @@ export class DashboardClient {
   /** Same-origin URL that streams the object bytes inline (`Content-Disposition: inline`) — used to
    *  embed previews (PDF, text, images) that a signed URL might download or that CORS would block. */
   objectRawUrl(disk: string, key: string): string {
-    return withQuery(`${this.apiBase}/object/raw`, { disk, key });
+    // Used as an `src` too, so it carries the picked scope itself.
+    return withScope(withQuery(`${this.apiBase}/object/raw`, { disk, key }));
   }
 
   /** What the host knows about this object, from its registered `objectInsights` providers.

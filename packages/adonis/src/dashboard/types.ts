@@ -156,6 +156,11 @@ export interface Topology {
   hasUploads: boolean;
   /** Whether mutating actions (copy/move/delete) are enabled on this console. */
   actions: boolean;
+  /**
+   * The federated console: the other app this topology is about (`?app=`), absent for this app.
+   * Uploading from the console is this app's own, so it is off for another app.
+   */
+  app?: string;
 }
 
 /** Body for the copy/move actions — `toDisk` defaults to the source disk (same-bucket). */
@@ -259,4 +264,11 @@ export interface TenantPickerResponse {
   all: boolean;
   selected: string | null;
   tenants: Array<{ id: string; label: string }>;
+}
+
+/** The federated console's app selector (`GET /apps`): this app, then the other apps it shows. */
+export interface AppPickerResponse {
+  local: { label: string };
+  apps: Array<{ id: string; label: string }>;
+  selected: string | null;
 }

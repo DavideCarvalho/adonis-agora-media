@@ -4,6 +4,7 @@ import { AppShell, type NavSection } from '../agora-kit/shell/app-shell';
 import { readShellConfig } from '../agora-kit/shell-config';
 import { NuqsHashAdapter } from '../agora-kit/url-state/nuqs-hash-adapter';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
+import { AppPickerControl } from './AppPicker';
 import type { Tab } from './hash-route';
 import { navigate, toHash, useHashRoute } from './hash-route';
 import { FolderIcon, LayersIcon, LogoMark, TransferIcon, UploadIcon } from './icons';
@@ -123,6 +124,7 @@ function Console() {
       searchPlaceholder="Search media, runs, payments, users…"
       actions={
         <>
+          <AppPickerControl />
           <TenantPickerControl />
           <TopologyPills />
           <LiveIndicator />
