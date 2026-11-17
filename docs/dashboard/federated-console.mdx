@@ -49,13 +49,22 @@ export default defineConfig({
 | `timeoutMs` | How long a request waits for that app to answer. Default `15000`. |
 | `appLabel` | The name of the console's own app in the selector. Defaults to `This app`. |
 
-Keys are 1–64 characters of `A-Z a-z 0-9 _ . -`. The console needs `@adonisjs/redis`.
+Keys are 1–64 characters of `A-Z a-z 0-9 _ . -`. The console needs `@adonisjs/redis`. Each entry is
+checked at boot: an empty `controlPlane.prefix`, a `connection` that is not in `config/redis.ts`, a
+`timeoutMs` that is not a positive number or an `origin` that is not an `http(s)` origin fails the
+boot.
 
 The selector lists every configured app. An `authorize` that answers `apps` limits it:
 
 ```ts title="config/media_dashboard.ts"
 authorize: (ctx) => ({ allowed: true, apps: ['entre-textos'] }),
 ```
+
+<Callout type="warn">
+  Organization grants stop at the console's own app. A viewer granted another app sees all of that
+  app's media, whatever their organizations: `tenants` in `authorize` and the Organization picker
+  only apply to this app's media.
+</Callout>
 
 ## The other app
 
@@ -122,7 +131,7 @@ No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
 | Answer | When |
 | --- | --- |
 | `404` | `?app=` names an app that is not configured, or that `authorize` does not grant. |
-| `503` | The app does not answer: it is down, or `consoleCommands` is off. The message names the app. Records and collections still load, from its tables. |
+| `503` | The app does not answer: it is down, or `consoleCommands` is off. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
 | `502` | The app answered with an error of its own. The detail is in the console app's log. |
 | `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
 

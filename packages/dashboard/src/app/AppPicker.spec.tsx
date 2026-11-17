@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { withScope } from '../client/dashboard-client';
 import type { AppPickerResponse, Topology } from '../types';
@@ -41,6 +41,51 @@ describe('AppPickerControl (federated console)', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Hub' }));
     await waitFor(() => expect(window.location.search).toBe(''));
     expect(withScope('/api/collections')).toBe('/api/collections');
+  });
+});
+
+describe('AppPickerControl follows the server and the URL', () => {
+  /** A server that answers `selected` from the URL, granting only `entre-textos`. */
+  const server = () =>
+    vi.fn(async (): Promise<AppPickerResponse> => {
+      const app = new URLSearchParams(window.location.search).get('app');
+      return {
+        local: { label: 'Hub' },
+        apps: [{ id: 'entre-textos', label: 'Entre Textos' }],
+        selected: app === 'entre-textos' ? app : null,
+      };
+    });
+
+  it("shows the server's app, not a forged `?app=` it does not serve", async () => {
+    window.history.replaceState(null, '', '/media?app=forged#/browse');
+    renderView(<AppPickerControl />, { apps: server() });
+    const trigger = await screen.findByRole('button', { name: 'App' });
+    await waitFor(() => expect(trigger.textContent).toContain('Hub'));
+    expect(trigger.textContent).not.toContain('forged');
+  });
+
+  it('follows back/forward', async () => {
+    window.history.replaceState(null, '', '/media#/browse');
+    const apps = server();
+    renderView(<AppPickerControl />, { apps });
+    const trigger = await screen.findByRole('button', { name: 'App' });
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('option', { name: /Entre Textos/ }));
+    await waitFor(() => expect(trigger.textContent).toContain('Entre Textos'));
+
+    // "Back": the URL is this app's again, and the browser says so with a popstate.
+    act(() => {
+      window.history.replaceState(null, '', '/media#/browse');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await waitFor(() => expect(trigger.textContent).toContain('Hub'));
+    // "Forward".
+    act(() => {
+      window.history.replaceState(null, '', '/media?app=entre-textos#/browse');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await waitFor(() => expect(trigger.textContent).toContain('Entre Textos'));
+    window.history.replaceState(null, '', '/media');
   });
 });
 

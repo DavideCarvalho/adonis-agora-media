@@ -304,6 +304,28 @@ describe('federated media console', () => {
     await expect(console.disks()).rejects.toMatchObject({ status: 503 });
   });
 
+  it('retries the reply subscription on the next send after a first one fails', async () => {
+    const bus = new RedisBus();
+    await new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }).answer(
+      async () => ({ ok: true }),
+    );
+    const hub = bus.connection();
+    let failures = 1;
+    const subscribe = hub.subscribe;
+    hub.subscribe = async (channel, handler) => {
+      if (failures-- > 0) throw new Error('connection reset');
+      return subscribe(channel, handler);
+    };
+    const channel = new RedisConsoleChannel({ client: hub, prefix: 'entretextos' });
+    await expect(channel.send({ id: 'a', verb: 'disks', args: [] })).rejects.toMatchObject({
+      code: 'federated-app-unreachable',
+      message: expect.stringContaining('connection reset'),
+    });
+    const reply = await channel.send({ id: 'b', verb: 'disks', args: [] });
+    expect(reply).toMatchObject({ ok: true, data: { ok: true } });
+    await channel.close();
+  });
+
   it('refuses to answer commands on a connection that cannot claim them', async () => {
     const bus = new RedisBus();
     const { set: _set, ...noSet } = bus.connection();

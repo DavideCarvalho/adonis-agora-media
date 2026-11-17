@@ -137,7 +137,9 @@ export interface MediaDashboardConfig {
    * ```
    *
    * Keys are 1–64 characters of `[A-Za-z0-9_.-]`. An `authorize` that grants `apps` as a list hides
-   * the apps it does not name. Uploading from the console stays this app's own.
+   * the apps it does not name. Uploading from the console stays this app's own. Organization
+   * grants (`tenants`) only apply to this app: a viewer granted another app sees all of its media.
+   * Each entry is checked at boot (`controlPlane`, `timeoutMs`, `origin`).
    */
   apps?: Record<string, FederatedConsoleApp>;
   /** The name of THIS app in the app selector (shown once `apps` is set). Defaults to `This app`. */

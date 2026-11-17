@@ -52,7 +52,7 @@ function record(id: string): MediaRecord {
   };
 }
 
-async function boot(config: Record<string, unknown>) {
+async function boot(config: Record<string, unknown>, appConfig: Record<string, unknown> = {}) {
   const { default: MediaDashboardProvider } = await import('../../providers/dashboard_provider.js');
   const { router, routes, groups } = makeFakeRouter();
   const localStore = new InMemoryMediaStore();
@@ -64,12 +64,26 @@ async function boot(config: Record<string, unknown>) {
   };
   const booted: Array<() => Promise<void>> = [];
   const app = {
-    config: { get: (key: string, def: unknown) => (key === 'media_dashboard' ? config : def) },
-    container: { make: async (token: unknown) => (token === 'router' ? router : manager) },
+    config: {
+      get: (key: string, def: unknown) =>
+        key === 'media_dashboard' ? config : key in appConfig ? appConfig[key] : def,
+    },
+    container: {
+      make: async (token: unknown) => {
+        if (token === 'router') return router;
+        if (token === 'redis')
+          return appConfig.redisService ?? Promise.reject(new Error('no redis'));
+        return manager;
+      },
+    },
     booted: async (handler: () => Promise<void>) => void booted.push(handler),
     inProduction: false,
   };
+  const warnings: string[] = [];
   const provider = new MediaDashboardProvider(app as never);
+  vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+    warnings.push(String(message));
+  });
   await provider.boot();
   for (const hook of booted) await hook();
 
@@ -116,7 +130,7 @@ async function boot(config: Record<string, unknown>) {
     if (passed) await handler(ctx);
     return { status, body, ...(location !== undefined ? { location } : {}) };
   };
-  return { call, provider };
+  return { call, provider, warnings };
 }
 
 describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () => {
@@ -188,6 +202,64 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     });
     expect((await call('GET /collections', { app: 'entre-textos' })).status).toBe(404);
     expect((await call('GET /collections', { app: 'eduliberta' })).status).toBe(200);
+  });
+
+  it('reads no `?app=` without `apps`: the Organization picker stays the local one', async () => {
+    const { call } = await boot({});
+    expect((await call('GET /tenants', { app: 'entre-textos' })).body).toEqual(
+      (await call('GET /tenants', {})).body,
+    );
+  });
+
+  it('fails the boot on a misconfigured app, not its first request', async () => {
+    const et = await owningApp();
+    const redis = { redis: { connection: 'main', connections: { main: {}, cache: {} } } };
+    const plane = (controlPlane: unknown) => ({
+      apps: { et: { ...et.entry, controlPlane } },
+    });
+    await expect(boot(plane({ connection: 'main', prefix: '' }), redis)).rejects.toThrow(
+      /apps\["et"\]: `controlPlane.prefix`/,
+    );
+    await expect(boot(plane({ connection: 'nope', prefix: 'et' }), redis)).rejects.toThrow(
+      /"nope" is not a connection of config\/redis.ts \(main, cache\)/,
+    );
+    await expect(boot(plane({ prefix: 'et' }), {})).rejects.toThrow(/needs @adonisjs\/redis/);
+    await expect(boot({ apps: { et: { ...et.entry, timeoutMs: 0 } } })).rejects.toThrow(
+      /`timeoutMs` must be a positive number/,
+    );
+    await expect(boot({ apps: { et: { ...et.entry, origin: 'et.example' } } })).rejects.toThrow(
+      /`origin` must be an http\(s\) origin/,
+    );
+    await expect(
+      boot({ apps: { et: { ...et.entry, origin: 'https://et.example/media' } } }),
+    ).rejects.toThrow(/`origin` must be an http\(s\) origin/);
+    // Valid: the default connection, and an origin with a trailing slash.
+    await boot(plane({ prefix: 'et' }), redis);
+    await boot({ apps: { et: { ...et.entry, origin: 'https://et.example/' } } });
+  });
+
+  it('answers a 503 naming the app when it cannot be built, and retries on the next request', async () => {
+    const et = await owningApp();
+    let builds = 0;
+    const { call, warnings } = await boot({
+      apps: {
+        et: {
+          ...et.entry,
+          store: async () => {
+            builds++;
+            if (builds === 1) throw new Error('connection "pg2" is not defined');
+            return et.store;
+          },
+        },
+      },
+    });
+    expect(await call('GET /collections', { app: 'et' })).toEqual({
+      status: 503,
+      body: { error: 'Entre Textos: the console could not reach this app' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warnings.join('\n')).toContain('connection "pg2" is not defined');
+    expect((await call('GET /collections', { app: 'et' })).status).toBe(200);
   });
 
   it('refuses an app key that cannot travel in the URL', async () => {

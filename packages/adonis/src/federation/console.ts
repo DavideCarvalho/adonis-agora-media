@@ -74,6 +74,75 @@ export interface FederatedConsoleApp {
 /** What a federated app's key may look like (it travels in the URL as `?app=`). */
 export const FEDERATED_APP_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
 
+/**
+ * Checks one `apps` entry at boot, so a misconfigured app fails the boot instead of the first
+ * request that picks it. `redisConnections` are the names in `config/redis.ts` (`undefined`: no
+ * Redis config to check against).
+ */
+export function validateFederatedConsoleApp(
+  key: string,
+  entry: FederatedConsoleApp,
+  redisConnections: { names: string[]; default: string | undefined } | undefined,
+): void {
+  const fail = (message: string): never => {
+    throw new Error(`[@adonis-agora/media] media_dashboard.apps["${key}"]: ${message}`);
+  };
+  if (!entry || typeof entry !== 'object') fail('must be an object');
+  if (!entry.store) fail('`store` is required');
+  const plane = entry.controlPlane;
+  if (!(plane instanceof RedisConsoleChannel)) {
+    if (!plane || typeof plane !== 'object') {
+      fail('`controlPlane` is required ({ connection, prefix })');
+    }
+    if (typeof plane.prefix !== 'string' || plane.prefix.trim() === '') {
+      fail("`controlPlane.prefix` must be the other app's `consoleCommands.prefix` (not empty)");
+    }
+    if (
+      plane.connection !== undefined &&
+      (typeof plane.connection !== 'string' || plane.connection === '')
+    ) {
+      fail('`controlPlane.connection` must be a connection name of config/redis.ts');
+    }
+    if (!redisConnections) {
+      fail('the federated console needs @adonisjs/redis (no config/redis.ts found)');
+    } else {
+      const name = plane.connection ?? redisConnections.default;
+      if (name === undefined || !redisConnections.names.includes(name)) {
+        fail(
+          `\`controlPlane.connection\` "${name ?? '(default)'}" is not a connection of config/redis.ts (${redisConnections.names.join(', ') || 'none'})`,
+        );
+      }
+    }
+  }
+  if (
+    entry.timeoutMs !== undefined &&
+    (typeof entry.timeoutMs !== 'number' ||
+      !Number.isFinite(entry.timeoutMs) ||
+      entry.timeoutMs <= 0)
+  ) {
+    fail('`timeoutMs` must be a positive number of milliseconds');
+  }
+  if (entry.origin !== undefined) {
+    let url: URL | undefined;
+    try {
+      url = new URL(entry.origin);
+    } catch {
+      url = undefined;
+    }
+    if (
+      !url ||
+      (url.protocol !== 'https:' && url.protocol !== 'http:') ||
+      url.pathname.replace(/\/+$/, '') !== '' ||
+      url.search !== '' ||
+      url.hash !== ''
+    ) {
+      fail(
+        `\`origin\` must be an http(s) origin like https://app.example.com (got "${entry.origin}")`,
+      );
+    }
+  }
+}
+
 /** The commands that only read. */
 export const READ_VERBS = [
   'topology',

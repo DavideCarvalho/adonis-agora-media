@@ -1,5 +1,5 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../agora-kit/ui/popover';
 import { selectedApp } from '../client/dashboard-client';
 import type { AppPickerResponse } from '../types';
@@ -20,16 +20,33 @@ export function writeAppToUrl(app: string | undefined): void {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-/** The selector's data: this app, then the other apps the console shows. */
-export function useAppPicker(): AppPickerResponse | undefined {
+/** `?app=` as the URL has it now, following the picker and back/forward (`popstate`). */
+export function useUrlApp(): string | undefined {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener('popstate', onChange);
+      return () => window.removeEventListener('popstate', onChange);
+    },
+    selectedApp,
+    () => undefined,
+  );
+}
+
+/**
+ * The selector's data: this app, then the other apps the console shows, and the app the server
+ * actually serves for this URL (`selected`). Asked again whenever `?app=` changes.
+ */
+export function useAppPicker(): { picker: AppPickerResponse | undefined; fresh: boolean } {
   const { client } = useDashboard();
-  const { data } = useQuery({
-    queryKey: ['apps'],
+  const urlApp = useUrlApp();
+  const { data, isPlaceholderData } = useQuery({
+    queryKey: ['apps', urlApp ?? null],
     queryFn: () => client.apps(),
     staleTime: 5 * 60_000,
     refetchInterval: false,
+    placeholderData: keepPreviousData,
   });
-  return data;
+  return { picker: data, fresh: data !== undefined && !isPlaceholderData };
 }
 
 const chip =
@@ -40,23 +57,32 @@ const chip =
  * the console shows only this app.
  */
 export function AppPickerControl() {
-  const picker = useAppPicker();
+  const { picker, fresh } = useAppPicker();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [current, setCurrent] = useState(selectedApp);
+  const urlApp = useUrlApp();
+
+  // The URL's app moved (a pick, or back/forward): every view's data belongs to the app left.
+  const seen = useRef(urlApp);
+  useEffect(() => {
+    if (seen.current === urlApp) return;
+    seen.current = urlApp;
+    void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'apps' });
+  }, [urlApp, queryClient]);
 
   // An older server has no `/apps`: nothing to pick either.
   if (!picker || !Array.isArray(picker.apps) || picker.apps.length === 0) return null;
 
+  // The app the server serves for this URL (an unknown or ungranted `?app=` is none of the
+  // listed ones), the URL's own value only until the server has answered for it.
+  const current = fresh ? (picker.selected ?? undefined) : urlApp;
   const label =
     current === undefined
       ? picker.local.label
       : (picker.apps.find((a) => a.id === current)?.label ?? current);
-  const choose = async (app: string | undefined) => {
+  const choose = (app: string | undefined) => {
     setOpen(false);
     writeAppToUrl(app);
-    setCurrent(app);
-    await queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'apps' });
   };
   const options: Array<{ id: string | undefined; label: string }> = [
     { id: undefined, label: picker.local.label },
@@ -83,7 +109,7 @@ export function AppPickerControl() {
               type="button"
               role="option"
               aria-selected={current === o.id}
-              onClick={() => void choose(o.id)}
+              onClick={() => choose(o.id)}
               className={option}
             >
               <span className="truncate">{o.label}</span>

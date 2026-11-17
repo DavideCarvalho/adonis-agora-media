@@ -132,16 +132,30 @@ export class RedisConsoleChannel {
     options: { timeoutMs?: number | undefined } = {},
   ): Promise<MediaConsoleReply> {
     if (this.#closed) throw new MediaConsoleChannelError('console channel closed', APP_UNREACHABLE);
-    this.#replies ??= this.#subscribe(this.replyChannel, (payload) => {
-      let reply: MediaConsoleReply;
-      try {
-        reply = JSON.parse(payload) as MediaConsoleReply;
-      } catch {
-        return;
-      }
-      this.#pending.get(reply?.id)?.(reply);
-    });
-    await this.#replies;
+    if (!this.#replies) {
+      const replies = this.#subscribe(this.replyChannel, (payload) => {
+        let reply: MediaConsoleReply;
+        try {
+          reply = JSON.parse(payload) as MediaConsoleReply;
+        } catch {
+          return;
+        }
+        this.#pending.get(reply?.id)?.(reply);
+      });
+      this.#replies = replies;
+      // A failed subscribe (a Redis blip) is retried by the next send, not kept for good.
+      replies.catch(() => {
+        if (this.#replies === replies) this.#replies = undefined;
+      });
+    }
+    try {
+      await this.#replies;
+    } catch (error) {
+      throw new MediaConsoleChannelError(
+        `could not subscribe to the "${this.prefix}" app's console replies: ${error instanceof Error ? error.message : String(error)}`,
+        APP_UNREACHABLE,
+      );
+    }
     const timeoutMs = options.timeoutMs ?? MEDIA_CONSOLE_TIMEOUT_MS;
     return new Promise<MediaConsoleReply>((resolve, reject) => {
       const fail = (message: string) => {

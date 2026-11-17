@@ -47,6 +47,7 @@ import {
   type FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
+  validateFederatedConsoleApp,
 } from '../src/federation/console.js';
 import { MediaManager } from '../src/media_manager.js';
 
@@ -106,12 +107,14 @@ export default class MediaDashboardProvider {
   async boot() {
     const config = this.app.config.get<MediaDashboardConfig>('media_dashboard', {});
     if (config.enabled === false) return;
-    for (const key of Object.keys(config.apps ?? {})) {
+    const redisConnections = this.#redisConnections();
+    for (const [key, entry] of Object.entries(config.apps ?? {})) {
       if (!FEDERATED_APP_KEY.test(key)) {
         throw new Error(
           `[@adonis-agora/media] media_dashboard.apps: "${key}" is not a valid app key (1–64 characters of A-Z, a-z, 0-9, _ . -)`,
         );
       }
+      validateFederatedConsoleApp(key, entry, redisConnections);
     }
 
     // The access check, resolved once: the console's routes, its dev tools and the switcher share
@@ -208,13 +211,33 @@ export default class MediaDashboardProvider {
     };
   }
 
+  /** The connection names of `config/redis.ts`, or `undefined` without one. */
+  #redisConnections(): { names: string[]; default: string | undefined } | undefined {
+    const redis = this.app.config.get<
+      { connection?: unknown; connections?: Record<string, unknown> } | undefined
+    >('redis', undefined);
+    if (!redis || typeof redis !== 'object' || !redis.connections) return undefined;
+    return {
+      names: Object.keys(redis.connections),
+      default: typeof redis.connection === 'string' ? redis.connection : undefined,
+    };
+  }
+
   /** The configured app `id`, built (its stores and channel) on first use. */
   #federatedApp(config: MediaDashboardConfig, id: string): Promise<FederatedApp> {
     let app = this.#federated.get(id);
     if (!app) {
       const spec = config.apps?.[id];
       if (!spec) return Promise.reject(new DashboardError('unknown app', 404));
-      app = buildFederatedMediaApp(id, spec, this.app);
+      app = buildFederatedMediaApp(id, spec, this.app).catch((error: unknown) => {
+        // A console-side failure to reach the app (its connection, its store): a 503 naming the
+        // app, the cause in this app's log.
+        throw new FederatedAppError(
+          `${spec.label ?? id}: the console could not reach this app`,
+          503,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
       // A failed build (a bad connection name) is retried on the next request, not cached.
       app.catch(() => this.#federated.delete(id));
       this.#federated.set(id, app);
@@ -277,10 +300,13 @@ export default class MediaDashboardProvider {
   }
 
   /** The console's "Organization" control: `off`, `none`, `fixed` (one) or `pick` (several). */
-  async #tenantPicker(ctx: HttpContext): Promise<TenantPickerResponse> {
+  async #tenantPicker(
+    config: MediaDashboardConfig,
+    ctx: HttpContext,
+  ): Promise<TenantPickerResponse> {
     // Another app's media (federated console): that app's organizations are not this app's.
-    const picked = (ctx.request.qs() as { app?: unknown }).app;
-    if (typeof picked === 'string' && picked !== '') {
+    // Gated like the routes (`#selectedApp`): without `apps`, `?app=` is not read at all.
+    if (this.#selectedApp(config, ctx) !== undefined) {
       return { mode: 'off', all: false, selected: null, tenants: [] };
     }
     const scope = await this.#consoleScope(ctx);
@@ -500,13 +526,13 @@ export default class MediaDashboardProvider {
       router
         .get('/tenants', async (ctx: HttpContext) => {
           ctx.response.header('cache-control', 'private, no-store');
-          return ctx.response.status(200).json(await this.#tenantPicker(ctx));
+          return ctx.response.status(200).json(await this.#tenantPicker(config, ctx));
         })
         .as('media.dashboard.tenants');
       router
         .post('/tenants/:id/select', async (ctx: HttpContext) => {
           const id = String(ctx.params.id);
-          const picker = await this.#tenantPicker(ctx);
+          const picker = await this.#tenantPicker(config, ctx);
           const allowed =
             picker.mode !== 'off' &&
             picker.mode !== 'none' &&
