@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.16
+
+### Patch Changes
+
+- [#338](https://github.com/DavideCarvalho/adonis-agora-media/pull/338) [`fc58763`](https://github.com/DavideCarvalho/adonis-agora-media/commit/fc5876322c794372f0a46603fa6630ea85a240dd) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - The console's object preview shows Parquet files (`application/vnd.apache.parquet`, `application/x-parquet`, or a `.parquet` key) as a table: the schema with column types, the row count, and the first 50 rows. Files up to 25 MB preview inline; larger ones, or ones compressed with a codec other than Snappy, fall back to "Open original". The reader loads only when a Parquet file is opened.
+
 ## 10.0.0-rc.15
 
 ### Patch Changes
