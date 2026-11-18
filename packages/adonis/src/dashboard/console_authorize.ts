@@ -236,3 +236,75 @@ export function anyAuthorize(
     return { allowed: false, reason: 'forbidden' };
   };
 }
+
+/**
+ * `true` when the granted capability `granted` covers `required` (the Agora-wide rule): segments
+ * split on `:`, a `*` segment matches exactly one segment, and a LAST `*` matches zero or more
+ * further segments (`media:*` covers `media` and `media:objects:read`; `*` covers everything).
+ */
+export function capabilityAllows(granted: string, required: string): boolean {
+  const have = granted.split(':');
+  const want = required.split(':');
+  for (let i = 0; i < have.length; i++) {
+    const segment = have[i];
+    if (segment === '*' && i === have.length - 1) return true;
+    if (i >= want.length) return false;
+    if (segment !== '*' && segment !== want[i]) return false;
+  }
+  return have.length === want.length;
+}
+
+/** The capability {@link authorizeAgoraCaller} asks of a calling app by default. */
+export const MEDIA_OBJECTS_READ = 'media:objects:read';
+
+/** Options for {@link authorizeAgoraCaller}. */
+export interface AuthorizeAgoraCallerOptions {
+  /** The calling apps let in, by name (the token's partition, e.g. `agora-hub`). Omit for any. */
+  apps?: string[] | undefined;
+  /** What the caller must hold on this app. Default {@link MEDIA_OBJECTS_READ}. */
+  capability?: string | undefined;
+}
+
+/** The route {@link authorizeAgoraCaller} opens: the console's object bytes. */
+const RAW_ROUTE = 'media.dashboard.object.raw';
+
+/**
+ * An `authorize` check for another app's federated console fetching this console's object bytes
+ * (its `proxyObjects`): allows `GET <apiBase>/object/raw` when the request comes from an Agora app
+ * holding `media:objects:read` on this app, and nothing else. The caller is read from
+ * `ctx.agora.caller`, which `@adonis-agora/authkit-client` sets from a verified service token
+ * (`service.name` in config/authkit_client.ts). Combine it with the viewer check:
+ *
+ * ```ts
+ * authorize: anyAuthorize(authorizeAgoraCaller({ apps: ['agora-hub'] }), adminsOnly),
+ * ```
+ *
+ * A caller sees every tenant's objects of THIS app, never those of the other apps this console
+ * federates (`apps`). Needs `@adonis-agora/authkit-client` 1.0.0-rc.9 or later (calls between
+ * apps). Without a caller it answers `401`; a caller without the
+ * capability, or on any other route, gets `403`.
+ */
+export function authorizeAgoraCaller(options: AuthorizeAgoraCallerOptions = {}): ConsoleAuthorize {
+  const capability = options.capability ?? MEDIA_OBJECTS_READ;
+  const apps = options.apps ? new Set(options.apps) : undefined;
+  return (ctx: HttpContext): ConsoleAuthorizeResult => {
+    const caller = (
+      ctx as unknown as { agora?: { caller?: { app?: unknown; capabilities?: unknown } } }
+    ).agora?.caller;
+    if (!caller || typeof caller.app !== 'string') {
+      return { allowed: false, reason: 'unauthenticated' };
+    }
+    const route = (ctx as unknown as { route?: { name?: unknown } }).route?.name;
+    const granted = Array.isArray(caller.capabilities) ? caller.capabilities : [];
+    if (
+      ctx.request.method() === 'GET' &&
+      route === RAW_ROUTE &&
+      (apps === undefined || apps.has(caller.app)) &&
+      granted.some((g) => typeof g === 'string' && capabilityAllows(g, capability))
+    ) {
+      // `apps: []`: only this app's own objects, never the other apps this console federates.
+      return { allowed: true, tenants: '*', apps: [] };
+    }
+    return { allowed: false, reason: 'forbidden' };
+  };
+}
