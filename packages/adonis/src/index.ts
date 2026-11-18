@@ -144,6 +144,7 @@ export {
   ConversionNotDefinedError,
   DeliverySignatureError,
   DirectUploadsNotConfiguredError,
+  DriveNotConfiguredError,
   DriveNotReadyError,
   FfmpegFailedError,
   HlsSourceUnsupportedError,

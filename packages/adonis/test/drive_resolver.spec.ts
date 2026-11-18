@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DriveManagerLike, DriveServiceModule } from '../src/disks/drive.js';
 import { createDriveBackedResolver } from '../src/disks/drive.js';
-import { DriveNotReadyError } from '../src/errors.js';
+import { DriveNotConfiguredError, DriveNotReadyError } from '../src/errors.js';
 import { InMemoryDisk } from '../src/testing/in_memory_disk.js';
 import type { Disk } from '../src/types.js';
 
@@ -104,6 +104,23 @@ describe('createDriveBackedResolver — lazy Drive resolution', () => {
 
     expect(resolve()).toBe(s3);
     expect(resolve('s3')).toBe(s3);
+    expect(service.reads).toBe(0);
+  });
+});
+
+describe('createDriveBackedResolver — an app without Drive', () => {
+  it('names the real cause for a disk outside `disks`, and still serves the configured ones', () => {
+    const s3 = new InMemoryDisk();
+    const service = new FakeDriveService();
+    const resolve = createDriveBackedResolver({
+      driveService: service,
+      configuredDisks: { s3 },
+      defaultDisk: 'default',
+      driveAvailable: false,
+    });
+    expect(resolve('s3')).toBe(s3);
+    expect(() => resolve()).toThrow(DriveNotConfiguredError);
+    expect(() => resolve()).not.toThrow(DriveNotReadyError);
     expect(service.reads).toBe(0);
   });
 });

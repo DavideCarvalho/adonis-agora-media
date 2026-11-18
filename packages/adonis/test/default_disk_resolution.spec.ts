@@ -161,6 +161,6 @@ describe('default disk resolution (real booted app, real Drive ConfigProvider)',
     // fail every media call with "Cannot resolve binding drive.manager".
     const { media } = await bootApp({ media: {} });
     expect(media).toBeInstanceOf(MediaManager);
-    expect(() => media.storage.disk()).toThrow(/drive|disk/i);
+    expect(() => media.storage.disk()).toThrow(/does not register `@adonisjs\/drive`/);
   });
 });
