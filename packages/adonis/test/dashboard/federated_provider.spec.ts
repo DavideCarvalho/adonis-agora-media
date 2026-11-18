@@ -6,13 +6,20 @@ import { RedisBus } from '../support/redis_bus.js';
 
 /** The provider's routes as registered, called with a plain `ctx` double. */
 function makeFakeRouter() {
-  const chain = { as: vi.fn().mockReturnThis() };
   const routes = new Map<string, (ctx: unknown) => Promise<unknown>>();
+  const names = new Map<string, string>();
   const groups: Array<{ middleware: unknown[] }> = [];
   const router: Record<string, unknown> = {};
   for (const method of ['get', 'post']) {
     router[method] = vi.fn((path: string, handler: (ctx: unknown) => Promise<unknown>) => {
-      routes.set(`${method.toUpperCase()} ${path}`, handler);
+      const route = `${method.toUpperCase()} ${path}`;
+      routes.set(route, handler);
+      const chain = {
+        as: vi.fn((name: string) => {
+          names.set(route, name);
+          return chain;
+        }),
+      };
       return chain;
     });
   }
@@ -29,7 +36,7 @@ function makeFakeRouter() {
     groups.push(g);
     return g;
   });
-  return { router, routes, groups };
+  return { router, routes, names, groups };
 }
 
 function record(id: string): MediaRecord {
@@ -52,9 +59,13 @@ function record(id: string): MediaRecord {
   };
 }
 
-async function boot(config: Record<string, unknown>, appConfig: Record<string, unknown> = {}) {
+async function boot(
+  config: Record<string, unknown>,
+  appConfig: Record<string, unknown> = {},
+  logger?: { info?: (line: string) => void; warn?: (line: string) => void },
+) {
   const { default: MediaDashboardProvider } = await import('../../providers/dashboard_provider.js');
-  const { router, routes, groups } = makeFakeRouter();
+  const { router, routes, names, groups } = makeFakeRouter();
   const localStore = new InMemoryMediaStore();
   await localStore.save(record('hub-1'));
   const manager = {
@@ -71,6 +82,7 @@ async function boot(config: Record<string, unknown>, appConfig: Record<string, u
     container: {
       make: async (token: unknown) => {
         if (token === 'router') return router;
+        if (token === 'logger') return logger ?? Promise.reject(new Error('no logger'));
         if (token === 'redis')
           return appConfig.redisService ?? Promise.reject(new Error('no redis'));
         return manager;
@@ -104,13 +116,14 @@ async function boot(config: Record<string, unknown>, appConfig: Record<string, u
     const headers: Record<string, string> = {};
     let streamed = false;
     const ctx = {
+      route: { name: names.get(route) },
       request: {
         method: () => route.split(' ')[0],
         qs: () => qs,
         input: (key: string) => qs[key],
         body: () => qs,
         url: () => route,
-        header: () => undefined,
+        header: (name: string) => (qs.__headers as Record<string, string> | undefined)?.[name],
       },
       response: {
         header: (name: string, value: string) => {
@@ -183,7 +196,7 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
 
     expect((await call('GET /apps')).body).toEqual({
       local: { label: 'Hub' },
-      apps: [{ id: 'entre-textos', label: 'Entre Textos' }],
+      apps: [{ id: 'entre-textos', label: 'Entre Textos', mode: 'federated', actions: 'none' }],
       selected: null,
     });
     const own = await call('GET /collections', {});
@@ -245,6 +258,88 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     }
   });
 
+  it('says who runs actions per app, and forwards them with `proxyActions`', async () => {
+    const et = await owningApp();
+    const seen: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      seen.push({ url: String(input), method: init?.method, body: init?.body });
+      return new Response(null, { status: 204 });
+    });
+    try {
+      const { call, provider } = await boot({
+        apps: {
+          'entre-textos': { ...et.entry, proxyActions: { apiPath: '/media/api' } },
+          muted: { ...et.entry, label: 'Muted', proxyActions: true, actions: false },
+          redis: { ...et.entry, label: 'Redis' },
+        },
+      });
+      expect((await call('GET /apps')).body).toMatchObject({
+        apps: [
+          { id: 'entre-textos', mode: 'federated', actions: 'app' },
+          { id: 'muted', mode: 'federated', actions: 'none' },
+          { id: 'redis', mode: 'federated', actions: 'none' },
+        ],
+      });
+      expect(await call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' })).toEqual({
+        status: 204,
+        body: undefined,
+      });
+      expect(seen).toEqual([
+        {
+          url: 'https://et.example/media/api/media-record/delete',
+          method: 'POST',
+          body: JSON.stringify({ id: 'et-1' }),
+        },
+      ]);
+      expect((await call('GET /topology', { app: 'entre-textos' })).body).toMatchObject({
+        actions: true,
+      });
+      expect((await call('POST /media-record/delete', { app: 'muted', id: 'et-1' })).status).toBe(
+        403,
+      );
+      expect(seen).toHaveLength(1);
+      await provider.shutdown();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("follows this console's `actions` for an app without `proxyActions`", async () => {
+    const et = await owningApp();
+    const { call, provider } = await boot({ actions: true, apps: { 'entre-textos': et.entry } });
+    expect((await call('GET /apps')).body).toMatchObject({
+      apps: [{ id: 'entre-textos', actions: 'app' }],
+    });
+    await provider.shutdown();
+  });
+
+  it('runs an action an app caller sends, and logs the app and the viewer it names', async () => {
+    const { authorizeAppCaller, permitAll } = await import(
+      '../../src/dashboard/console_authorize.js'
+    );
+    const infos: string[] = [];
+    const { call } = await boot(
+      {
+        actions: true,
+        authorize: authorizeAppCaller({
+          identify: () => ({ app: 'agora-hub' }),
+          permit: permitAll(),
+        }),
+      },
+      {},
+      { info: (line: string) => infos.push(line) },
+    );
+    const headers = { 'x-agora-actor': 'ana@hub\nFAKE LOG LINE' };
+    expect(
+      (await call('POST /media-record/delete', { id: 'hub-1', __headers: headers })).status,
+    ).toBe(204);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(infos).toHaveLength(1);
+    expect(infos[0]).toBe(
+      '[@adonis-agora/media] federated console: POST /media-record/delete by ana@hub FAKE LOG LINE from app agora-hub',
+    );
+  });
+
   it('keeps an empty `apps` grant (an app caller) to this app only', async () => {
     const et = await owningApp();
     const { call, provider } = await boot({
@@ -266,7 +361,7 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
       authorize: () => ({ allowed: true, apps: ['eduliberta'] }),
     });
     expect((await call('GET /apps')).body).toMatchObject({
-      apps: [{ id: 'eduliberta', label: 'EduLiberta' }],
+      apps: [{ id: 'eduliberta', label: 'EduLiberta', mode: 'federated' }],
     });
     expect((await call('GET /collections', { app: 'entre-textos' })).status).toBe(404);
     expect((await call('GET /collections', { app: 'eduliberta' })).status).toBe(200);
@@ -294,6 +389,15 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     await expect(boot(plane({ prefix: 'et' }), {})).rejects.toThrow(/needs @adonisjs\/redis/);
     await expect(boot({ apps: { et: { ...et.entry, timeoutMs: 0 } } })).rejects.toThrow(
       /`timeoutMs` must be a positive number/,
+    );
+    await expect(
+      boot({ apps: { et: { ...et.entry, origin: undefined, proxyActions: true } } }),
+    ).rejects.toThrow(/`proxyActions` needs `origin`/);
+    await expect(
+      boot({ apps: { et: { ...et.entry, proxyActions: { apiPath: 'https://x.example/api' } } } }),
+    ).rejects.toThrow(/`proxyActions.apiPath` must be a path/);
+    await expect(boot({ apps: { et: { ...et.entry, actions: 'yes' } } })).rejects.toThrow(
+      /`actions` must be a boolean/,
     );
     await expect(boot({ apps: { et: { ...et.entry, origin: 'et.example' } } })).rejects.toThrow(
       /`origin` must be an http\(s\) origin/,

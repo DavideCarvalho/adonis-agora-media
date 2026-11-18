@@ -4,7 +4,9 @@ import {
   FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
+  joinApiPath,
   mediaConsoleCommandHandler,
+  sanitizeActor,
 } from '../../src/federation/console.js';
 import { RedisConsoleChannel } from '../../src/federation/redis_channel.js';
 import type { MediaRecord } from '../../src/media_record.js';
@@ -125,6 +127,7 @@ function hubConsole(
     origin?: string;
     timeoutMs?: number;
     proxyObjects?: ConstructorParameters<typeof FederatedApp>[0]['proxyObjects'];
+    proxyActions?: ConstructorParameters<typeof FederatedApp>[0]['proxyActions'];
     fetch?: typeof fetch;
   } = {},
 ) {
@@ -138,6 +141,7 @@ function hubConsole(
     ...(options.origin !== undefined ? { origin: options.origin } : {}),
     timeoutMs: options.timeoutMs ?? 2_000,
     ...(options.proxyObjects !== undefined ? { proxyObjects: options.proxyObjects } : {}),
+    ...(options.proxyActions !== undefined ? { proxyActions: options.proxyActions } : {}),
     ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
   });
   return {
@@ -331,6 +335,249 @@ describe('federated media console', () => {
     const plain = hubConsole(bus, signer.store).console;
     expect(plain.servesBytes).toBe(false);
     await expect(plain.objectStream('fs', 'a.png')).rejects.toMatchObject({ status: 501 });
+  });
+
+  describe('proxyActions: actions sent to the app over HTTP', () => {
+    type Call = {
+      url: string;
+      method: string | undefined;
+      auth: string | null;
+      actor: string | null;
+      redirect: string | undefined;
+      body: unknown;
+    };
+    const recorder = (answer: (url: string) => Response | Promise<Response>) => {
+      const calls: Call[] = [];
+      const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+        calls.push({
+          url,
+          method: init?.method,
+          auth: headers.get('authorization'),
+          actor: headers.get('x-agora-actor'),
+          redirect: init?.redirect,
+          body: typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
+        });
+        return answer(url);
+      }) as typeof fetch;
+      return { calls, fetch };
+    };
+
+    it('posts each action to the app console API with the headers, never over Redis', async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: { apiPath: '/media/api', headers: () => ({ authorization: 'Bearer svc' }) },
+        fetch: http.fetch,
+      });
+      await console.deleteMediaRecord('r 1');
+      await console.abortUpload('up/1');
+      await console.remove({ disk: 'fs', keys: ['a.png'] });
+      await console.copy({ disk: 'fs', from: 'a', to: 'b' });
+      await console.move({ disk: 'fs', from: 'a', to: 'b', toDisk: 's3' });
+      await console.createFolder({ disk: 'fs', prefix: 'x/' });
+      await console.deleteFolder({ disk: 'fs', prefix: 'x/' });
+      await console.copyFolder({ disk: 'fs', from: 'x/', to: 'y/' });
+      await console.moveFolder({ disk: 'fs', from: 'x/', to: 'y/' });
+
+      expect(http.calls.map((c) => [c.url, c.body])).toEqual([
+        ['https://et.example/media/api/media-record/delete', { id: 'r 1' }],
+        ['https://et.example/media/api/uploads/up%2F1/abort', {}],
+        ['https://et.example/media/api/delete', { disk: 'fs', keys: ['a.png'] }],
+        ['https://et.example/media/api/copy', { disk: 'fs', from: 'a', to: 'b' }],
+        ['https://et.example/media/api/move', { disk: 'fs', from: 'a', to: 'b', toDisk: 's3' }],
+        ['https://et.example/media/api/folder', { disk: 'fs', prefix: 'x/' }],
+        ['https://et.example/media/api/folder/delete', { disk: 'fs', prefix: 'x/' }],
+        ['https://et.example/media/api/folder/copy', { disk: 'fs', from: 'x/', to: 'y/' }],
+        ['https://et.example/media/api/folder/move', { disk: 'fs', from: 'x/', to: 'y/' }],
+      ]);
+      for (const call of http.calls) {
+        expect(call).toMatchObject({
+          method: 'POST',
+          auth: 'Bearer svc',
+          actor: 'ana@hub',
+          redirect: 'manual',
+        });
+      }
+      expect(commandsSent(bus)).toHaveLength(0);
+    });
+
+    it('defaults to the lib API path and to the proxyObjects headers', async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example/',
+        proxyObjects: { headers: () => ({ authorization: 'Bearer objects' }) },
+        proxyActions: true,
+        fetch: http.fetch,
+      });
+      await console.deleteMediaRecord('r1');
+      expect(http.calls[0]).toMatchObject({
+        url: 'https://et.example/media/dashboard/api/media-record/delete',
+        auth: 'Bearer objects',
+      });
+    });
+
+    it("maps the app's answers: 404 and bad requests stand, refusals are 502, no answer is 503", async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const json = (status: number, error: string) =>
+        new Response(JSON.stringify({ error }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      const http = recorder((url) => {
+        const path = new URL(url).pathname.replace('/media/api', '');
+        if (path === '/copy') return json(404, 'unknown key');
+        if (path === '/move') return json(400, 'disk is required');
+        if (path === '/delete') return json(403, 'forbidden');
+        if (path === '/folder') {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://evil.example/' },
+          });
+        }
+        if (path === '/folder/delete') return new Response('boom', { status: 500 });
+        throw new TypeError('fetch failed');
+      });
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: { apiPath: '/media/api' },
+        fetch: http.fetch,
+      });
+      const body = { disk: 'fs', from: 'a', to: 'b' };
+      await expect(console.copy(body)).rejects.toMatchObject({
+        status: 404,
+        message: 'unknown key',
+      });
+      await expect(console.move(body)).rejects.toMatchObject({
+        status: 400,
+        message: 'disk is required',
+      });
+      const refused = await console.remove({ disk: 'fs', keys: [] }).catch((e: unknown) => e);
+      expect(refused).toBeInstanceOf(FederatedAppError);
+      expect(refused).toMatchObject({ status: 502, detail: expect.stringContaining('HTTP 403') });
+      expect((refused as FederatedAppError).detail).toContain('authorizeAgoraCaller');
+      await expect(console.createFolder({ disk: 'fs', prefix: 'x/' })).rejects.toMatchObject({
+        status: 502,
+        detail: expect.stringContaining('HTTP 302'),
+      });
+      await expect(console.deleteFolder({ disk: 'fs', prefix: 'x/' })).rejects.toMatchObject({
+        status: 502,
+      });
+      await expect(console.copyFolder(body)).rejects.toMatchObject({
+        status: 503,
+        detail: 'fetch failed',
+      });
+      // Only one request per action: the redirect was not followed.
+      expect(http.calls.map((c) => new URL(c.url).origin)).toEqual(
+        Array(6).fill('https://et.example'),
+      );
+    });
+
+    it('relays exactly the statuses the viewer can act on; any other 4xx is a 502', async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      let status = 400;
+      const http = recorder(
+        () =>
+          new Response(JSON.stringify({ error: `app says ${status}` }), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: true,
+        fetch: http.fetch,
+      });
+      for (const relayed of [400, 404, 409, 413, 415, 422, 429]) {
+        status = relayed;
+        await expect(console.deleteMediaRecord('r1')).rejects.toMatchObject({
+          status: relayed,
+          message: `app says ${relayed}`,
+        });
+      }
+      for (const refused of [401, 403, 405, 408, 410, 451, 500, 503]) {
+        status = refused;
+        await expect(console.deleteMediaRecord('r1')).rejects.toMatchObject({
+          status: 502,
+          detail: expect.stringContaining(`HTTP ${refused}`),
+        });
+      }
+    });
+
+    it('joins the API path with exactly one slash, whatever its slashes', async () => {
+      expect(joinApiPath('/', '/copy')).toBe('/copy');
+      expect(joinApiPath('/media/api/', '/copy')).toBe('/media/api/copy');
+      expect(joinApiPath('/media//api//', 'folder/move')).toBe('/media/api/folder/move');
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: { apiPath: '/' },
+        fetch: http.fetch,
+      });
+      await console.copy({ disk: 'fs', from: 'a', to: 'b' });
+      expect(http.calls[0]?.url).toBe('https://et.example/copy');
+    });
+
+    it('sends a viewer name with CR/LF or non-ASCII as a clean header, never failing on it', async () => {
+      expect(sanitizeActor('ana@hub\r\nx-evil: 1')).toBe('ana@hub x-evil: 1');
+      expect(sanitizeActor('joão')).toBe('jo%C3%A3o');
+      expect(sanitizeActor('\ud800')).toBe('?');
+      expect(sanitizeActor('a'.repeat(500))).toHaveLength(200);
+      expect(sanitizeActor(' \n ')).toBeUndefined();
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const app = new FederatedApp({
+        id: 'et',
+        store: owner.store,
+        channel: new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }),
+        origin: 'https://et.example',
+        proxyActions: true,
+        fetch: http.fetch,
+      });
+      const evil = new FederatedConsoleService(app, {
+        actions: true,
+        actor: 'Ana\r\nSet-Cookie: x',
+      });
+      await evil.deleteMediaRecord('r1');
+      expect(http.calls[0]?.actor).toBe('Ana Set-Cookie: x');
+    });
+
+    it('answers 503 when the headers cannot be made, and sends nothing with actions off', async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const failing = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: {
+          headers: async () => {
+            throw new Error('token endpoint down');
+          },
+        },
+        fetch: http.fetch,
+      }).console;
+      await expect(failing.deleteMediaRecord('r1')).rejects.toMatchObject({
+        status: 503,
+        detail: 'token endpoint down',
+      });
+      const off = hubConsole(bus, owner.store, {
+        actions: false,
+        origin: 'https://et.example',
+        proxyActions: true,
+        fetch: http.fetch,
+      }).console;
+      await expect(off.deleteMediaRecord('r1')).rejects.toMatchObject({ status: 403 });
+      expect(http.calls).toHaveLength(0);
+    });
   });
 
   it('runs an action once in the owning app, however many instances listen, and logs who', async () => {

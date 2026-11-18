@@ -2,18 +2,25 @@
 
 // The federated console: other apps' media in this console (`apps`), and the channel they answer on.
 export type {
+  FederatedActionProxy,
   FederatedConsoleApp,
   FederatedObjectProxy,
   MediaConsoleVerb,
 } from '../federation/console.js';
 export {
   ACTION_VERBS,
+  ACTOR_HEADER,
   buildFederatedMediaApp,
   FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
+  federatedActionRequest,
+  federatedAppActions,
+  joinApiPath,
   mediaConsoleCommandHandler,
   READ_VERBS,
+  RELAYED_ACTION_STATUSES,
+  sanitizeActor,
 } from '../federation/console.js';
 export type {
   MediaConsoleCommand,
@@ -35,21 +42,36 @@ export {
 } from './access_denied_page.js';
 // The access contract shared by every Agora console.
 export type {
+  AppCaller,
   AuthorizeAgoraCallerOptions,
+  AuthorizeAppCallerOptions,
   AuthorizeByTokenOptions,
   ConsoleAuthorize,
   ConsoleAuthorizeDecision,
   ConsoleAuthorizeResult,
   ConsoleAuthorizer,
   ConsoleAuthorizerClass,
+  IdentifyAppCaller,
+  IdentifySharedSecretOptions,
+  MediaCallerCsrfOptions,
+  PermitAppCaller,
 } from './console_authorize.js';
 export {
   anyAuthorize,
+  appCallerOf,
   authorizeAgoraCaller,
+  authorizeAppCaller,
   authorizeByToken,
   capabilityAllows,
+  identifyAgoraCaller,
+  identifySharedSecret,
+  MEDIA_ACTION_ROUTES,
   MEDIA_OBJECTS_READ,
+  MEDIA_OBJECTS_WRITE,
+  mediaCallerCsrfExceptions,
   normalizeConsoleAuthorizeResult,
+  permitAll,
+  permitTokenCapabilities,
   resolveConsoleAuthorize,
 } from './console_authorize.js';
 // The console shell's data-block fields: who is signed in, and how to sign out.

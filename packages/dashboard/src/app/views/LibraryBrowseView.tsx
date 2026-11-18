@@ -26,6 +26,7 @@ import {
   TableRow,
 } from '../../agora-kit/ui/table';
 import type { DiskInfo, ObjectEntry, ObjectFolder } from '../../types';
+import { useActionsUnavailable } from '../AppPicker';
 import { useDashboard } from '../context';
 import { DRAG_MIME, type DragItem, FolderTree } from '../FolderTree';
 import { navigate } from '../hash-route';
@@ -830,6 +831,8 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
   const disks = useDisks();
   const topology = useTopology();
   const actions = topology.data?.actions ?? false;
+  // A read-only federated app: the actions show disabled, with why.
+  const unavailable = useActionsUnavailable();
   // Uploading is this app's own: another app's media (federated console) is never uploaded into.
   const uploads = actions && topology.data?.app === undefined;
   const { push } = useToasts();
@@ -947,6 +950,13 @@ export function LibraryBrowseView({ disk, prefix }: { disk?: string; prefix?: st
               </Button>
             )}
           </>
+        ) : unavailable !== undefined && activeDisk ? (
+          <span title={unavailable}>
+            <Button variant="outline" disabled>
+              <PlusIcon />
+              New folder
+            </Button>
+          </span>
         ) : undefined
       }
     />
