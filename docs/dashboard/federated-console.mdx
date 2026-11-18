@@ -54,6 +54,10 @@ checked at boot: an empty `controlPlane.prefix`, a `connection` that is not in `
 `timeoutMs` that is not a positive number or an `origin` that is not an `http(s)` origin fails the
 boot.
 
+The console's own app does not need media storage of its own. An app with no `config/drive.ts`
+and no `disk`/`disks` in `config/media.ts` (one that only hosts the console) shows a notice
+when it is selected, with a button for each of the other apps, instead of its pages.
+
 The selector lists every configured app. An `authorize` that answers `apps` limits it:
 
 ```ts title="config/media_dashboard.ts"

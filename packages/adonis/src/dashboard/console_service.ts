@@ -12,23 +12,41 @@ export interface ConsoleServiceConfig {
   media: { disk?: string; disks?: Record<string, unknown>; delivery?: { mode?: string } };
   /** `config/drive.ts` (only `default` is read). */
   drive: { default?: string };
+  /**
+   * Whether this app stores media anywhere: a `config/drive.ts`, or a `disk`/`disks` in
+   * `config/media.ts`.
+   * Without either (an app that only hosts the federated console), the console says so instead of
+   * browsing disks that do not exist. Default: `true`.
+   */
+  storage?: boolean;
 }
 
 /** Read {@link ConsoleServiceConfig} from an app's config. */
 export function readConsoleServiceConfig(config: {
   get<T>(key: string, defaultValue?: unknown): T;
 }): ConsoleServiceConfig {
+  const media = config.get<ConsoleServiceConfig['media']>('media', {});
+  const drive = config.get<ConsoleServiceConfig['drive'] | undefined>('drive', undefined);
   return {
     console: config.get<MediaDashboardConfig>('media_dashboard', {}),
-    media: config.get<ConsoleServiceConfig['media']>('media', {}),
-    drive: config.get<ConsoleServiceConfig['drive']>('drive', {}),
+    media,
+    drive: drive ?? {},
+    storage: drive !== undefined && drive !== null ? true : hasDisks(media),
   };
+}
+
+/** A disk named in `config/media.ts`: `disk`, or any key of `disks`. */
+function hasDisks(media: ConsoleServiceConfig['media']): boolean {
+  if (typeof media?.disk === 'string' && media.disk !== '') return true;
+  return !!media?.disks && Object.keys(media.disks).length > 0;
 }
 
 /** The disks the console browses: the configured list, else the media default plus `disks` keys. */
 export function consoleDiskNames(config: ConsoleServiceConfig): string[] {
   const listed = config.console.disks;
   if (listed && listed.length > 0) return listed;
+  // No Drive and no `disks`: there is nothing to browse.
+  if (config.storage === false) return [];
   const defaultName = config.media.disk ?? config.drive.default ?? 'default';
   const configured = config.media.disks ? Object.keys(config.media.disks) : [];
   return Array.from(new Set([defaultName, ...configured]));
@@ -68,6 +86,7 @@ export function buildConsoleService(
   };
   const options = {
     diskNames: consoleDiskNames(config),
+    storage: config.storage !== false,
     actions: config.console.actions ?? false,
     objectUrls,
   };

@@ -155,4 +155,12 @@ describe('default disk resolution (real booted app, real Drive ConfigProvider)',
     expect(driveConfigValue).toBeUndefined();
     expect(media.storage.defaultDisk).toBe('default');
   });
+  it('an app without the Drive provider still gets a media manager; only disk use fails', async () => {
+    // The federated-console host: media's store and console, no `@adonisjs/drive` at all.
+    // Drive's service module resolves `drive.manager` as it loads, so importing it here used to
+    // fail every media call with "Cannot resolve binding drive.manager".
+    const { media } = await bootApp({ media: {} });
+    expect(media).toBeInstanceOf(MediaManager);
+    expect(() => media.storage.disk()).toThrow(/drive|disk/i);
+  });
 });

@@ -182,6 +182,7 @@ describe('federated media console', () => {
       disks: 1,
       hasUploads: true,
       actions: true,
+      storage: true,
       app: 'entre-textos',
     });
     expect((await console.disks()).data.map((d) => d.name)).toEqual(['fs']);

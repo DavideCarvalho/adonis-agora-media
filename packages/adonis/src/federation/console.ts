@@ -398,6 +398,8 @@ export class FederatedConsoleService {
       disks,
       hasUploads: this.#app.sessions !== undefined,
       actions: this.#actions,
+      // The other app answers for its own storage; its disk list says what there is.
+      storage: true,
       app: this.#app.id,
     };
   }

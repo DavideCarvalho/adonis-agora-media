@@ -1,10 +1,12 @@
 import { useMemo } from 'react';
+import { EmptyState } from '../agora-kit/blocks/empty-state';
 import { ErrorBoundary } from '../agora-kit/blocks/error-boundary';
 import { AppShell, type NavSection } from '../agora-kit/shell/app-shell';
 import { readShellConfig } from '../agora-kit/shell-config';
+import { Button } from '../agora-kit/ui/button';
 import { NuqsHashAdapter } from '../agora-kit/url-state/nuqs-hash-adapter';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
-import { AppPickerControl } from './AppPicker';
+import { AppPickerControl, useAppPicker, writeAppToUrl } from './AppPicker';
 import type { Tab } from './hash-route';
 import { navigate, toHash, useHashRoute } from './hash-route';
 import { FolderIcon, LayersIcon, LogoMark, TransferIcon, UploadIcon } from './icons';
@@ -132,16 +134,66 @@ function Console() {
       }
     >
       <ErrorBoundary label={TITLES[route.tab]} resetKeys={[route.tab]}>
-        {route.tab === 'browse' && (
-          <LibraryBrowseView
-            {...(route.disk ? { disk: route.disk } : {})}
-            {...(route.prefix ? { prefix: route.prefix } : {})}
-          />
-        )}
-        {route.tab === 'collections' && <CollectionsView route={route} />}
-        {route.tab === 'uploads' && <UploadsView route={route} />}
-        {route.tab === 'upload' && <UploadPanel />}
+        <NoStorageGate>
+          {route.tab === 'browse' && (
+            <LibraryBrowseView
+              {...(route.disk ? { disk: route.disk } : {})}
+              {...(route.prefix ? { prefix: route.prefix } : {})}
+            />
+          )}
+          {route.tab === 'collections' && <CollectionsView route={route} />}
+          {route.tab === 'uploads' && <UploadsView route={route} />}
+          {route.tab === 'upload' && <UploadPanel />}
+        </NoStorageGate>
       </ErrorBoundary>
     </AppShell>
+  );
+}
+
+/**
+ * An app with no storage of its own (no `config/drive.ts`, no `disks` in `config/media.ts`) — e.g.
+ * one that only hosts the federated console — has nothing to browse: say so, and offer the apps the
+ * console does show, instead of pages that can only fail.
+ */
+function NoStorageGate({ children }: { children: React.ReactNode }) {
+  const topology = useTopology();
+  // Wait for it: an app with no storage would otherwise flash failing pages first.
+  if (topology.isPending) return null;
+  if (topology.data?.storage !== false) return <>{children}</>;
+  return <NoStorageNotice />;
+}
+
+function NoStorageNotice() {
+  const { picker } = useAppPicker();
+  const label = picker?.local.label ?? 'This app';
+  const others = picker?.apps ?? [];
+  return (
+    <EmptyState
+      className="mt-10"
+      title={`${label} has no media of its own`}
+      description={
+        <>
+          No storage is configured in this app: add a disk to <code>disks</code> in{' '}
+          <code>config/media.ts</code>, or configure <code>@adonisjs/drive</code>.
+          {others.length > 0 ? ' Meanwhile, pick an app below to see its media.' : ''}
+        </>
+      }
+      action={
+        others.length > 0 ? (
+          <div className="flex flex-wrap justify-center gap-2">
+            {others.map((app) => (
+              <Button
+                key={app.id}
+                variant="outline"
+                size="sm"
+                onClick={() => writeAppToUrl(app.id)}
+              >
+                {app.label}
+              </Button>
+            ))}
+          </div>
+        ) : undefined
+      }
+    />
   );
 }
