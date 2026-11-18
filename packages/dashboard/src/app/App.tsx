@@ -6,7 +6,7 @@ import { readShellConfig } from '../agora-kit/shell-config';
 import { Button } from '../agora-kit/ui/button';
 import { NuqsHashAdapter } from '../agora-kit/url-state/nuqs-hash-adapter';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
-import { AppPickerControl, useAppPicker, writeAppToUrl } from './AppPicker';
+import { AppPickerControl, SelectedAppNotice, useAppPicker, writeAppToUrl } from './AppPicker';
 import type { Tab } from './hash-route';
 import { navigate, toHash, useHashRoute } from './hash-route';
 import { FolderIcon, LayersIcon, LogoMark, TransferIcon, UploadIcon } from './icons';
@@ -133,6 +133,7 @@ function Console() {
         </>
       }
     >
+      <SelectedAppNotice />
       <ErrorBoundary label={TITLES[route.tab]} resetKeys={[route.tab]}>
         <NoStorageGate>
           {route.tab === 'browse' && (

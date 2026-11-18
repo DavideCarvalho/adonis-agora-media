@@ -9,6 +9,7 @@ import {
   resolveAccessDeniedPage,
 } from '../src/dashboard/access_denied_page.js';
 import {
+  appCallerOf,
   type ConsoleAuthorizeDecision,
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
@@ -42,11 +43,13 @@ import {
 } from '../src/dashboard/tenant_scope.js';
 import type { AppPickerResponse, TenantPickerResponse } from '../src/dashboard/types.js';
 import {
+  ACTOR_HEADER,
   buildFederatedMediaApp,
   FEDERATED_APP_KEY,
   type FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
+  federatedAppActions,
   validateFederatedConsoleApp,
 } from '../src/federation/console.js';
 import { MediaManager } from '../src/media_manager.js';
@@ -177,8 +180,9 @@ export default class MediaDashboardProvider {
       if (picked === null) throw new DashboardError('unknown app', 404);
       const app = await this.#federatedApp(config, picked);
       const viewer = await resolveViewer(ctx, config.viewer).catch(() => null);
+      const entry = config.apps?.[picked];
       return new FederatedConsoleService(app, {
-        actions: config.actions ?? false,
+        actions: entry ? federatedAppActions(entry, config.actions ?? false) : false,
         actor: viewer?.email ?? viewer?.label ?? 'anonymous',
         rawUrl: (disk, key) =>
           `${apiBase}/object/raw?${new URLSearchParams({ app: picked, disk, key }).toString()}`,
@@ -212,7 +216,15 @@ export default class MediaDashboardProvider {
     const granted = this.#grantedApps(ctx);
     const apps = Object.entries(config.apps ?? {})
       .filter(([id]) => granted === undefined || granted.includes(id))
-      .map(([id, app]) => ({ id, label: app.label ?? id }));
+      .map(([id, app]) => ({
+        id,
+        label: app.label ?? id,
+        mode: 'federated' as const,
+        // Who runs actions on that app's media from here: the app itself, or nobody.
+        actions: federatedAppActions(app, config.actions ?? false)
+          ? ('app' as const)
+          : ('none' as const),
+      }));
     return {
       local: { label: config.appLabel ?? 'This app' },
       apps,
@@ -481,6 +493,21 @@ export default class MediaDashboardProvider {
       .catch(() => {});
   }
 
+  /**
+   * An action another app's federated console sent here (`proxyActions`, an app caller): logged with
+   * the app and the viewer it names, like the actions that come over Redis.
+   */
+  #logCallerAction(ctx: HttpContext): void {
+    const caller = appCallerOf(ctx);
+    if (!caller) return;
+    const actor = ctx.request.header(ACTOR_HEADER);
+    this.#info(
+      `[@adonis-agora/media] federated console: ${ctx.request.url(false)} by ${
+        typeof actor === 'string' && actor !== '' ? actor.slice(0, 200) : 'unknown'
+      } from app ${caller.app}`,
+    );
+  }
+
   /** Warn through the app logger when one is bound, else the console. Never throws. */
   #warn(message: string): void {
     void Promise.resolve()
@@ -523,6 +550,12 @@ export default class MediaDashboardProvider {
         }
       };
     };
+    // An action: logged when another app's console sent it (an app caller, `proxyActions`).
+    const action = (handler: (svc: ConsoleService, ctx: HttpContext) => Promise<void>) =>
+      json(async (svc, ctx) => {
+        this.#logCallerAction(ctx);
+        await handler(svc, ctx);
+      });
 
     const group = router.group(() => {
       router
@@ -682,7 +715,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/uploads/:id/abort',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.abortUpload(String(ctx.params.id));
           }),
         )
@@ -712,7 +745,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/media-record/delete',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             const body = ctx.request.body() as { id?: string };
             if (!body.id) throw new DashboardError('id is required', 400);
             await svc.deleteMediaRecord(body.id);
@@ -723,7 +756,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/copy',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.copy(copyMoveBody(ctx));
           }),
         )
@@ -731,7 +764,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/move',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.move(copyMoveBody(ctx));
           }),
         )
@@ -739,7 +772,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/delete',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             const body = ctx.request.body() as { disk?: string; keys?: string[] };
             if (!body.disk) throw new DashboardError('disk is required', 400);
             await svc.remove({
@@ -752,7 +785,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/folder',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.createFolder(folderBody(ctx));
           }),
         )
@@ -760,7 +793,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/folder/delete',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.deleteFolder(folderBody(ctx));
           }),
         )
@@ -768,7 +801,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/folder/copy',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.copyFolder(copyMoveBody(ctx));
           }),
         )
@@ -776,7 +809,7 @@ export default class MediaDashboardProvider {
       router
         .post(
           '/folder/move',
-          json(async (svc, ctx) => {
+          action(async (svc, ctx) => {
             await svc.moveFolder(copyMoveBody(ctx));
           }),
         )

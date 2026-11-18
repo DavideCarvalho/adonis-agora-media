@@ -11,6 +11,7 @@ import { Badge } from '../../agora-kit/ui/badge';
 import { Button } from '../../agora-kit/ui/button';
 import { Skeleton } from '../../agora-kit/ui/skeleton';
 import type { UploadDetailResponse, UploadInfo, UploadPart } from '../../types';
+import { useActionsUnavailable } from '../AppPicker';
 import type { Route } from '../hash-route';
 import { navigate } from '../hash-route';
 import { ArrowLeftIcon, TransferIcon } from '../icons';
@@ -51,12 +52,15 @@ export function UploadDetailBody({
   canceling,
   cancelFailed,
   onCancel,
+  unavailable,
 }: {
   detail: UploadDetailResponse;
   actions: boolean;
   canceling: boolean;
   cancelFailed: boolean;
   onCancel: () => void;
+  /** Why cancel is off here (a read-only federated app): the button shows disabled with it. */
+  unavailable?: string | undefined;
 }) {
   const { upload, parts } = detail;
   return (
@@ -100,6 +104,12 @@ export function UploadDetailBody({
             >
               {canceling ? 'Canceling…' : 'Cancel session'}
             </Button>
+          ) : unavailable !== undefined ? (
+            <span title={unavailable}>
+              <Button variant="destructive" size="sm" disabled>
+                Cancel session
+              </Button>
+            </span>
           ) : undefined
         }
       >
@@ -174,6 +184,7 @@ function UploadDetail({ uploadId }: { uploadId: string }) {
   const detail = useUploadDetail(uploadId);
   const topology = useTopology();
   const abort = useAbortUpload();
+  const unavailable = useActionsUnavailable();
 
   async function cancel(): Promise<void> {
     await abort.mutateAsync(uploadId);
@@ -199,6 +210,7 @@ function UploadDetail({ uploadId }: { uploadId: string }) {
           <UploadDetailBody
             detail={data}
             actions={topology.data?.actions ?? false}
+            unavailable={unavailable}
             canceling={abort.isPending}
             cancelFailed={abort.isError}
             onCancel={() => void cancel().catch(() => undefined)}

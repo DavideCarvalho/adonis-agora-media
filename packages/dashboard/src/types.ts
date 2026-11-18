@@ -274,6 +274,16 @@ export interface TenantPickerResponse {
 /** The federated console's app selector (`GET /apps`): this app, then the other apps it shows. */
 export interface AppPickerResponse {
   local: { label: string };
-  apps: Array<{ id: string; label: string }>;
+  apps: Array<{
+    id: string;
+    label: string;
+    /** How this console reaches the app: `federated` reads the app's own store. Older servers omit it. */
+    mode?: 'federated' | undefined;
+    /**
+     * Who runs actions on that app's media from here: `app` (the app itself, which this console
+     * asks), or `none` (read-only here). Older servers omit it.
+     */
+    actions?: 'app' | 'none' | undefined;
+  }>;
   selected: string | null;
 }

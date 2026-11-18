@@ -14,7 +14,12 @@ Each app keeps its own `media` table, its own disks and its own storage credenti
 - reads the other app's **records, collections and upload sessions** straight from that app's
   tables, read-only;
 - asks **the app itself**, over Redis, for anything that needs its disks: listing them, browsing
-  objects, opening an object, the URLs of a record's conversions, and every action.
+  objects, opening an object, the URLs of a record's conversions, and every action (or, with
+  [`proxyActions`](#actions-over-http), sends the actions to the app's own console API).
+
+The selector tags every other app **federated**. While one is picked, a strip at the top of the page
+says where its data comes from and who runs its actions; when it is read-only here, the action
+buttons show disabled, saying why.
 
 ## The console app
 
@@ -47,13 +52,15 @@ export default defineConfig({
 | `controlPlane` | The `@adonisjs/redis` connection to publish on (`connection`, default connection when omitted) and that app's `prefix`. |
 | `origin` | That app's public origin. Needed when that app serves its objects through itself (`objectUrls: 'proxy'`); see below. |
 | `proxyObjects` | Serve that app's objects from this console instead of sending the browser to the app. `true`, or `{ headers, timeoutMs }`; see below. |
+| `proxyActions` | Send this console's actions on that app's media to the app's console API over HTTP. `true`, or `{ apiPath, headers, timeoutMs }`; see [Actions over HTTP](#actions-over-http). |
+| `actions` | Whether this console runs actions on that app's media. Default: on with `proxyActions`, otherwise the console's own `actions`. |
 | `timeoutMs` | How long a request waits for that app to answer. Default `15000`. |
 | `appLabel` | The name of the console's own app in the selector. Defaults to `This app`. |
 
 Keys are 1–64 characters of `A-Z a-z 0-9 _ . -`. The console needs `@adonisjs/redis`. Each entry is
 checked at boot: an empty `controlPlane.prefix`, a `connection` that is not in `config/redis.ts`, a
-`timeoutMs` that is not a positive number or an `origin` that is not an `http(s)` origin fails the
-boot.
+`timeoutMs` that is not a positive number, an `origin` that is not an `http(s)` origin, or
+`proxyActions` without `origin` fails the boot.
 
 The console's own app does not need media storage of its own. An app with no `config/drive.ts`
 and no `disk`/`disks` in `config/media.ts` (one that only hosts the console) shows a notice
@@ -148,8 +155,8 @@ export default defineConfig({
 })
 ```
 
-`authorizeAgoraCaller` opens only `GET <apiBase>/object/raw`, for an app in `apps` that holds
-`media:objects:read` on this app (wildcards count: `media:*`), and only for this app's own objects:
+`authorizeAgoraCaller` opens only `GET <apiBase>/object/raw` (and, with `actions: true`, the
+[action routes](#actions-over-http)), for an app in `apps` that holds `media:objects:read` on this app (wildcards count: `media:*`), and only for this app's own objects:
 a caller never reaches the other apps this console federates. It reads the caller from
 `ctx.agora.caller`, which `@adonis-agora/authkit-client` sets when `service.name` is configured in
 its config. Calls between apps (`ctx.agora.caller`, `urn:agora:app:<name>` tokens) need
@@ -168,6 +175,167 @@ origin. This holds for the console's own objects too.
   Uploading from the console stays the console app's own. With another app picked, the Upload
   page and the drop-to-upload area are off.
 </Callout>
+
+## Actions over HTTP
+
+With `proxyActions`, the console sends its actions on that app's media (delete, copy, move, the
+folder actions, delete record, cancel upload) to the app's own console API, and the app runs them
+with its own store and disks. Nothing goes over Redis for them, and the app's `consoleCommands`
+needs no `actions`.
+
+```ts title="config/media_dashboard.ts (the console app)"
+apps: {
+  'entre-textos': {
+    // …
+    origin: 'https://entretextos.example.com',
+    proxyObjects: { headers: async () => ({ authorization: `Bearer ${await etToken()}` }) },
+    proxyActions: { apiPath: '/media/api' },
+  },
+},
+```
+
+| Option | What it is |
+| --- | --- |
+| `apiPath` | Where the app's console API is mounted on its `origin` (its `apiBasePath`). Default `/media/dashboard/api`. |
+| `headers` | What the app needs to accept the request. Default: the `proxyObjects` headers. Sent only to `origin`. |
+| `timeoutMs` | How long to wait for the app to answer an action. Default `30000`. |
+
+`proxyActions` turns actions on for that app whatever the console's own `actions` says, so the
+console can act on another app while its own media stays read-only. `actions: false` on the entry
+turns them off again. The selector then shows that app as read-only here.
+
+Each action is a `POST` on the app's console API with a JSON body, sent with `redirect: 'manual'`
+and the viewer's email in `x-agora-actor`. The app's log names each one:
+
+```
+[@adonis-agora/media] federated console: /media/api/media-record/delete by ana@example.com from app agora-hub
+```
+
+The app's console must:
+
+1. turn actions on: `actions: true` in its `config/media_dashboard.ts`;
+2. let the console app in on the action routes with `media:objects:write` (see
+   [Authenticating the console to the apps](#authenticating-the-console-to-the-apps));
+3. skip the CSRF check for those calls, if it runs `@adonisjs/shield`'s CSRF:
+
+```ts title="config/shield.ts (the other app)"
+import { mediaCallerCsrfExceptions } from '@adonis-agora/media/dashboard'
+
+csrf: {
+  enabled: true,
+  exceptRoutes: (ctx) => mediaCallerCsrfExceptions(ctx, { apiBase: '/media/api' }),
+},
+```
+
+`mediaCallerCsrfExceptions` only skips a request to the console API that carries a `Bearer`
+token (or the `header` you name) and no cookie: one with no viewer session, which `authorize` can
+only let in through the calling app's credential.
+
+## Authenticating the console to the apps
+
+The other app's console answers the console app through `authorizeAppCaller`, next to its own
+viewers. It takes two functions: `identify` says **which app** is calling, `permit` says whether it
+**may** do this. The routes are fixed:
+
+| Route | Permission asked |
+| --- | --- |
+| `GET <apiBase>/object/raw` (`proxyObjects`) | `media:objects:read` |
+| `POST` on the action routes (`proxyActions`): `uploads/:id/abort`, `media-record/delete`, `copy`, `move`, `delete`, `folder`, `folder/delete`, `folder/copy`, `folder/move` | `media:objects:write` |
+
+Anything else is a `403`; nobody identified is a `401`. Reading does not imply writing: a console
+that browses and acts needs both permissions. A caller reads and acts on every organization's media
+of that app, never on the other apps that console federates. Uploading and the Organization switch
+are not open to callers. `read` and `write` rename the permissions; `write: false` opens no action.
+
+| Setup | `identify` | `permit` |
+| --- | --- | --- |
+| authkit + its grants | `identifyAgoraCaller()` | `permitTokenCapabilities()` |
+| authkit + `@adonis-agora/authz` | `identifyAgoraCaller()` | your function, asking authz |
+| authz, no authkit | your function (your own token, mTLS…) | your function, asking authz |
+| Neither | `identifySharedSecret()` or your function | `permitAll()` or your function (your own table) |
+
+### authkit
+
+`authorizeAgoraCaller` is `identifyAgoraCaller()` with `permitTokenCapabilities()`: the caller is
+`ctx.agora.caller`, set by `@adonis-agora/authkit-client` (1.0.0-rc.9 or later, on both apps) from
+a `urn:agora:app:<name>` service token, and its capabilities are the ones granted to the console
+app's service client on this app (wildcards count: `media:*`).
+
+```ts title="config/media_dashboard.ts (the other app)"
+authorize: anyAuthorize(authorizeAgoraCaller({ apps: ['agora-hub'], actions: true }), adminsOnly),
+```
+
+Without `actions: true` it opens only the object bytes. `capability` and `actionsCapability` rename
+the two permissions.
+
+### A shared secret
+
+No identity provider: each calling app sends its own secret, compared in constant time. With
+`permitAll()` an app that has the secret may read and act.
+
+```ts title="config/media_dashboard.ts (the other app)"
+import {
+  anyAuthorize,
+  authorizeAppCaller,
+  identifySharedSecret,
+  permitAll,
+} from '@adonis-agora/media/dashboard'
+
+authorize: anyAuthorize(
+  authorizeAppCaller({
+    identify: identifySharedSecret({ apps: { hub: env.get('MEDIA_HUB_SECRET') } }),
+    permit: permitAll(),
+  }),
+  adminsOnly,
+),
+```
+
+```ts title="config/media_dashboard.ts (the console app)"
+const hubSecret = () => ({ authorization: `Bearer ${env.get('MEDIA_HUB_SECRET')}` })
+
+apps: {
+  'entre-textos': {
+    // …
+    proxyObjects: { headers: hubSecret },
+    proxyActions: { apiPath: '/media/api' },
+  },
+},
+```
+
+The secret goes in `Authorization: Bearer <secret>` by default; `header: 'x-media-key'` reads it
+from another header as is (pass the same `header` to `mediaCallerCsrfExceptions`). A missing or
+wrong secret is a `401`.
+
+### Your own checks
+
+`identify` returns `{ app, claims? }` or `undefined`; `permit` receives it with the permission asked
+and returns a boolean. With `@adonis-agora/authz`, the calling app is a subject of its own type:
+
+```ts title="config/media_dashboard.ts (the other app)"
+import authz from '@adonis-agora/authz/services/main'
+
+authorizeAppCaller({
+  identify: identifyAgoraCaller(),
+  permit: (caller, permission) => authz.can({ type: 'app', id: caller.app }, permission),
+})
+```
+
+Grant it like any subject: `authz.store.assignRole({ type: 'app', id: 'agora-hub' }, 'media-sync')`.
+With a table of your own:
+
+```ts title="config/media_dashboard.ts (the other app)"
+import ApiClient from '#models/api_client'
+import { hashKey } from '#services/api_keys'
+
+authorizeAppCaller({
+  identify: async (ctx) => {
+    const key = ctx.request.header('x-api-key')
+    const client = key ? await ApiClient.findBy('keyHash', hashKey(key)) : null
+    return client ? { app: client.app, claims: { scopes: client.scopes } } : undefined
+  },
+  permit: (caller, permission) => (caller.claims?.scopes as string[]).includes(permission),
+})
+```
 
 ## Database access
 
@@ -190,9 +358,10 @@ No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
 | Answer | When |
 | --- | --- |
 | `404` | `?app=` names an app that is not configured, or that `authorize` does not grant. |
-| `503` | The app does not answer: it is down, or `consoleCommands` is off. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
-| `502` | The app answered with an error of its own, or (with `proxyObjects`) refused to hand over an object, e.g. a `401`/`403` from its `authorize`. The detail is in the console app's log. |
+| `503` | The app does not answer: it is down, `consoleCommands` is off, or (with `proxyActions`) the request failed or timed out. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
+| `502` | The app answered with an error of its own, or (with `proxyObjects` / `proxyActions`) refused to hand over an object or run an action, e.g. a `401`/`403` from its `authorize`, or answered with a redirect. The detail is in the console app's log. |
 | `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
 
 The app's own refusals keep their status: an unknown record is a `404`, actions it has off are a
-`403`.
+`403`. Over HTTP, its `404` and its answers to a bad request (`400`, `409`, `422`…) keep theirs;
+its `401`/`403` are a `502`.

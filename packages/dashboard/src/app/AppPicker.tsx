@@ -1,5 +1,10 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  AppModeBadge,
+  actionsUnavailableReason,
+  FederatedNotice,
+} from '../agora-kit/blocks/app-mode';
 import { Popover, PopoverContent, PopoverTrigger } from '../agora-kit/ui/popover';
 import { selectedApp } from '../client/dashboard-client';
 import type { AppPickerResponse } from '../types';
@@ -49,6 +54,42 @@ export function useAppPicker(): { picker: AppPickerResponse | undefined; fresh: 
   return { picker: data, fresh: data !== undefined && !isPlaceholderData };
 }
 
+/** One of the other apps, as `/apps` lists it. */
+export type PickerApp = AppPickerResponse['apps'][number];
+
+/**
+ * The other app the console shows now (`?app=`), as `/apps` lists it, or `undefined` for this app
+ * (or before the server has answered for this URL).
+ */
+export function useSelectedApp(): PickerApp | undefined {
+  const { picker, fresh } = useAppPicker();
+  if (!fresh || !picker || !Array.isArray(picker.apps) || picker.selected == null) return undefined;
+  return picker.apps.find((a) => a.id === picker.selected);
+}
+
+/**
+ * Why the console's actions are off for the app shown now (a federated app that is read-only
+ * here), or `undefined`. Action buttons show disabled with it instead of failing.
+ */
+export function useActionsUnavailable(): string | undefined {
+  const app = useSelectedApp();
+  return app ? actionsUnavailableReason(app.label, app) : undefined;
+}
+
+/** While a federated app is shown: whose data this is and who runs the actions on it. */
+export function SelectedAppNotice() {
+  const app = useSelectedApp();
+  if (!app) return null;
+  return (
+    <FederatedNotice
+      appLabel={app.label}
+      mode={app.mode}
+      actions={app.actions}
+      className="mx-4 mt-5 md:mx-6 md:mt-6"
+    />
+  );
+}
+
 const chip =
   'mono flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel-2 px-2 text-[11px] text-fg-2';
 
@@ -76,15 +117,13 @@ export function AppPickerControl() {
   // The app the server serves for this URL (an unknown or ungranted `?app=` is none of the
   // listed ones), the URL's own value only until the server has answered for it.
   const current = fresh ? (picker.selected ?? undefined) : urlApp;
-  const label =
-    current === undefined
-      ? picker.local.label
-      : (picker.apps.find((a) => a.id === current)?.label ?? current);
+  const currentApp = current === undefined ? undefined : picker.apps.find((a) => a.id === current);
+  const label = current === undefined ? picker.local.label : (currentApp?.label ?? current);
   const choose = (app: string | undefined) => {
     setOpen(false);
     writeAppToUrl(app);
   };
-  const options: Array<{ id: string | undefined; label: string }> = [
+  const options: Array<Omit<PickerApp, 'id'> & { id: string | undefined }> = [
     { id: undefined, label: picker.local.label },
     ...picker.apps,
   ];
@@ -94,12 +133,20 @@ export function AppPickerControl() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        className={`${chip} max-w-64 hover:border-line-strong`}
+        className={`${chip} max-w-72 hover:border-line-strong`}
         aria-label="App"
         data-app-picker=""
       >
         <span className="hidden text-faint sm:inline">App</span>
         <span className="truncate">{label}</span>
+        {currentApp && (
+          <AppModeBadge
+            appLabel={currentApp.label}
+            mode={currentApp.mode}
+            actions={currentApp.actions}
+            className="hidden sm:inline-flex"
+          />
+        )}
       </PopoverTrigger>
       <PopoverContent align="end" className="w-56 gap-1 p-1">
         <div role="listbox" aria-label="Apps" className="max-h-72 overflow-y-auto">
@@ -112,7 +159,10 @@ export function AppPickerControl() {
               onClick={() => choose(o.id)}
               className={option}
             >
-              <span className="truncate">{o.label}</span>
+              <span className="flex w-full min-w-0 items-center justify-between gap-2">
+                <span className="truncate">{o.label}</span>
+                <AppModeBadge appLabel={o.label} mode={o.mode} actions={o.actions} />
+              </span>
               {o.id !== undefined && o.label !== o.id && (
                 <span className="mono truncate text-[10px] text-faint">{o.id}</span>
               )}

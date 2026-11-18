@@ -21,6 +21,7 @@ import type {
   MediaDetailResponse,
   MediaEntry,
 } from '../../types';
+import { useActionsUnavailable } from '../AppPicker';
 import { navigate, type Route } from '../hash-route';
 import { ArrowLeftIcon, ExternalIcon, LayersIcon } from '../icons';
 import {
@@ -182,11 +183,14 @@ export function RecordDetailBody({
   deleting,
   deleteError,
   onDelete,
+  unavailable,
 }: {
   detail: MediaDetailResponse;
   deleting: boolean;
   deleteError: string | undefined;
   onDelete: () => void;
+  /** Why delete is off here (a read-only federated app): the button shows disabled with it. */
+  unavailable?: string | undefined;
 }) {
   const { record, variants } = detail;
   return (
@@ -195,9 +199,16 @@ export function RecordDetailBody({
         title="Record"
         description={record.id}
         action={
-          <Button variant="destructive" size="sm" onClick={onDelete} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete'}
-          </Button>
+          <span title={unavailable}>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={onDelete}
+              disabled={deleting || unavailable !== undefined}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </span>
         }
       >
         <dl className="grid grid-cols-[96px_1fr] gap-x-4 gap-y-2.5 sm:grid-cols-[120px_1fr]">
@@ -261,6 +272,7 @@ export function RecordDetailBody({
 function RecordDetail({ recordId }: { recordId: string }) {
   const detail = useMediaRecord(recordId);
   const del = useDeleteMediaRecord();
+  const unavailable = useActionsUnavailable();
   const { push } = useToasts();
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
 
@@ -306,6 +318,7 @@ function RecordDetail({ recordId }: { recordId: string }) {
             deleting={del.isPending}
             deleteError={deleteError}
             onDelete={() => void handleDelete()}
+            unavailable={unavailable}
           />
         )}
       </QueryBoundary>

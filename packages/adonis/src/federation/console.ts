@@ -86,8 +86,52 @@ export interface FederatedConsoleApp {
    * browser is sent to the app's URL.
    */
   proxyObjects?: boolean | FederatedObjectProxy | undefined;
+  /**
+   * Send this console's actions on that app's media (delete, copy, move, folders, delete record,
+   * cancel upload) to the app's own console API over HTTP, at {@link origin}. The app runs each one
+   * with its own store and disks, as if from its own console. Needs `origin`.
+   *
+   * The app's console must let this console in for those routes: `authorizeAgoraCaller({ actions:
+   * true })` there, the `media:objects:write` capability for this console's service token, and
+   * `actions: true` in its config/media_dashboard.ts.
+   *
+   * ```ts
+   * proxyActions: { apiPath: '/media/api' },
+   * ```
+   *
+   * `true` uses the defaults. `headers` defaults to `proxyObjects.headers`. Turns actions on for
+   * this app whatever this console's own `actions` says; `actions: false` on the entry turns them
+   * off again. Without it, actions go over {@link controlPlane} (when this console has `actions` on
+   * and the app answers them, `consoleCommands.actions`).
+   */
+  proxyActions?: boolean | FederatedActionProxy | undefined;
+  /**
+   * Whether this console runs actions on that app's media. Default: on with `proxyActions`,
+   * otherwise this console's own `actions`.
+   */
+  actions?: boolean | undefined;
   /** How long a command waits for the app to answer, in ms. Default 15 000. */
   timeoutMs?: number | undefined;
+}
+
+/** {@link FederatedConsoleApp.proxyActions} as an object. */
+export interface FederatedActionProxy {
+  /**
+   * Request headers for the app's own origin (a service token). Asked on every action. Default:
+   * `proxyObjects.headers`.
+   */
+  headers?: (() => Record<string, string> | Promise<Record<string, string>>) | undefined;
+  /** Where the app's console API is mounted on its origin. Default `/media/dashboard/api`. */
+  apiPath?: string | undefined;
+  /** How long to wait for the app to answer an action, in ms. Default 30 000. */
+  timeoutMs?: number | undefined;
+}
+
+/** Whether a console runs actions on the app `entry` (its `actions`, else on with `proxyActions`). */
+export function federatedAppActions(entry: FederatedConsoleApp, consoleActions: boolean): boolean {
+  if (typeof entry.actions === 'boolean') return entry.actions;
+  if (entry.proxyActions) return true;
+  return consoleActions;
 }
 
 /** {@link FederatedConsoleApp.proxyObjects} as an object. */
@@ -149,11 +193,12 @@ export function validateFederatedConsoleApp(
   ) {
     fail('`timeoutMs` must be a positive number of milliseconds');
   }
-  const proxy = entry.proxyObjects;
-  if (proxy !== undefined && typeof proxy !== 'boolean') {
-    if (!proxy || typeof proxy !== 'object') fail('`proxyObjects` must be a boolean or an object');
+  for (const name of ['proxyObjects', 'proxyActions'] as const) {
+    const proxy = entry[name];
+    if (proxy === undefined || typeof proxy === 'boolean') continue;
+    if (!proxy || typeof proxy !== 'object') fail(`\`${name}\` must be a boolean or an object`);
     if (proxy.headers !== undefined && typeof proxy.headers !== 'function') {
-      fail('`proxyObjects.headers` must be a function returning the headers');
+      fail(`\`${name}.headers\` must be a function returning the headers`);
     }
     if (
       proxy.timeoutMs !== undefined &&
@@ -161,8 +206,26 @@ export function validateFederatedConsoleApp(
         !Number.isFinite(proxy.timeoutMs) ||
         proxy.timeoutMs <= 0)
     ) {
-      fail('`proxyObjects.timeoutMs` must be a positive number of milliseconds');
+      fail(`\`${name}.timeoutMs\` must be a positive number of milliseconds`);
     }
+  }
+  const actionProxy = entry.proxyActions;
+  if (actionProxy && typeof actionProxy === 'object' && actionProxy.apiPath !== undefined) {
+    const path = actionProxy.apiPath;
+    if (
+      typeof path !== 'string' ||
+      !path.startsWith('/') ||
+      path.startsWith('//') ||
+      /[?#\\]/.test(path)
+    ) {
+      fail('`proxyActions.apiPath` must be a path like /media/api (no query, no host)');
+    }
+  }
+  if (entry.proxyActions && entry.origin === undefined) {
+    fail("`proxyActions` needs `origin`: the app's console API is called there");
+  }
+  if (entry.actions !== undefined && typeof entry.actions !== 'boolean') {
+    fail('`actions` must be a boolean');
   }
   if (entry.origin !== undefined) {
     let url: URL | undefined;
@@ -209,6 +272,41 @@ export const ACTION_VERBS = [
 ] as const;
 
 export type MediaConsoleVerb = (typeof READ_VERBS)[number] | (typeof ACTION_VERBS)[number];
+
+/** The action verbs, as the app's console API takes them (`proxyActions`): `POST <apiPath><path>`. */
+type ActionVerb = (typeof ACTION_VERBS)[number];
+
+/** Each action as a request on the app's console API: the path and the JSON body. */
+export function federatedActionRequest(
+  verb: ActionVerb,
+  args: unknown[],
+): { path: string; body: Record<string, unknown> } {
+  const [first] = args;
+  const body = (first && typeof first === 'object' ? first : {}) as Record<string, unknown>;
+  switch (verb) {
+    case 'abortUpload':
+      return { path: `/uploads/${encodeURIComponent(String(first))}/abort`, body: {} };
+    case 'deleteMediaRecord':
+      return { path: '/media-record/delete', body: { id: String(first) } };
+    case 'remove':
+      return { path: '/delete', body };
+    case 'copy':
+      return { path: '/copy', body };
+    case 'move':
+      return { path: '/move', body };
+    case 'createFolder':
+      return { path: '/folder', body };
+    case 'deleteFolder':
+      return { path: '/folder/delete', body };
+    case 'copyFolder':
+      return { path: '/folder/copy', body };
+    case 'moveFolder':
+      return { path: '/folder/move', body };
+  }
+}
+
+/** The header a forwarded action names who asked for it in (the app logs it). */
+export const ACTOR_HEADER = 'x-agora-actor';
 
 const READS: ReadonlySet<string> = new Set(READ_VERBS);
 const ACTIONS: ReadonlySet<string> = new Set(ACTION_VERBS);
@@ -277,6 +375,10 @@ export class FederatedApp {
   readonly timeoutMs: number | undefined;
   /** Set when this console serves the app's object bytes itself (`proxyObjects`). */
   readonly proxy: FederatedObjectProxy | undefined;
+  /** Set when this console sends its actions to the app's console API (`proxyActions`). */
+  readonly actionProxy:
+    | (Omit<FederatedActionProxy, 'apiPath' | 'timeoutMs'> & { apiPath: string; timeoutMs: number })
+    | undefined;
   readonly #fetch: typeof fetch;
 
   constructor(options: {
@@ -288,6 +390,7 @@ export class FederatedApp {
     origin?: string | undefined;
     timeoutMs?: number | undefined;
     proxyObjects?: boolean | FederatedObjectProxy | undefined;
+    proxyActions?: boolean | FederatedActionProxy | undefined;
     /** For tests. Default: the global `fetch`. */
     fetch?: typeof fetch | undefined;
   }) {
@@ -300,6 +403,17 @@ export class FederatedApp {
     this.timeoutMs = options.timeoutMs;
     const proxy = options.proxyObjects;
     this.proxy = proxy === true ? {} : proxy ? proxy : undefined;
+    const actions = options.proxyActions;
+    if (actions) {
+      const spec = actions === true ? {} : actions;
+      const headers =
+        spec.headers ?? (typeof proxy === 'object' && proxy ? proxy.headers : undefined);
+      this.actionProxy = {
+        apiPath: (spec.apiPath ?? '/media/dashboard/api').replace(/\/+$/, ''),
+        timeoutMs: spec.timeoutMs ?? 30_000,
+        ...(headers ? { headers } : {}),
+      };
+    }
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   }
 
@@ -393,6 +507,70 @@ export class FederatedApp {
     };
   }
 
+  /**
+   * Run an action in the app through its console API (`proxyActions`): `POST` on its {@link origin}
+   * with the headers, `redirect: 'manual'`. The app's `404` and its answers to a bad request stand;
+   * a refusal (`401`/`403`), a redirect or a failure is a `502` (cause logged); no answer is a `503`.
+   */
+  async forwardAction(verb: ActionVerb, args: unknown[], actor?: string): Promise<void> {
+    const spec = this.actionProxy;
+    if (!spec || !this.origin) {
+      throw new DashboardError(`${this.label}: actions are not sent to this app over HTTP`, 501);
+    }
+    const { path, body } = federatedActionRequest(verb, args);
+    const target = `${this.origin}${spec.apiPath}${path}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), spec.timeoutMs);
+    let response: Response;
+    try {
+      // Inside the `try`: a token provider that fails is a 503 with its cause logged.
+      const headers = new Headers(spec.headers ? await spec.headers() : undefined);
+      headers.set('content-type', 'application/json');
+      headers.set('accept', 'application/json');
+      if (actor !== undefined) headers.set(ACTOR_HEADER, actor);
+      // `manual`: a redirect would carry the service token to wherever it points.
+      response = await this.#fetch(target, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new FederatedAppError(
+        `${this.label}: the action could not be sent`,
+        503,
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    const answer = await response.text().catch(() => '');
+    if (response.ok) return;
+    let message: string | undefined;
+    try {
+      const parsed = JSON.parse(answer) as { error?: unknown };
+      if (typeof parsed.error === 'string') message = parsed.error.slice(0, 500);
+    } catch {
+      message = undefined;
+    }
+    const status = response.status;
+    if (status === 404) throw new DashboardError(message ?? 'not found', 404);
+    // The app's own answer to a bad request (a missing field, an unknown key) stands.
+    if (status >= 400 && status < 500 && status !== 401 && status !== 403) {
+      throw new DashboardError(message ?? `the ${this.label} app refused the action`, status);
+    }
+    throw new FederatedAppError(
+      `the ${this.label} app did not run the action`,
+      502,
+      `POST ${this.origin}${spec.apiPath}${path} answered HTTP ${status}${message ? ` (${message})` : ''}${
+        status === 401 || status === 403
+          ? " (does its console `authorize` accept this console's actions, e.g. authorizeAgoraCaller({ actions: true }), and does it have `actions: true`?)"
+          : ''
+      }`,
+    );
+  }
+
   async close(): Promise<void> {
     await this.channel.close();
   }
@@ -439,6 +617,7 @@ export async function buildFederatedMediaApp(
     ...(config.origin !== undefined ? { origin: config.origin } : {}),
     ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
     ...(config.proxyObjects !== undefined ? { proxyObjects: config.proxyObjects } : {}),
+    ...(config.proxyActions !== undefined ? { proxyActions: config.proxyActions } : {}),
   });
 }
 
@@ -452,7 +631,8 @@ const NO_DISKS: MediaManagerLike['storage'] = {
 /**
  * The console's service over another app: the same surface as {@link DashboardService}. Records,
  * collections and upload sessions come from that app's tables; disks, object URLs and every action
- * go to that app. `actions` is THIS console's switch: an action this console has off never leaves.
+ * go to that app (over Redis, or its console API with `proxyActions`). `actions` is THIS console's
+ * switch for that app: an action this console has off never leaves.
  */
 export class FederatedConsoleService {
   readonly #app: FederatedApp;
@@ -506,8 +686,13 @@ export class FederatedConsoleService {
     return this.#app.send(verb, args, this.#actor);
   }
 
-  async #act(verb: MediaConsoleVerb, ...args: unknown[]): Promise<void> {
+  async #act(verb: ActionVerb, ...args: unknown[]): Promise<void> {
     if (!this.#actions) throw new DashboardError('actions are disabled on this console', 403);
+    while (args.length > 0 && args[args.length - 1] === undefined) args.pop();
+    if (this.#app.actionProxy) {
+      await this.#app.forwardAction(verb, args, this.#actor);
+      return;
+    }
     await this.#send(verb, ...args);
   }
 
