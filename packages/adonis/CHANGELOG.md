@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.25
+
+### Patch Changes
+
+- [#341](https://github.com/DavideCarvalho/adonis-agora-media/pull/341) [`1ceea44`](https://github.com/DavideCarvalho/adonis-agora-media/commit/1ceea4400e9b4fd16a83b5b5437d573216a82a21) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console: the Collections filter's collection field autocompletes from the existing collections and still accepts a typed key. The console kit gains `ComboSelect` / `ComboMultiSelect`.
+
 ## 1.0.0-rc.24
 
 ### Minor Changes
