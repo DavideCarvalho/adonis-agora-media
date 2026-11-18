@@ -341,12 +341,15 @@ const FIELDS: {
 export function CollectionFilterForm({
   draft,
   collections = [],
+  loading = false,
   onChange,
   onApply,
   onReset,
 }: {
   draft: CollectionFilter;
   collections?: readonly string[];
+  /** The summary is still loading: the popup says so instead of "No collections". */
+  loading?: boolean;
   onChange: (next: CollectionFilter) => void;
   onApply: () => void;
   onReset: () => void;
@@ -370,6 +373,7 @@ export function CollectionFilterForm({
                 onValueChange={(next) => onChange(withCollection(draft, next ?? undefined))}
                 placeholder={f.placeholder}
                 emptyText="No collections"
+                loading={loading}
                 creatable
                 className="h-8 w-full text-[13px]"
               />
@@ -572,6 +576,7 @@ export function CollectionsView({ route }: { route: Route }) {
           <CollectionFilterForm
             draft={draft}
             collections={collections.map((c) => c.key)}
+            loading={summary.isPending}
             onChange={setDraft}
             onApply={() => setApplied(cleanFilter(draft))}
             onReset={() => {
