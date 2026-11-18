@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.24
+
+### Minor Changes
+
+- [#340](https://github.com/DavideCarvalho/adonis-agora-media/pull/340) [`9cb2d96`](https://github.com/DavideCarvalho/adonis-agora-media/commit/9cb2d96bfe7e514f5b6b65d96b6f686a44308c5a) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Federated console: `proxyObjects` on an `apps` entry serves that app's object bytes from this console (same origin), fetching them from the app with optional `headers` (a service token). Previews, thumbnails and "Open" then work without a session in the other app and under a strict `img-src`. New `authorizeAgoraCaller()` lets another Agora app holding `media:objects:read` read `GET <apiBase>/object/raw`, and `capabilityAllows()` is exported. `object/raw` now serves HTML, SVG, XML and scripts as downloads with a sandboxing CSP and `nosniff`.
+
 ## 1.0.0-rc.23
 
 ### Patch Changes
