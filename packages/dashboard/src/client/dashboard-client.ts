@@ -427,6 +427,53 @@ export class DashboardClient {
     return { text: new TextDecoder().decode(merged), bytesRead };
   }
 
+  /**
+   * Read a whole object's bytes through the inline proxy — for previews that need random access to
+   * the file (Parquet keeps its schema in a footer). Refuses before downloading when the response
+   * declares more than `maxBytes`.
+   */
+  async objectBytes(disk: string, key: string, maxBytes: number): Promise<ArrayBuffer> {
+    const res = await this.fetchImpl(this.objectRawUrl(disk, key), {
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
+    if (res.status === 401) return this.unauthenticated(res);
+    if (!res.ok) throw new Error(`request failed (${res.status})`);
+    const declared = Number(res.headers?.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel();
+      throw new ObjectTooLargeError(maxBytes);
+    }
+    // The header may be absent (a streamed/proxied body) or wrong: count what actually arrives and
+    // stop as soon as it passes the cap, so an unbounded body never sits in memory whole.
+    if (!res.body) {
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength > maxBytes) throw new ObjectTooLargeError(maxBytes);
+      return buffer;
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new ObjectTooLargeError(maxBytes);
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out.buffer;
+  }
+
   /** Full detail (+ recorded parts) of one resumable upload session. */
   uploadDetail(id: string): Promise<UploadDetailResponse> {
     return this.get<UploadDetailResponse>(`/uploads/${encodeURIComponent(id)}`);
@@ -450,5 +497,13 @@ export class DashboardClient {
   /** Deletes a stored `MediaRecord` (actions-gated; does not touch its underlying disk object). */
   deleteMediaRecord(id: string): Promise<void> {
     return this.post('/media-record/delete', { id });
+  }
+}
+
+/** {@link DashboardClient.objectBytes} stopped reading: the object is bigger than the cap. */
+export class ObjectTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`object is larger than ${maxBytes} bytes`);
+    this.name = 'ObjectTooLargeError';
   }
 }

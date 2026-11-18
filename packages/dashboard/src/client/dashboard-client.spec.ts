@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { csrfHeader, DashboardClient, followUnauthenticated } from './dashboard-client';
+import {
+  csrfHeader,
+  DashboardClient,
+  followUnauthenticated,
+  ObjectTooLargeError,
+} from './dashboard-client';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -136,6 +141,61 @@ describe('DashboardClient', () => {
   it('builds the same-origin raw preview proxy url', () => {
     const client = new DashboardClient({ apiBase: '/api' });
     expect(client.objectRawUrl('s3', 'a b.txt')).toBe('/api/object/raw?disk=s3&key=a+b.txt');
+  });
+
+  it('objectBytes() reads the raw proxy with same-origin credentials', async () => {
+    const payload = new Uint8Array([1, 2, 3]).buffer;
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': '3' }),
+          arrayBuffer: async () => payload,
+        }) as Response,
+    );
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await expect(client.objectBytes('s3', 'a.parquet', 10)).resolves.toBe(payload);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/object/raw?disk=s3&key=a.parquet');
+    expect(init).toMatchObject({ credentials: 'same-origin', redirect: 'manual' });
+  });
+
+  it('objectBytes() refuses a response declaring more than the cap', async () => {
+    const arrayBuffer = vi.fn();
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': '11' }),
+          arrayBuffer,
+        }) as unknown as Response,
+    );
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await expect(client.objectBytes('s3', 'a.parquet', 10)).rejects.toThrow(/larger than/);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('objectBytes() counts the bytes that arrive when the size is not declared, and stops at the cap', async () => {
+    const stream = (chunks: number[]) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const n of chunks) controller.enqueue(new Uint8Array(n));
+          controller.close();
+        },
+      });
+    const respond = (chunks: number[]) =>
+      vi.fn(async () => new Response(stream(chunks), { status: 200 })) as unknown as typeof fetch;
+
+    const over = new DashboardClient({ apiBase: '/api', fetchImpl: respond([6, 6]) });
+    await expect(over.objectBytes('s3', 'a.parquet', 10)).rejects.toBeInstanceOf(
+      ObjectTooLargeError,
+    );
+
+    const under = new DashboardClient({ apiBase: '/api', fetchImpl: respond([4, 5]) });
+    const buffer = await under.objectBytes('s3', 'a.parquet', 10);
+    expect(buffer.byteLength).toBe(9);
   });
 
   describe('401 handling', () => {

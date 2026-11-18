@@ -353,6 +353,12 @@ importers:
       happy-dom:
         specifier: 21.0.4
         version: 21.0.4
+      hyparquet:
+        specifier: 1.33.0
+        version: 1.33.0
+      hyparquet-writer:
+        specifier: 0.18.0
+        version: 0.18.0
       jsdom:
         specifier: 31.0.1
         version: 31.0.1(@noble/hashes@2.4.0)
@@ -3287,6 +3293,15 @@ packages:
   human-signals@8.0.1:
     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
     engines: {node: '>=18.18.0'}
+
+  hyparquet-writer@0.18.0:
+    resolution: {integrity: sha512-1vDuEneasjp2yuk/OnLqli5aArzHQw8NYVbJD7ytpHZ3outmJaHHRcNbA7BiiFxonWGhwgPPWnVSsREv6LxE4A==}
+
+  hyparquet@1.32.0:
+    resolution: {integrity: sha512-SpkvdfgQjcdCJA+MTzo0WSreLLy/aLRYs3xetk1SsuFvq8vF+J/97OaRnZhf+p5Nx3J27i9FhSC0bJ5eQZG/7Q==}
+
+  hyparquet@1.33.0:
+    resolution: {integrity: sha512-8EKLe73vRIMEKVEOe5y+kIzFxo6AvbLvd5ukd7P+yv3RvG0+TZM4qO8imbqxU6zds5pV+OeWRTMwy95mhHUheg==}
 
   iconv-lite@0.7.3:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
@@ -7280,6 +7295,14 @@ snapshots:
   human-id@4.2.2: {}
 
   human-signals@8.0.1: {}
+
+  hyparquet-writer@0.18.0:
+    dependencies:
+      hyparquet: 1.32.0
+
+  hyparquet@1.32.0: {}
+
+  hyparquet@1.33.0: {}
 
   iconv-lite@0.7.3:
     dependencies:

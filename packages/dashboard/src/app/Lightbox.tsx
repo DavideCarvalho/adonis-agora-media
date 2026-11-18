@@ -1,17 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
-import { useRef } from 'react';
+import { lazy, Suspense, useRef } from 'react';
 import { XIcon } from '../agora-kit/icons';
 import { Button } from '../agora-kit/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../agora-kit/ui/dialog';
 import type { ObjectInsight } from '../types';
 import { useDashboard } from './context';
 import { DataTable } from './DataTable';
-import { ExternalIcon, FileIcon } from './icons';
+import { FallbackCard } from './FallbackCard';
+import { ExternalIcon } from './icons';
+import { isParquet } from './parquet';
 import { useObjectInsights } from './queries';
 import { Alert, Empty, formatBytes } from './ui';
 
 /**
- * A modal preview of a disk object. Renders inline previews by content type (image/video/audio/PDF/text/CSV/TSV);
+ * A modal preview of a disk object. Renders inline previews by content type (image/video/audio/PDF/text/CSV/TSV/Parquet);
  * everything else falls back to an "Open original ↗" link. Unlike the NestJS version this build does
  * NOT bundle a spreadsheet (XLSX/ODS) parser — that preview kind falls back to the same "Open
  * original" card rather than pulling in a new dependency for one preview tab.
@@ -26,7 +28,7 @@ export interface PreviewItem {
   url: string;
 }
 
-type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'other';
+type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'parquet' | 'other';
 
 const EXTENSION_KIND: ReadonlyArray<[RegExp, PreviewKind]> = [
   [/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i, 'image'],
@@ -38,6 +40,7 @@ const EXTENSION_KIND: ReadonlyArray<[RegExp, PreviewKind]> = [
 
 function previewKind(item: PreviewItem): PreviewKind {
   const type = item.contentType?.toLowerCase() ?? '';
+  if (isParquet(item)) return 'parquet';
   if (type.startsWith('image/')) return 'image';
   if (type === 'application/pdf') return 'pdf';
   if (type.startsWith('video/')) return 'video';
@@ -59,27 +62,6 @@ function textFlavor(item: PreviewItem): 'csv' | 'tsv' | 'json' | 'plain' {
 
 /** How much of a text/CSV file we pull into the tab — a large file is *sampled* (its head only). */
 const SAMPLE_TEXT_BYTES = 8 * 1024 * 1024;
-
-/** The shared fallback surface: a glyph, a message, and a link to the original in a new tab. Used
- *  whenever inline rendering isn't available (unknown type or a read error). */
-function FallbackCard({ item, message }: { item: PreviewItem; message: string }) {
-  return (
-    <div className="grid h-full min-h-[320px] place-items-center gap-4 px-6 text-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="grid size-14 place-items-center rounded-lg border border-border bg-panel-2 text-faint [&_svg]:size-6">
-          <FileIcon />
-        </div>
-        <div className="mono max-w-md text-sm text-dim">{message}</div>
-        <Button
-          nativeButton={false}
-          render={<a href={item.url} target="_blank" rel="noopener noreferrer" />}
-        >
-          Open original ↗
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 /** Split delimited text into rows of fields, honoring double-quoted fields (with "" escapes). */
 function parseDelimited(text: string, delimiter: string): string[][] {
@@ -177,6 +159,9 @@ function TextPreview({ item }: { item: PreviewItem }) {
   );
 }
 
+/** The Parquet preview and its decoder are a lazy chunk: fetched the first time a Parquet file opens. */
+const ParquetPreview = lazy(() => import('./ParquetPreview'));
+
 function PreviewBody({ item, kind }: { item: PreviewItem; kind: PreviewKind }) {
   const { client } = useDashboard();
   switch (kind) {
@@ -216,6 +201,12 @@ function PreviewBody({ item, kind }: { item: PreviewItem; kind: PreviewKind }) {
       );
     case 'text':
       return <TextPreview item={item} />;
+    case 'parquet':
+      return (
+        <Suspense fallback={<Empty>Loading…</Empty>}>
+          <ParquetPreview item={item} />
+        </Suspense>
+      );
     default:
       return (
         <FallbackCard
