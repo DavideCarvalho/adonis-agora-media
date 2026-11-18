@@ -349,13 +349,14 @@ export class FederatedApp {
       );
     }
     const own = this.origin !== undefined && new URL(target).origin === new URL(this.origin).origin;
-    const headers = new Headers(
-      own && this.proxy?.headers ? await this.proxy.headers() : undefined,
-    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.proxy?.timeoutMs ?? 30_000);
     let response: Response;
     try {
+      // Inside the `try`: a token provider that fails is a 503 with its cause logged.
+      const headers = new Headers(
+        own && this.proxy?.headers ? await this.proxy.headers() : undefined,
+      );
       // `manual`: a redirect would carry the service token to wherever it points.
       response = await this.#fetch(target, {
         headers,

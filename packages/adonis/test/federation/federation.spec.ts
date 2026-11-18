@@ -291,6 +291,25 @@ describe('federated media console', () => {
     });
   });
 
+  it('answers 503 with the cause when the proxy headers cannot be made', async () => {
+    const bus = new RedisBus();
+    const owner = await owningApp(bus, { actions: false });
+    await owner.disk.put('a.png', new Uint8Array([1]));
+    const { console } = hubConsole(bus, owner.store, {
+      origin: 'https://et.example',
+      proxyObjects: {
+        headers: async () => {
+          throw new Error('token endpoint down');
+        },
+      },
+      fetch: (async () => new Response('x')) as typeof fetch,
+    });
+    await expect(console.objectStream('fs', 'a.png')).rejects.toMatchObject({
+      status: 503,
+      detail: 'token endpoint down',
+    });
+  });
+
   it('fetches a signed URL with proxyObjects without the headers', async () => {
     const bus = new RedisBus();
     const signer = await owningApp(bus, { actions: false, strategy: 'auto' });
