@@ -427,6 +427,27 @@ export class DashboardClient {
     return { text: new TextDecoder().decode(merged), bytesRead };
   }
 
+  /**
+   * Read a whole object's bytes through the inline proxy — for previews that need random access to
+   * the file (Parquet keeps its schema in a footer). Refuses before downloading when the response
+   * declares more than `maxBytes`.
+   */
+  async objectBytes(disk: string, key: string, maxBytes: number): Promise<ArrayBuffer> {
+    const res = await this.fetchImpl(this.objectRawUrl(disk, key), {
+      credentials: 'same-origin',
+      redirect: 'manual',
+    });
+    if (isRedirect(res)) throw new Error(REDIRECT_MESSAGE);
+    if (res.status === 401) return this.unauthenticated(res);
+    if (!res.ok) throw new Error(`request failed (${res.status})`);
+    const declared = Number(res.headers?.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel();
+      throw new Error(`object is larger than ${maxBytes} bytes`);
+    }
+    return res.arrayBuffer();
+  }
+
   /** Full detail (+ recorded parts) of one resumable upload session. */
   uploadDetail(id: string): Promise<UploadDetailResponse> {
     return this.get<UploadDetailResponse>(`/uploads/${encodeURIComponent(id)}`);

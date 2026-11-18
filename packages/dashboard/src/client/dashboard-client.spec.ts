@@ -138,6 +138,40 @@ describe('DashboardClient', () => {
     expect(client.objectRawUrl('s3', 'a b.txt')).toBe('/api/object/raw?disk=s3&key=a+b.txt');
   });
 
+  it('objectBytes() reads the raw proxy with same-origin credentials', async () => {
+    const payload = new Uint8Array([1, 2, 3]).buffer;
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': '3' }),
+          arrayBuffer: async () => payload,
+        }) as Response,
+    );
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await expect(client.objectBytes('s3', 'a.parquet', 10)).resolves.toBe(payload);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/object/raw?disk=s3&key=a.parquet');
+    expect(init).toMatchObject({ credentials: 'same-origin', redirect: 'manual' });
+  });
+
+  it('objectBytes() refuses a response declaring more than the cap', async () => {
+    const arrayBuffer = vi.fn();
+    const fetchImpl = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': '11' }),
+          arrayBuffer,
+        }) as unknown as Response,
+    );
+    const client = new DashboardClient({ apiBase: '/api', fetchImpl });
+    await expect(client.objectBytes('s3', 'a.parquet', 10)).rejects.toThrow(/larger than/);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
   describe('401 handling', () => {
     it('goes where authorize asked when the 401 carries a redirectTo', async () => {
       const fetchImpl = vi.fn(async () =>

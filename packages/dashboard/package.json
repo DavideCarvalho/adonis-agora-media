@@ -78,6 +78,8 @@
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
     "happy-dom": "21.0.4",
+    "hyparquet": "1.33.0",
+    "hyparquet-writer": "0.18.0",
     "jsdom": "31.0.1",
     "nuqs": "2.10.3",
     "postcss": "8.5.33",
