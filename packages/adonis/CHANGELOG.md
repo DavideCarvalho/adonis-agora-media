@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.22
+
+### Patch Changes
+
+- [#337](https://github.com/DavideCarvalho/adonis-agora-media/pull/337) [`b6b9f95`](https://github.com/DavideCarvalho/adonis-agora-media/commit/b6b9f95669ec0acb4238187e3f76cec1c7a867ed) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - An app without `@adonisjs/drive` (no `drive.manager` binding) no longer fails every media call with "Cannot resolve binding drive.manager": Drive's service is only loaded when the app registers it, so the store and the console work; a disk outside `disks` then fails with `DriveNotConfiguredError`, which names the cause. The console of an app with no storage of its own (no `config/drive.ts`, no `disk`/`disks` in `config/media.ts`, e.g. one that only hosts the federated console) now says so, with a button for each of the other apps, instead of showing failing pages. `topology` gains `storage`.
+
 ## 1.0.0-rc.21
 
 ### Patch Changes
