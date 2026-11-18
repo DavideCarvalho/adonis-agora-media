@@ -196,7 +196,7 @@ apps: {
 
 | Option | What it is |
 | --- | --- |
-| `apiPath` | Where the app's console API is mounted on its `origin` (its `apiBasePath`). Default `/media/dashboard/api`. |
+| `apiPath` | Where the app's console API is mounted on its `origin` (its `apiBasePath`; `/` for the root). Default `/media/dashboard/api`. |
 | `headers` | What the app needs to accept the request. Default: the `proxyObjects` headers. Sent only to `origin`. |
 | `timeoutMs` | How long to wait for the app to answer an action. Default `30000`. |
 
@@ -205,7 +205,8 @@ console can act on another app while its own media stays read-only. `actions: fa
 turns them off again. The selector then shows that app as read-only here.
 
 Each action is a `POST` on the app's console API with a JSON body, sent with `redirect: 'manual'`
-and the viewer's email in `x-agora-actor`. The app's log names each one:
+and the viewer's email in `x-agora-actor` (control characters removed, non-ASCII percent-encoded,
+at most 200 characters; the app cleans it again before logging it). The app's log names each one:
 
 ```
 [@adonis-agora/media] federated console: /media/api/media-record/delete by ana@example.com from app agora-hub
@@ -363,5 +364,6 @@ No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
 | `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
 
 The app's own refusals keep their status: an unknown record is a `404`, actions it has off are a
-`403`. Over HTTP, its `404` and its answers to a bad request (`400`, `409`, `422`…) keep theirs;
-its `401`/`403` are a `502`.
+`403`. Over HTTP (`proxyActions`), the app's `400`, `404`, `409`, `413`, `415`, `422` and `429`
+keep their status and message; any other refusal (`401`, `403`, `405`, a redirect, a `5xx`…) is a
+`502`.

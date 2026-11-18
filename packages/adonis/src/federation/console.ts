@@ -308,6 +308,41 @@ export function federatedActionRequest(
 /** The header a forwarded action names who asked for it in (the app logs it). */
 export const ACTOR_HEADER = 'x-agora-actor';
 
+/**
+ * A viewer name fit for a header and a log line: control characters (CR/LF…) become spaces,
+ * anything outside printable ASCII is percent-encoded, at most 200 characters.
+ */
+export function sanitizeActor(actor: unknown): string | undefined {
+  if (typeof actor !== 'string') return undefined;
+  const clean = actor
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/[^\x20-\x7e]/gu, (c) => {
+      try {
+        return encodeURIComponent(c);
+      } catch {
+        return '?'; // a lone surrogate
+      }
+    })
+    .trim()
+    .slice(0, 200);
+  return clean === '' ? undefined : clean;
+}
+
+/**
+ * The statuses of the app's own answer to an action that reach the viewer as they are, with the
+ * app's message: what the viewer can act on. Any other refusal is a `502`.
+ */
+export const RELAYED_ACTION_STATUSES: ReadonlySet<number> = new Set([
+  400, 404, 409, 413, 415, 422, 429,
+]);
+
+/** `<apiPath><route>` with exactly one `/` between them (`/`, `/media/api/`, `/media//api`). */
+export function joinApiPath(apiPath: string, route: string): string {
+  const base = apiPath.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  return `${base}/${route.replace(/^\/+/, '')}`;
+}
+
 const READS: ReadonlySet<string> = new Set(READ_VERBS);
 const ACTIONS: ReadonlySet<string> = new Set(ACTION_VERBS);
 
@@ -338,8 +373,10 @@ export function mediaConsoleCommandHandler(options: {
           403,
         );
       }
-      const target = typeof args[0] === 'string' ? ` ${args[0]}` : '';
-      options.log?.(`[media] federated console: ${verb}${target} by ${command.actor ?? 'unknown'}`);
+      const target = sanitizeActor(args[0]);
+      options.log?.(
+        `[media] federated console: ${verb}${target ? ` ${target}` : ''} by ${sanitizeActor(command.actor) ?? 'unknown'}`,
+      );
     }
     const svc = await options.service();
     if (verb === 'objectUrls') {
@@ -409,7 +446,7 @@ export class FederatedApp {
       const headers =
         spec.headers ?? (typeof proxy === 'object' && proxy ? proxy.headers : undefined);
       this.actionProxy = {
-        apiPath: (spec.apiPath ?? '/media/dashboard/api').replace(/\/+$/, ''),
+        apiPath: spec.apiPath ?? '/media/dashboard/api',
         timeoutMs: spec.timeoutMs ?? 30_000,
         ...(headers ? { headers } : {}),
       };
@@ -518,7 +555,8 @@ export class FederatedApp {
       throw new DashboardError(`${this.label}: actions are not sent to this app over HTTP`, 501);
     }
     const { path, body } = federatedActionRequest(verb, args);
-    const target = `${this.origin}${spec.apiPath}${path}`;
+    const route = joinApiPath(spec.apiPath, path);
+    const target = `${this.origin}${route}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), spec.timeoutMs);
     let response: Response;
@@ -527,7 +565,8 @@ export class FederatedApp {
       const headers = new Headers(spec.headers ? await spec.headers() : undefined);
       headers.set('content-type', 'application/json');
       headers.set('accept', 'application/json');
-      if (actor !== undefined) headers.set(ACTOR_HEADER, actor);
+      const named = sanitizeActor(actor);
+      if (named !== undefined) headers.set(ACTOR_HEADER, named);
       // `manual`: a redirect would carry the service token to wherever it points.
       response = await this.#fetch(target, {
         method: 'POST',
@@ -556,14 +595,14 @@ export class FederatedApp {
     }
     const status = response.status;
     if (status === 404) throw new DashboardError(message ?? 'not found', 404);
-    // The app's own answer to a bad request (a missing field, an unknown key) stands.
-    if (status >= 400 && status < 500 && status !== 401 && status !== 403) {
+    // The app's own answer the viewer can act on (a missing field, a conflict, too large…) stands.
+    if (RELAYED_ACTION_STATUSES.has(status)) {
       throw new DashboardError(message ?? `the ${this.label} app refused the action`, status);
     }
     throw new FederatedAppError(
       `the ${this.label} app did not run the action`,
       502,
-      `POST ${this.origin}${spec.apiPath}${path} answered HTTP ${status}${message ? ` (${message})` : ''}${
+      `POST ${this.origin}${route} answered HTTP ${status}${message ? ` (${message})` : ''}${
         status === 401 || status === 403
           ? " (does its console `authorize` accept this console's actions, e.g. authorizeAgoraCaller({ actions: true }), and does it have `actions: true`?)"
           : ''

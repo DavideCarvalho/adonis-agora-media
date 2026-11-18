@@ -16,8 +16,11 @@ export {
   FederatedConsoleService,
   federatedActionRequest,
   federatedAppActions,
+  joinApiPath,
   mediaConsoleCommandHandler,
   READ_VERBS,
+  RELAYED_ACTION_STATUSES,
+  sanitizeActor,
 } from '../federation/console.js';
 export type {
   MediaConsoleCommand,

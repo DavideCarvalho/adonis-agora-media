@@ -50,6 +50,7 @@ import {
   FederatedAppError,
   FederatedConsoleService,
   federatedAppActions,
+  sanitizeActor,
   validateFederatedConsoleApp,
 } from '../src/federation/console.js';
 import { MediaManager } from '../src/media_manager.js';
@@ -500,11 +501,11 @@ export default class MediaDashboardProvider {
   #logCallerAction(ctx: HttpContext): void {
     const caller = appCallerOf(ctx);
     if (!caller) return;
-    const actor = ctx.request.header(ACTOR_HEADER);
+    const actor = sanitizeActor(ctx.request.header(ACTOR_HEADER)) ?? 'unknown';
     this.#info(
-      `[@adonis-agora/media] federated console: ${ctx.request.url(false)} by ${
-        typeof actor === 'string' && actor !== '' ? actor.slice(0, 200) : 'unknown'
-      } from app ${caller.app}`,
+      `[@adonis-agora/media] federated console: ${ctx.request.url(false)} by ${actor} from app ${
+        sanitizeActor(caller.app) ?? 'unknown'
+      }`,
     );
   }
 

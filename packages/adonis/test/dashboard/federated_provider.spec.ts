@@ -123,7 +123,7 @@ async function boot(
         input: (key: string) => qs[key],
         body: () => qs,
         url: () => route,
-        header: () => undefined,
+        header: (name: string) => (qs.__headers as Record<string, string> | undefined)?.[name],
       },
       response: {
         header: (name: string, value: string) => {
@@ -329,10 +329,15 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
       {},
       { info: (line: string) => infos.push(line) },
     );
-    expect((await call('POST /media-record/delete', { id: 'hub-1' })).status).toBe(204);
+    const headers = { 'x-agora-actor': 'ana@hub\nFAKE LOG LINE' };
+    expect(
+      (await call('POST /media-record/delete', { id: 'hub-1', __headers: headers })).status,
+    ).toBe(204);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(infos.join('\n')).toContain('federated console: POST /media-record/delete by');
-    expect(infos.join('\n')).toContain('from app agora-hub');
+    expect(infos).toHaveLength(1);
+    expect(infos[0]).toBe(
+      '[@adonis-agora/media] federated console: POST /media-record/delete by ana@hub FAKE LOG LINE from app agora-hub',
+    );
   });
 
   it('keeps an empty `apps` grant (an app caller) to this app only', async () => {

@@ -4,7 +4,9 @@ import {
   FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
+  joinApiPath,
   mediaConsoleCommandHandler,
+  sanitizeActor,
 } from '../../src/federation/console.js';
 import { RedisConsoleChannel } from '../../src/federation/redis_channel.js';
 import type { MediaRecord } from '../../src/media_record.js';
@@ -475,6 +477,79 @@ describe('federated media console', () => {
       expect(http.calls.map((c) => new URL(c.url).origin)).toEqual(
         Array(6).fill('https://et.example'),
       );
+    });
+
+    it('relays exactly the statuses the viewer can act on; any other 4xx is a 502', async () => {
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      let status = 400;
+      const http = recorder(
+        () =>
+          new Response(JSON.stringify({ error: `app says ${status}` }), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: true,
+        fetch: http.fetch,
+      });
+      for (const relayed of [400, 404, 409, 413, 415, 422, 429]) {
+        status = relayed;
+        await expect(console.deleteMediaRecord('r1')).rejects.toMatchObject({
+          status: relayed,
+          message: `app says ${relayed}`,
+        });
+      }
+      for (const refused of [401, 403, 405, 408, 410, 451, 500, 503]) {
+        status = refused;
+        await expect(console.deleteMediaRecord('r1')).rejects.toMatchObject({
+          status: 502,
+          detail: expect.stringContaining(`HTTP ${refused}`),
+        });
+      }
+    });
+
+    it('joins the API path with exactly one slash, whatever its slashes', async () => {
+      expect(joinApiPath('/', '/copy')).toBe('/copy');
+      expect(joinApiPath('/media/api/', '/copy')).toBe('/media/api/copy');
+      expect(joinApiPath('/media//api//', 'folder/move')).toBe('/media/api/folder/move');
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const { console } = hubConsole(bus, owner.store, {
+        origin: 'https://et.example',
+        proxyActions: { apiPath: '/' },
+        fetch: http.fetch,
+      });
+      await console.copy({ disk: 'fs', from: 'a', to: 'b' });
+      expect(http.calls[0]?.url).toBe('https://et.example/copy');
+    });
+
+    it('sends a viewer name with CR/LF or non-ASCII as a clean header, never failing on it', async () => {
+      expect(sanitizeActor('ana@hub\r\nx-evil: 1')).toBe('ana@hub x-evil: 1');
+      expect(sanitizeActor('joão')).toBe('jo%C3%A3o');
+      expect(sanitizeActor('\ud800')).toBe('?');
+      expect(sanitizeActor('a'.repeat(500))).toHaveLength(200);
+      expect(sanitizeActor(' \n ')).toBeUndefined();
+      const bus = new RedisBus();
+      const owner = await owningApp(bus, { actions: false });
+      const http = recorder(() => new Response(null, { status: 204 }));
+      const app = new FederatedApp({
+        id: 'et',
+        store: owner.store,
+        channel: new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }),
+        origin: 'https://et.example',
+        proxyActions: true,
+        fetch: http.fetch,
+      });
+      const evil = new FederatedConsoleService(app, {
+        actions: true,
+        actor: 'Ana\r\nSet-Cookie: x',
+      });
+      await evil.deleteMediaRecord('r1');
+      expect(http.calls[0]?.actor).toBe('Ana Set-Cookie: x');
     });
 
     it('answers 503 when the headers cannot be made, and sends nothing with actions off', async () => {
