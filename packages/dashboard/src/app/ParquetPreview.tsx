@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { ObjectTooLargeError } from '../client/dashboard-client';
 import { useDashboard } from './context';
 import { FallbackCard } from './FallbackCard';
 import type { PreviewItem } from './Lightbox';
@@ -30,11 +31,16 @@ export default function ParquetPreview({ item }: { item: PreviewItem }) {
     staleTime: 60_000,
   });
 
-  if (tooLarge) {
+  // The listed size can be stale or missing: the download stops at the cap too.
+  if (tooLarge || query.error instanceof ObjectTooLargeError) {
     return (
       <FallbackCard
         item={item}
-        message={`Parquet preview reads files up to ${formatBytes(PARQUET_MAX_BYTES)}; this one is ${formatBytes(item.size)}.`}
+        message={
+          tooLarge
+            ? `Parquet preview reads files up to ${formatBytes(PARQUET_MAX_BYTES)}; this one is ${formatBytes(item.size)}.`
+            : `Parquet preview reads files up to ${formatBytes(PARQUET_MAX_BYTES)}; this one is larger.`
+        }
       />
     );
   }

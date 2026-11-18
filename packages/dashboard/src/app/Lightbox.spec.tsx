@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { ObjectTooLargeError } from '../client/dashboard-client';
 import { Lightbox, type PreviewItem } from './Lightbox';
 import { renderView } from './testkit';
 
@@ -172,6 +173,19 @@ describe('Lightbox', () => {
         await screen.findByText(/reads files up to 25 MB; this one is 30 MB/, {}, LAZY),
       ).toBeTruthy();
       expect(client.objectBytes).not.toHaveBeenCalled();
+    });
+
+    it('explains the size cap when the download stops over it (listed size was smaller)', async () => {
+      const client = {
+        objectInsights: vi.fn(async () => ({ insights: [] })),
+        objectBytes: vi.fn(async () => {
+          throw new ObjectTooLargeError(25 * 1024 * 1024);
+        }),
+      };
+      renderView(<Lightbox item={parquetItem()} onClose={vi.fn()} />, client);
+      expect(
+        await screen.findByText(/reads files up to 25 MB; this one is larger/, {}, LAZY),
+      ).toBeTruthy();
     });
   });
 });

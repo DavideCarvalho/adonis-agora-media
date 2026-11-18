@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { csrfHeader, DashboardClient, followUnauthenticated } from './dashboard-client';
+import {
+  csrfHeader,
+  DashboardClient,
+  followUnauthenticated,
+  ObjectTooLargeError,
+} from './dashboard-client';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -170,6 +175,27 @@ describe('DashboardClient', () => {
     const client = new DashboardClient({ apiBase: '/api', fetchImpl });
     await expect(client.objectBytes('s3', 'a.parquet', 10)).rejects.toThrow(/larger than/);
     expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('objectBytes() counts the bytes that arrive when the size is not declared, and stops at the cap', async () => {
+    const stream = (chunks: number[]) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const n of chunks) controller.enqueue(new Uint8Array(n));
+          controller.close();
+        },
+      });
+    const respond = (chunks: number[]) =>
+      vi.fn(async () => new Response(stream(chunks), { status: 200 })) as unknown as typeof fetch;
+
+    const over = new DashboardClient({ apiBase: '/api', fetchImpl: respond([6, 6]) });
+    await expect(over.objectBytes('s3', 'a.parquet', 10)).rejects.toBeInstanceOf(
+      ObjectTooLargeError,
+    );
+
+    const under = new DashboardClient({ apiBase: '/api', fetchImpl: respond([4, 5]) });
+    const buffer = await under.objectBytes('s3', 'a.parquet', 10);
+    expect(buffer.byteLength).toBe(9);
   });
 
   describe('401 handling', () => {
