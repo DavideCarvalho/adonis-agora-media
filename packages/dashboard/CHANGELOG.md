@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.14
+
+### Patch Changes
+
+- [#339](https://github.com/DavideCarvalho/adonis-agora-media/pull/339) [`2ad4a43`](https://github.com/DavideCarvalho/adonis-agora-media/commit/2ad4a435ec5360038ea89657de60cbd7341273f4) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Console ⌘K: arrow keys now visibly move the selection. The highlighted item was styled with a bare `data-selected:` (cmdk marks every item `true` or `false`) and with the dialog's own surface color, so moving looked like nothing happened.
+
 ## 10.0.0-rc.13
 
 ### Minor Changes
