@@ -90,14 +90,22 @@ async function boot(config: Record<string, unknown>, appConfig: Record<string, u
   const call = async (
     route: string,
     qs: Record<string, unknown> = {},
-  ): Promise<{ status: number; body: unknown; location?: string }> => {
+  ): Promise<{
+    status: number;
+    body: unknown;
+    location?: string;
+    headers?: Record<string, string>;
+  }> => {
     const handler = routes.get(route);
     if (!handler) throw new Error(`no route ${route}`);
     let status = 200;
     let body: unknown;
     let location: string | undefined;
+    const headers: Record<string, string> = {};
+    let streamed = false;
     const ctx = {
       request: {
+        method: () => route.split(' ')[0],
         qs: () => qs,
         input: (key: string) => qs[key],
         body: () => qs,
@@ -105,7 +113,16 @@ async function boot(config: Record<string, unknown>, appConfig: Record<string, u
         header: () => undefined,
       },
       response: {
-        header: () => ctx.response,
+        header: (name: string, value: string) => {
+          headers[name] = value;
+          return ctx.response;
+        },
+        stream: async (stream: AsyncIterable<Uint8Array>) => {
+          streamed = true;
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+          body = Buffer.concat(chunks).toString();
+        },
         getHeader: () => undefined,
         status: (code: number) => {
           status = code;
@@ -128,7 +145,12 @@ async function boot(config: Record<string, unknown>, appConfig: Record<string, u
       });
     }
     if (passed) await handler(ctx);
-    return { status, body, ...(location !== undefined ? { location } : {}) };
+    return {
+      status,
+      body,
+      ...(location !== undefined ? { location } : {}),
+      ...(streamed ? { headers } : {}),
+    };
   };
   return { call, provider, warnings };
 }
@@ -188,6 +210,39 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
       body: { error: 'actions are disabled on this console' },
     });
     await provider.shutdown();
+  });
+
+  it('streams the app bytes itself with `proxyObjects`, downloading active content', async () => {
+    const et = await owningApp();
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      seen.push({ url: String(input), auth: new Headers(init?.headers).get('authorization') });
+      return new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } });
+    });
+    try {
+      const { call, provider } = await boot({
+        apps: {
+          'entre-textos': {
+            ...et.entry,
+            proxyObjects: { headers: () => ({ authorization: 'Bearer svc' }) },
+          },
+        },
+      });
+      const raw = await call('GET /object/raw', { app: 'entre-textos', disk: 'fs', key: 'a.png' });
+      expect(raw).toMatchObject({ status: 200, body: '<svg/>' });
+      expect(raw.headers).toMatchObject({
+        'content-type': 'image/svg+xml',
+        'content-disposition': 'attachment',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+      });
+      expect(seen).toEqual([
+        { url: 'https://et.example/media/api/object/raw?disk=fs&key=a.png', auth: 'Bearer svc' },
+      ]);
+      await provider.shutdown();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('hides the apps an `authorize` grant does not name', async () => {

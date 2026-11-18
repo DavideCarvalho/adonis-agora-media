@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import {
   DashboardError,
   DashboardService,
@@ -67,7 +68,33 @@ export interface FederatedConsoleApp {
    * to its storage.
    */
   origin?: string | undefined;
+  /**
+   * Serve that app's object bytes from THIS console (same origin) instead of sending the browser
+   * to the app. The console asks the app for the object's URL as usual, then fetches it itself: a
+   * path on {@link origin} (an app with `objectUrls: 'proxy'`) with `headers`, a signed URL as is.
+   * Previews, thumbnails and "Open" then work for a viewer with no session in that app, and under a
+   * CSP that only allows this origin's images.
+   *
+   * `headers` is what that app needs to accept the request, e.g. a service token its console's
+   * `authorize` takes (`authorizeAgoraCaller` in `@adonis-agora/media/dashboard`). They are sent only to `origin`.
+   *
+   * ```ts
+   * proxyObjects: { headers: async () => ({ authorization: `Bearer ${await token()}` }) },
+   * ```
+   *
+   * `true` fetches with no extra headers (an outbound interceptor may add them). Default: off, the
+   * browser is sent to the app's URL.
+   */
+  proxyObjects?: boolean | FederatedObjectProxy | undefined;
   /** How long a command waits for the app to answer, in ms. Default 15 000. */
+  timeoutMs?: number | undefined;
+}
+
+/** {@link FederatedConsoleApp.proxyObjects} as an object. */
+export interface FederatedObjectProxy {
+  /** Extra request headers for the app's own origin (a service token). Asked on every fetch. */
+  headers?: (() => Record<string, string> | Promise<Record<string, string>>) | undefined;
+  /** How long to wait for the app to start answering, in ms. Default 30 000. */
   timeoutMs?: number | undefined;
 }
 
@@ -121,6 +148,21 @@ export function validateFederatedConsoleApp(
       entry.timeoutMs <= 0)
   ) {
     fail('`timeoutMs` must be a positive number of milliseconds');
+  }
+  const proxy = entry.proxyObjects;
+  if (proxy !== undefined && typeof proxy !== 'boolean') {
+    if (!proxy || typeof proxy !== 'object') fail('`proxyObjects` must be a boolean or an object');
+    if (proxy.headers !== undefined && typeof proxy.headers !== 'function') {
+      fail('`proxyObjects.headers` must be a function returning the headers');
+    }
+    if (
+      proxy.timeoutMs !== undefined &&
+      (typeof proxy.timeoutMs !== 'number' ||
+        !Number.isFinite(proxy.timeoutMs) ||
+        proxy.timeoutMs <= 0)
+    ) {
+      fail('`proxyObjects.timeoutMs` must be a positive number of milliseconds');
+    }
   }
   if (entry.origin !== undefined) {
     let url: URL | undefined;
@@ -233,6 +275,9 @@ export class FederatedApp {
   readonly channel: RedisConsoleChannel;
   readonly origin: string | undefined;
   readonly timeoutMs: number | undefined;
+  /** Set when this console serves the app's object bytes itself (`proxyObjects`). */
+  readonly proxy: FederatedObjectProxy | undefined;
+  readonly #fetch: typeof fetch;
 
   constructor(options: {
     id: string;
@@ -242,6 +287,9 @@ export class FederatedApp {
     channel: RedisConsoleChannel;
     origin?: string | undefined;
     timeoutMs?: number | undefined;
+    proxyObjects?: boolean | FederatedObjectProxy | undefined;
+    /** For tests. Default: the global `fetch`. */
+    fetch?: typeof fetch | undefined;
   }) {
     this.id = options.id;
     this.label = options.label ?? options.id;
@@ -250,6 +298,9 @@ export class FederatedApp {
     this.channel = options.channel;
     this.origin = options.origin?.replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs;
+    const proxy = options.proxyObjects;
+    this.proxy = proxy === true ? {} : proxy ? proxy : undefined;
+    this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   }
 
   /** Send `verb` to the app and return its answer; errors become the console's HTTP answers. */
@@ -282,6 +333,63 @@ export class FederatedApp {
     if (/^https?:\/\//i.test(url)) return url;
     if (url.startsWith('/') && !url.startsWith('//') && this.origin) return `${this.origin}${url}`;
     return null;
+  }
+
+  /**
+   * Fetch the bytes at `url` (what the app answered for an object) for this console to serve. A
+   * path goes to the app's {@link origin} with the `proxyObjects` headers; a signed URL is fetched
+   * as is, with none. The app's `404` stays a `404`; any other refusal is a `502` (cause logged).
+   */
+  async fetchBytes(url: string): Promise<{ stream: Readable; contentType: string; size: number }> {
+    const target = this.absolute(url);
+    if (!target) {
+      throw new DashboardError(
+        `the ${this.label} app serves its objects through itself: set \`origin\` on its entry in \`apps\``,
+        501,
+      );
+    }
+    const own = this.origin !== undefined && new URL(target).origin === new URL(this.origin).origin;
+    const headers = new Headers(
+      own && this.proxy?.headers ? await this.proxy.headers() : undefined,
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.proxy?.timeoutMs ?? 30_000);
+    let response: Response;
+    try {
+      // `manual`: a redirect would carry the service token to wherever it points.
+      response = await this.#fetch(target, {
+        headers,
+        redirect: own ? 'manual' : 'follow',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new FederatedAppError(
+        `${this.label}: the object could not be fetched`,
+        503,
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 404) throw new DashboardError('not found', 404);
+      throw new FederatedAppError(
+        `the ${this.label} app did not hand over the object`,
+        502,
+        `GET ${new URL(target).origin}${new URL(target).pathname} answered HTTP ${response.status}${
+          response.status === 401 || response.status === 403
+            ? " (does its console `authorize` accept this console's request?)"
+            : ''
+        }`,
+      );
+    }
+    const length = Number(response.headers.get('content-length'));
+    return {
+      stream: Readable.fromWeb(response.body as unknown as WebReadableStream<Uint8Array>),
+      contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+      size: response.headers.has('content-length') && Number.isFinite(length) ? length : Number.NaN,
+    };
   }
 
   async close(): Promise<void> {
@@ -329,6 +437,7 @@ export async function buildFederatedMediaApp(
     channel,
     ...(config.origin !== undefined ? { origin: config.origin } : {}),
     ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+    ...(config.proxyObjects !== undefined ? { proxyObjects: config.proxyObjects } : {}),
   });
 }
 
@@ -348,13 +457,26 @@ export class FederatedConsoleService {
   readonly #app: FederatedApp;
   readonly #actions: boolean;
   readonly #actor: string | undefined;
+  readonly #rawUrl: ((disk: string, key: string) => string) | undefined;
   /** Reads that need nothing but the tables, done the way the app's own console does them. */
   readonly #local: DashboardService;
 
-  constructor(app: FederatedApp, options: { actions: boolean; actor?: string | undefined }) {
+  constructor(
+    app: FederatedApp,
+    options: {
+      actions: boolean;
+      actor?: string | undefined;
+      /**
+       * This console's own byte route for the app's object (`<apiBase>/object/raw?app=…`). With it
+       * and the app's `proxyObjects`, the URLs handed to the browser point here.
+       */
+      rawUrl?: ((disk: string, key: string) => string) | undefined;
+    },
+  ) {
     this.#app = app;
     this.#actions = options.actions;
     this.#actor = options.actor;
+    this.#rawUrl = app.proxy ? options.rawUrl : undefined;
     const sessions = app.sessions;
     const store = app.store;
     this.#local = new DashboardService(
@@ -415,8 +537,14 @@ export class FederatedConsoleService {
     return this.#send('objects', disk, params) as Promise<ObjectListResponse>;
   }
 
+  /** `true` when this console serves the app's bytes itself ({@link objectStream}). */
+  get servesBytes(): boolean {
+    return this.#app.proxy !== undefined;
+  }
+
   async object(disk: string, key: string): Promise<ObjectDetailResponse> {
     const detail = (await this.#send('object', disk, key)) as ObjectDetailResponse;
+    if (this.#rawUrl && detail.url) return { ...detail, url: this.#rawUrl(disk, key) };
     return { ...detail, url: this.#app.absolute(detail.url) ?? '' };
   }
 
@@ -432,8 +560,15 @@ export class FederatedConsoleService {
     );
   }
 
-  objectStream(): Promise<{ stream: Readable; contentType: string; size: number }> {
-    return Promise.reject(new DashboardError('read through the app that owns it', 501));
+  /** The object's bytes, fetched from the app (`proxyObjects`); a `501` without it. */
+  async objectStream(
+    disk: string,
+    key: string,
+  ): Promise<{ stream: Readable; contentType: string; size: number }> {
+    if (!this.#app.proxy) throw new DashboardError('read through the app that owns it', 501);
+    const [url] = (await this.#send('objectUrls', [{ disk, key }])) as Array<string | null>;
+    if (url === null || url === undefined) throw new DashboardError('not found', 404);
+    return this.#app.fetchBytes(url);
   }
 
   objectInsights(disk: string, key: string): Promise<ObjectInsightsResponse> {
@@ -481,6 +616,11 @@ export class FederatedConsoleService {
       (entry): entry is [string, MediaConversion & { disk: string; path: string }] =>
         typeof entry[1].disk === 'string' && typeof entry[1].path === 'string',
     );
+    const rawUrl = this.#rawUrl;
+    if (rawUrl) {
+      const variants = linkable.map(([name, c]) => ({ name, url: rawUrl(c.disk, c.path) }));
+      return { record: toMediaEntry(record), variants };
+    }
     let urls: Array<string | null> = [];
     if (linkable.length > 0) {
       urls = (await this.#send(

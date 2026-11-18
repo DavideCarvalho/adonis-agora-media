@@ -46,6 +46,7 @@ export default defineConfig({
 | `uploadSessions` | Where that app's upload sessions are. Omit it and the Uploads page is empty for that app. |
 | `controlPlane` | The `@adonisjs/redis` connection to publish on (`connection`, default connection when omitted) and that app's `prefix`. |
 | `origin` | That app's public origin. Needed when that app serves its objects through itself (`objectUrls: 'proxy'`); see below. |
+| `proxyObjects` | Serve that app's objects from this console instead of sending the browser to the app. `true`, or `{ headers, timeoutMs }`; see below. |
 | `timeoutMs` | How long a request waits for that app to answer. Default `15000`. |
 | `appLabel` | The name of the console's own app in the selector. Defaults to `This app`. |
 
@@ -101,13 +102,64 @@ it:
 
 ## Opening objects
 
-The console never streams another app's bytes. Opening an object sends the browser to the app's
-own URL for it:
+By default the console sends the browser to the app's own URL for an object:
 
 - an app that signs URLs straight to its storage hands back a signed URL, used as is;
 - an app whose console serves objects through itself (`objectUrls: 'proxy'`) hands back a path on
   its own console. The console puts it on that app's `origin`, and the viewer must be signed in to
   that app to open it. Without `origin`, those objects cannot be opened from here.
+
+### Serving the bytes from this console
+
+With `proxyObjects`, the console fetches the object itself and serves it from its own origin.
+Previews, thumbnails and **Open** then work for a viewer who is not signed in to the other app,
+and under a Content Security Policy that only allows this origin's images.
+
+The other app must accept the console's request. With Agora calls between apps, the console sends a
+service token for that app:
+
+```ts title="config/media_dashboard.ts (the console app)"
+import { authkitTenantToken } from '@adonis-agora/authkit-client'
+
+const etToken = authkitTenantToken({
+  issuer: env.get('AUTHKIT_ISSUER'),
+  clientId: env.get('SERVICE_CLIENT_ID'),
+  clientSecret: env.get('SERVICE_CLIENT_SECRET'),
+  resource: 'urn:agora:app:entre-textos',
+})
+
+apps: {
+  'entre-textos': {
+    // …
+    origin: 'https://entretextos.example.com',
+    proxyObjects: { headers: async () => ({ authorization: `Bearer ${await etToken()}` }) },
+  },
+},
+```
+
+and the other app's console lets that caller read its object bytes, next to its own viewers:
+
+```ts title="config/media_dashboard.ts (the other app)"
+import { anyAuthorize, authorizeAgoraCaller, defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: anyAuthorize(authorizeAgoraCaller({ apps: ['agora-hub'] }), adminsOnly),
+  objectUrls: 'proxy',
+})
+```
+
+`authorizeAgoraCaller` opens only `GET <apiBase>/object/raw`, for an app in `apps` that holds
+`media:objects:read` on this app (wildcards count: `media:*`). It reads the caller from
+`ctx.agora.caller`, which `@adonis-agora/authkit-client` sets when `service.name` is configured.
+Grant the capability to the console app's service client for this app in authkit.
+
+`headers` are sent only to `origin`. A signed URL is fetched as is, without them. `true` instead of
+an object fetches with no extra headers. `timeoutMs` (default `30000`) is how long the console waits
+for the app to start answering.
+
+HTML, SVG, XML and scripts are served as downloads (`Content-Disposition: attachment`) with a
+sandboxing `Content-Security-Policy`, so an uploaded file never runs as a page of the console's
+origin. This holds for the console's own objects too.
 
 <Callout type="info">
   Uploading from the console stays the console app's own. With another app picked, the Upload
@@ -136,7 +188,7 @@ No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
 | --- | --- |
 | `404` | `?app=` names an app that is not configured, or that `authorize` does not grant. |
 | `503` | The app does not answer: it is down, or `consoleCommands` is off. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
-| `502` | The app answered with an error of its own. The detail is in the console app's log. |
+| `502` | The app answered with an error of its own, or (with `proxyObjects`) refused to hand over an object, e.g. a `401`/`403` from its `authorize`. The detail is in the console app's log. |
 | `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
 
 The app's own refusals keep their status: an unknown record is a `404`, actions it has off are a

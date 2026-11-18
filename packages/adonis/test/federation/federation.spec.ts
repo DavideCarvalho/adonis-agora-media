@@ -120,7 +120,13 @@ async function owningApp(
 function hubConsole(
   bus: RedisBus,
   store: InMemoryMediaStore,
-  options: { actions?: boolean; origin?: string; timeoutMs?: number } = {},
+  options: {
+    actions?: boolean;
+    origin?: string;
+    timeoutMs?: number;
+    proxyObjects?: ConstructorParameters<typeof FederatedApp>[0]['proxyObjects'];
+    fetch?: typeof fetch;
+  } = {},
 ) {
   const sessions = new InMemoryUploadSessionStore();
   const app = new FederatedApp({
@@ -131,6 +137,8 @@ function hubConsole(
     channel: new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }),
     ...(options.origin !== undefined ? { origin: options.origin } : {}),
     timeoutMs: options.timeoutMs ?? 2_000,
+    ...(options.proxyObjects !== undefined ? { proxyObjects: options.proxyObjects } : {}),
+    ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
   });
   return {
     app,
@@ -138,6 +146,8 @@ function hubConsole(
     console: new FederatedConsoleService(app, {
       actions: options.actions ?? true,
       actor: 'ana@hub',
+      rawUrl: (disk, key) =>
+        `/media/api/object/raw?${new URLSearchParams({ app: 'entre-textos', disk, key })}`,
     }),
   };
 }
@@ -215,6 +225,93 @@ describe('federated media console', () => {
     const noOrigin = hubConsole(other, proxied.store).console;
     await expect(noOrigin.objectRedirect('fs', 'a.png')).rejects.toMatchObject({ status: 501 });
     expect((await noOrigin.object('fs', 'a.png')).url).toBe('');
+  });
+
+  it('serves the app objects itself with proxyObjects, sending the headers to its origin only', async () => {
+    const bus = new RedisBus();
+    const owner = await owningApp(bus, { actions: false });
+    await owner.disk.put('avatars/me.png', new Uint8Array([1]));
+    await owner.store.save(
+      record({
+        id: 'r1',
+        conversions: { thumbnail: { disk: 'fs', path: 'avatars/me-thumb.png' } as never },
+      }),
+    );
+    const calls: Array<{ url: string; auth: string | null; redirect: string | undefined }> = [];
+    const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({
+        url,
+        auth: new Headers(init?.headers).get('authorization'),
+        redirect: init?.redirect,
+      });
+      if (url.includes('missing')) return new Response('nope', { status: 404 });
+      if (url.includes('locked')) return new Response('no', { status: 403 });
+      return new Response(new Uint8Array([7, 8, 9]), {
+        headers: { 'content-type': 'image/png', 'content-length': '3' },
+      });
+    }) as typeof fetch;
+    const { console } = hubConsole(bus, owner.store, {
+      origin: 'https://et.example',
+      proxyObjects: { headers: async () => ({ authorization: 'Bearer svc' }) },
+      fetch: fakeFetch,
+    });
+
+    expect(console.servesBytes).toBe(true);
+    // The browser is pointed at this console, not at the app.
+    expect((await console.object('fs', 'avatars/me.png')).url).toBe(
+      '/media/api/object/raw?app=entre-textos&disk=fs&key=avatars%2Fme.png',
+    );
+    expect((await console.mediaRecord('r1')).variants).toEqual([
+      {
+        name: 'thumbnail',
+        url: '/media/api/object/raw?app=entre-textos&disk=fs&key=avatars%2Fme-thumb.png',
+      },
+    ]);
+
+    const { stream, contentType, size } = await console.objectStream('fs', 'avatars/me.png');
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    expect([...Buffer.concat(chunks)]).toEqual([7, 8, 9]);
+    expect({ contentType, size }).toEqual({ contentType: 'image/png', size: 3 });
+    expect(calls).toEqual([
+      {
+        url: 'https://et.example/media/api/object/raw?disk=fs&key=avatars%2Fme.png',
+        auth: 'Bearer svc',
+        redirect: 'manual',
+      },
+    ]);
+
+    await owner.disk.put('missing.png', new Uint8Array([1]));
+    await owner.disk.put('locked.png', new Uint8Array([1]));
+    await expect(console.objectStream('fs', 'missing.png')).rejects.toMatchObject({ status: 404 });
+    await expect(console.objectStream('fs', 'locked.png')).rejects.toMatchObject({
+      status: 502,
+      detail: expect.stringContaining('HTTP 403'),
+    });
+  });
+
+  it('fetches a signed URL with proxyObjects without the headers', async () => {
+    const bus = new RedisBus();
+    const signer = await owningApp(bus, { actions: false, strategy: 'auto' });
+    await signer.disk.put('a.png', new Uint8Array([1]));
+    const auths: Array<string | null> = [];
+    const { console } = hubConsole(bus, signer.store, {
+      origin: 'https://et.example',
+      proxyObjects: { headers: () => ({ authorization: 'Bearer svc' }) },
+      fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+        auths.push(new Headers(init?.headers).get('authorization'));
+        return new Response('x');
+      }) as typeof fetch,
+    });
+    const { size } = await console.objectStream('fs', 'a.png');
+    expect(auths).toEqual([null]);
+    expect(Number.isNaN(size)).toBe(true);
+
+    // Without proxyObjects the console still refuses to serve another app's bytes.
+    const plain = hubConsole(bus, signer.store).console;
+    expect(plain.servesBytes).toBe(false);
+    await expect(plain.objectStream('fs', 'a.png')).rejects.toMatchObject({ status: 501 });
   });
 
   it('runs an action once in the owning app, however many instances listen, and logs who', async () => {

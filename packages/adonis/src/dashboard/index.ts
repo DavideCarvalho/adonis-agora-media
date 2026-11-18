@@ -1,7 +1,11 @@
 // Config idiom — author `config/media_dashboard.ts` against these.
 
 // The federated console: other apps' media in this console (`apps`), and the channel they answer on.
-export type { FederatedConsoleApp, MediaConsoleVerb } from '../federation/console.js';
+export type {
+  FederatedConsoleApp,
+  FederatedObjectProxy,
+  MediaConsoleVerb,
+} from '../federation/console.js';
 export {
   ACTION_VERBS,
   buildFederatedMediaApp,
@@ -31,6 +35,7 @@ export {
 } from './access_denied_page.js';
 // The access contract shared by every Agora console.
 export type {
+  AuthorizeAgoraCallerOptions,
   AuthorizeByTokenOptions,
   ConsoleAuthorize,
   ConsoleAuthorizeDecision,
@@ -40,7 +45,10 @@ export type {
 } from './console_authorize.js';
 export {
   anyAuthorize,
+  authorizeAgoraCaller,
   authorizeByToken,
+  capabilityAllows,
+  MEDIA_OBJECTS_READ,
   normalizeConsoleAuthorizeResult,
   resolveConsoleAuthorize,
 } from './console_authorize.js';

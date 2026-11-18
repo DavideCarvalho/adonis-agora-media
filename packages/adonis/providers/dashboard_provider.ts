@@ -70,6 +70,10 @@ function spaDirectory(): string {
 /** This console's id in the app's `'agora.consoles'` registry. */
 const CONSOLE_ID = 'media';
 
+/** Content types a browser would run as a page (served by `object/raw` as a download). */
+const ACTIVE_CONTENT =
+  /^\s*(?:text\/html|application\/xhtml\+xml|image\/svg\+xml|(?:text|application)\/xml|[a-z]+\/[a-z0-9.+-]*\+xml|(?:text|application)\/(?:x-)?javascript|text\/ecmascript|application\/ecmascript|text\/xsl|multipart\/x-mixed-replace)\b/i;
+
 /** Logged once at boot when `authorize` is omitted. Same wording in every Agora console. */
 const NO_AUTHORIZE_WARNING =
   '[@adonis-agora/media] console has no `authorize` configured: it is open outside production and denies every request in production. Set `authorize` in config/media_dashboard.ts.';
@@ -162,7 +166,10 @@ export default class MediaDashboardProvider {
    * The service an API route runs on: another app's (`?app=<key>`, federated console) or this
    * app's. A key that is not configured, or that `authorize`'s `apps` grant does not name, is a 404.
    */
-  #routeService(config: MediaDashboardConfig): (ctx: HttpContext) => Promise<ConsoleService> {
+  #routeService(
+    config: MediaDashboardConfig,
+    apiBase: string,
+  ): (ctx: HttpContext) => Promise<ConsoleService> {
     const local = this.#service(config);
     return async (ctx) => {
       const picked = this.#selectedApp(config, ctx);
@@ -173,6 +180,8 @@ export default class MediaDashboardProvider {
       return new FederatedConsoleService(app, {
         actions: config.actions ?? false,
         actor: viewer?.email ?? viewer?.label ?? 'anonymous',
+        rawUrl: (disk, key) =>
+          `${apiBase}/object/raw?${new URLSearchParams({ app: picked, disk, key }).toString()}`,
       });
     };
   }
@@ -439,7 +448,7 @@ export default class MediaDashboardProvider {
             },
           ]
         : [];
-    const service = this.#routeService(config);
+    const service = this.#routeService(config, apiBase);
 
     this.#mountApi(router, apiBase, config, service, [...authorizeGate('api'), ...middleware]);
     this.#mountSpa(router, basePath, config, { apiBase, uploadsBase, tusBase, actions }, [
@@ -624,13 +633,22 @@ export default class MediaDashboardProvider {
             const key = str(ctx, 'key');
             if (!disk) throw new DashboardError('disk is required', 400);
             const svc = await service(ctx);
-            // Another app's bytes never pass through here: the browser goes to that app's URL.
-            if (svc instanceof FederatedConsoleService) {
+            // Another app's bytes pass through here only with its `proxyObjects`; otherwise the
+            // browser goes to that app's URL.
+            if (svc instanceof FederatedConsoleService && !svc.servesBytes) {
               return ctx.response.redirect(await svc.objectRedirect(disk, key ?? ''));
             }
             const { stream, contentType, size } = await svc.objectStream(disk, key ?? '');
             ctx.response.header('content-type', contentType);
-            ctx.response.header('content-disposition', 'inline');
+            ctx.response.header('x-content-type-options', 'nosniff');
+            // Uploaded HTML/SVG/XML/script must never run as a page of this origin: downloaded,
+            // and sandboxed if opened anyway. Everything else (images, PDF, video) shows inline.
+            if (ACTIVE_CONTENT.test(contentType)) {
+              ctx.response.header('content-disposition', 'attachment');
+              ctx.response.header('content-security-policy', "default-src 'none'; sandbox");
+            } else {
+              ctx.response.header('content-disposition', 'inline');
+            }
             if (Number.isFinite(size)) ctx.response.header('content-length', String(size));
             return ctx.response.stream(stream);
           } catch (error) {
