@@ -55,12 +55,49 @@ describe('CollectionsView', () => {
     await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText('Owner type'), { target: { value: 'User' } });
-    fireEvent.change(screen.getByLabelText('Collection'), { target: { value: 'avatar' } });
+    // The collection field is a creatable combobox: a key the summary lacks is typed and picked.
+    const collection = screen.getByLabelText('Collection');
+    fireEvent.keyDown(collection, { key: 'ArrowDown' });
+    fireEvent.change(collection, { target: { value: 'avatar' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'Use “avatar”' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() =>
       expect(client.collections).toHaveBeenCalledWith(
         expect.objectContaining({ ownerType: 'User', collection: 'avatar', first: 50 }),
+      ),
+    );
+  });
+
+  it('offers the summary collections in the collection field', async () => {
+    const client = baseClient({
+      collectionsSummary: vi.fn(async () => ({
+        data: [
+          { key: 'gallery', count: 3, sumSize: 4096 },
+          { key: 'avatars', count: 1, sumSize: 512 },
+        ],
+      })),
+    });
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, client);
+    await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('button', { name: /avatars/ })).toBeTruthy());
+
+    const collection = screen.getByLabelText('Collection');
+    fireEvent.keyDown(collection, { key: 'ArrowDown' });
+    fireEvent.change(collection, { target: { value: 'ava' } });
+    await waitFor(() =>
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'avatars',
+        'Use “ava”',
+      ]),
+    );
+    fireEvent.click(screen.getByRole('option', { name: 'avatars' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(window.location.hash).toContain('collection=avatars'));
+    await waitFor(() =>
+      expect(client.collections).toHaveBeenLastCalledWith(
+        expect.objectContaining({ collection: 'avatars' }),
       ),
     );
   });
@@ -120,6 +157,7 @@ describe('CollectionsView: filters in the URL', () => {
     );
     expect((screen.getByLabelText('Owner type') as HTMLInputElement).value).toBe('Post');
     expect((screen.getByLabelText('Path prefix') as HTMLInputElement).value).toBe('Post/42');
+    expect((screen.getByLabelText('Collection') as HTMLInputElement).value).toBe('gallery');
   });
 
   it('applying writes the URL (keeping the page path); back restores the previous filter', async () => {

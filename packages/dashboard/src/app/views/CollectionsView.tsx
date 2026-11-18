@@ -1,5 +1,6 @@
 import { parseAsString, useQueryStates } from 'nuqs';
 import { useEffect, useState } from 'react';
+import { ComboSelect } from '../../agora-kit/blocks/combo-field';
 import { type Column, DataTable } from '../../agora-kit/blocks/data-table';
 import { EmptyState } from '../../agora-kit/blocks/empty-state';
 import { ErrorBoundary, RegionError } from '../../agora-kit/blocks/error-boundary';
@@ -333,14 +334,19 @@ const FIELDS: {
   },
 ];
 
-/** The owner / collection / prefix filter form, presentational. */
+/**
+ * The owner / collection / prefix filter form, presentational. The collection field autocompletes
+ * from `collections` (the summary's keys) and still accepts a typed key the summary lacks.
+ */
 export function CollectionFilterForm({
   draft,
+  collections = [],
   onChange,
   onApply,
   onReset,
 }: {
   draft: CollectionFilter;
+  collections?: readonly string[];
   onChange: (next: CollectionFilter) => void;
   onApply: () => void;
   onReset: () => void;
@@ -356,13 +362,26 @@ export function CollectionFilterForm({
       <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-4">
         {FIELDS.map((f) => (
           <Field key={f.id} id={f.id} label={f.label}>
-            <Input
-              id={f.id}
-              value={draft[f.key] ?? ''}
-              placeholder={f.placeholder}
-              onChange={(event) => onChange({ ...draft, [f.key]: event.target.value })}
-              className={`h-8 text-[13px] ${f.mono ? 'mono' : ''}`}
-            />
+            {f.key === 'collection' ? (
+              <ComboSelect
+                id={f.id}
+                options={collections}
+                value={draft.collection?.trim() ? draft.collection : null}
+                onValueChange={(next) => onChange(withCollection(draft, next ?? undefined))}
+                placeholder={f.placeholder}
+                emptyText="No collections"
+                creatable
+                className="h-8 w-full text-[13px]"
+              />
+            ) : (
+              <Input
+                id={f.id}
+                value={draft[f.key] ?? ''}
+                placeholder={f.placeholder}
+                onChange={(event) => onChange({ ...draft, [f.key]: event.target.value })}
+                className={`h-8 text-[13px] ${f.mono ? 'mono' : ''}`}
+              />
+            )}
           </Field>
         ))}
       </div>
@@ -552,6 +571,7 @@ export function CollectionsView({ route }: { route: Route }) {
           />
           <CollectionFilterForm
             draft={draft}
+            collections={collections.map((c) => c.key)}
             onChange={setDraft}
             onApply={() => setApplied(cleanFilter(draft))}
             onReset={() => {
