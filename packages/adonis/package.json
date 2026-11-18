@@ -204,7 +204,7 @@
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.6",
     "aws-sdk-client-mock": "4.1.0",
-    "better-sqlite3": "13.1.1",
+    "better-sqlite3": "13.2.0",
     "ioredis": "6.0.0",
     "luxon": "3.7.2",
     "mediabunny": "1.65.2",
