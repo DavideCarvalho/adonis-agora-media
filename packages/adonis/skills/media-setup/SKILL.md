@@ -32,10 +32,10 @@ delegated entirely to Drive — this package never reimplements disk drivers.
 
 ## Setup
 
-Install Drive (the storage backend) plus the package, then run the configure codemod:
+Install the package (plus Drive only for Drive-backed disks), then run the configure codemod:
 
 ```bash
-node ace add @adonisjs/drive   # required — media owns no disk drivers
+node ace add @adonisjs/drive   # optional — only for Drive-backed disks; config.disks, the store and the console work without it
 npm i @adonis-agora/media
 node ace configure @adonis-agora/media
 ```

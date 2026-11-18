@@ -47,6 +47,29 @@ describe('App shell', () => {
     await waitFor(() => expect(screen.getByText('No resumable uploads in progress.')).toBeTruthy());
   });
 
+  it('an app with no storage of its own says so and offers the apps the console shows', async () => {
+    const c = {
+      ...client(),
+      topology: vi.fn(async () => ({
+        disks: 0,
+        hasUploads: false,
+        actions: false,
+        storage: false,
+      })),
+      apps: vi.fn(async () => ({
+        local: { label: 'Hub' },
+        apps: [{ id: 'entre-textos', label: 'Entre Textos' }],
+        selected: null,
+      })),
+    };
+    renderView(<App />, c);
+    await waitFor(() => expect(screen.getByText('Hub has no media of its own')).toBeTruthy());
+    expect(c.disks).not.toHaveBeenCalled();
+    screen.getByRole('button', { name: 'Entre Textos' }).click();
+    expect(new URL(window.location.href).searchParams.get('app')).toBe('entre-textos');
+    window.history.replaceState(null, '', window.location.pathname);
+  });
+
   it('puts the deployment pills in the topbar', async () => {
     renderView(<App />, client());
     await waitFor(() => expect(screen.getByText('2 disks')).toBeTruthy());

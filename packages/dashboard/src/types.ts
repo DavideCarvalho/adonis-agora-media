@@ -157,6 +157,11 @@ export interface Topology {
   /** Whether mutating actions (copy/move/delete) are enabled on this console. */
   actions: boolean;
   /**
+   * Whether this app stores media at all. `false`: no `config/drive.ts` and no `disks` in
+   * `config/media.ts` — the console shows a notice instead of its pages. Absent = `true`.
+   */
+  storage?: boolean;
+  /**
    * The federated console: the other app this topology is about (`?app=`), absent for this app.
    * Uploading from the console is this app's own, so it is off for another app.
    */

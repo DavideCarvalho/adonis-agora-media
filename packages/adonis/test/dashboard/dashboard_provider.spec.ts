@@ -228,7 +228,12 @@ describe('MediaDashboardProvider (embedded in @adonis-agora/media)', () => {
       hasResumable: false,
       store,
     };
-    const { app, bootedHandlers } = makeFakeApp({ media_dashboard: {} }, router, manager);
+    // A host with `config/drive.ts` (its default disk is what `/disks` lists).
+    const { app, bootedHandlers } = makeFakeApp(
+      { media_dashboard: {}, drive: { default: 'default' } },
+      router,
+      manager,
+    );
     const provider = new MediaDashboardProvider(app as never);
     await provider.boot();
     await bootedHandlers[0]?.();

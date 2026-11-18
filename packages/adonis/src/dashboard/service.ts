@@ -84,6 +84,8 @@ export interface MediaManagerLike {
 export interface DashboardServiceOptions {
   /** Disk names the console may browse/act on. The first entry (or the manager default) is the default. */
   diskNames: string[];
+  /** Whether this app stores media at all (see `ConsoleServiceConfig.storage`). Default `true`. */
+  storage?: boolean;
   /** Whether mutating actions (copy/move/delete) are permitted. */
   actions: boolean;
   /**
@@ -162,6 +164,7 @@ export class DashboardService {
       disks: this.options.diskNames.length,
       hasUploads: this.manager.hasResumable,
       actions: this.options.actions,
+      storage: this.options.storage !== false,
     };
   }
 

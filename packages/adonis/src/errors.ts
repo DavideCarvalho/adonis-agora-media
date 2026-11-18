@@ -76,6 +76,20 @@ export class DriveNotReadyError extends Error {
   }
 }
 
+/**
+ * A disk that is not in `disks` (config/media.ts) was asked for, and the app does not register
+ * `@adonisjs/drive` at all, so there is nowhere else to find it.
+ */
+export class DriveNotConfiguredError extends Error {
+  readonly code = 'E_MEDIA_DRIVE_NOT_CONFIGURED';
+  constructor(disk: string) {
+    super(
+      `Cannot resolve disk "${disk}": this app does not register \`@adonisjs/drive\`, and "${disk}" is not in \`disks\` in config/media.ts. Declare the disk there (e.g. \`disks.s3({ ... })\`), or install and configure \`@adonisjs/drive\`.`,
+    );
+    this.name = 'DriveNotConfiguredError';
+  }
+}
+
 export class MediaNotFoundError extends Error {
   readonly code = 'E_MEDIA_RECORD_NOT_FOUND';
   constructor(id: string) {

@@ -115,14 +115,24 @@ export default class MediaProvider {
       // `app.booted(...)`, which resolves immediately while the app is still booting, so the export
       // is `undefined` at this point and only the live binding sees the later assignment. The
       // resolver reads it at the first real disk use and memoizes it (see `createDriveBackedResolver`).
-      const driveService = (await import(
-        '@adonisjs/drive/services/main'
-      )) as unknown as DriveServiceModule;
+      //
+      // An app without the Drive provider (no `drive.manager` binding) never imports it: Drive's
+      // service module resolves the binding as it loads, which would fail every media call — even
+      // the store reads the console makes. Such an app can still use `config.disks`.
+      const driveAvailable = this.app.container.hasBinding('drive.manager');
+      const driveService: DriveServiceModule = driveAvailable
+        ? ((await import('@adonisjs/drive/services/main')) as unknown as DriveServiceModule)
+        : { default: undefined };
       const defaultDisk = config.disk ?? (await this.#resolveDefaultDiskName());
 
       // A disk named in `config.disks` wins over a Drive disk of the same name; otherwise fall
       // through to Drive so existing Drive disks keep working unchanged.
-      const resolve = createDriveBackedResolver({ driveService, configuredDisks, defaultDisk });
+      const resolve = createDriveBackedResolver({
+        driveService,
+        configuredDisks,
+        defaultDisk,
+        driveAvailable,
+      });
 
       return new MediaManager({
         defaultDisk,

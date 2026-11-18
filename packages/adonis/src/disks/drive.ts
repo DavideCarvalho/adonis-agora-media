@@ -1,4 +1,4 @@
-import { DriveNotReadyError } from '../errors.js';
+import { DriveNotConfiguredError, DriveNotReadyError } from '../errors.js';
 import type { Disk, DiskResolver } from '../types.js';
 
 /** The minimal Drive manager surface we use: `use(name)` returns a disk. */
@@ -36,6 +36,12 @@ export interface DriveBackedResolverOptions {
   configuredDisks: Record<string, Disk>;
   /** Disk name used when a caller asks for no particular disk. */
   defaultDisk: string;
+  /**
+   * `false` when the app does not register `@adonisjs/drive` (no `drive.manager` binding): a disk
+   * outside `configuredDisks` then fails with {@link DriveNotConfiguredError} instead of the
+   * "not booted yet" error. Default `true`.
+   */
+  driveAvailable?: boolean;
 }
 
 /**
@@ -48,7 +54,7 @@ export interface DriveBackedResolverOptions {
  * An app whose disks all come from `config.disks` never touches Drive at all.
  */
 export function createDriveBackedResolver(options: DriveBackedResolverOptions): DiskResolver {
-  const { driveService, configuredDisks, defaultDisk } = options;
+  const { driveService, configuredDisks, defaultDisk, driveAvailable = true } = options;
   let drive: DriveManagerLike | undefined;
 
   return (name) => {
@@ -57,6 +63,7 @@ export function createDriveBackedResolver(options: DriveBackedResolverOptions): 
     if (configured) return configured;
 
     if (drive === undefined) {
+      if (!driveAvailable) throw new DriveNotConfiguredError(key);
       const resolved = driveService.default;
       if (resolved === undefined) throw new DriveNotReadyError(key);
       drive = resolved;

@@ -93,7 +93,7 @@ describe('DashboardService', () => {
       diskNames: ['s3', 'backup'],
       actions: true,
     });
-    expect(svc.topology()).toEqual({ disks: 2, hasUploads: false, actions: true });
+    expect(svc.topology()).toEqual({ disks: 2, hasUploads: false, actions: true, storage: true });
   });
 
   it('lists disks with capabilities and marks the default', () => {
