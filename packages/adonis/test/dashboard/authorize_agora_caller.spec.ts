@@ -38,7 +38,7 @@ describe('authorizeAgoraCaller', () => {
   const hub = { app: 'agora-hub', capabilities: ['media:objects:read'] };
 
   it('lets the named app read object bytes, across tenants', async () => {
-    expect(await check(ctx({ caller: hub }))).toEqual({ allowed: true, tenants: '*' });
+    expect(await check(ctx({ caller: hub }))).toEqual({ allowed: true, tenants: '*', apps: [] });
     expect(
       await check(ctx({ caller: { app: 'agora-hub', capabilities: ['media:*'] } })),
     ).toMatchObject({ allowed: true });

@@ -149,8 +149,11 @@ export default defineConfig({
 ```
 
 `authorizeAgoraCaller` opens only `GET <apiBase>/object/raw`, for an app in `apps` that holds
-`media:objects:read` on this app (wildcards count: `media:*`). It reads the caller from
-`ctx.agora.caller`, which `@adonis-agora/authkit-client` sets when `service.name` is configured.
+`media:objects:read` on this app (wildcards count: `media:*`), and only for this app's own objects:
+a caller never reaches the other apps this console federates. It reads the caller from
+`ctx.agora.caller`, which `@adonis-agora/authkit-client` sets when `service.name` is configured in
+its config. Calls between apps (`ctx.agora.caller`, `urn:agora:app:<name>` tokens) need
+`@adonis-agora/authkit-client` 1.0.0-rc.9 or later, on both apps.
 Grant the capability to the console app's service client for this app in authkit.
 
 `headers` are sent only to `origin`. A signed URL is fetched as is, without them. `true` instead of

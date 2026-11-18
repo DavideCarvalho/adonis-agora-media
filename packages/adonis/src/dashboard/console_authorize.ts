@@ -279,7 +279,9 @@ const RAW_ROUTE = 'media.dashboard.object.raw';
  * authorize: anyAuthorize(authorizeAgoraCaller({ apps: ['agora-hub'] }), adminsOnly),
  * ```
  *
- * A caller sees every tenant's objects. Without a caller it answers `401`; a caller without the
+ * A caller sees every tenant's objects of THIS app, never those of the other apps this console
+ * federates (`apps`). Needs `@adonis-agora/authkit-client` 1.0.0-rc.9 or later (calls between
+ * apps). Without a caller it answers `401`; a caller without the
  * capability, or on any other route, gets `403`.
  */
 export function authorizeAgoraCaller(options: AuthorizeAgoraCallerOptions = {}): ConsoleAuthorize {
@@ -300,7 +302,8 @@ export function authorizeAgoraCaller(options: AuthorizeAgoraCallerOptions = {}):
       (apps === undefined || apps.has(caller.app)) &&
       granted.some((g) => typeof g === 'string' && capabilityAllows(g, capability))
     ) {
-      return { allowed: true, tenants: '*' };
+      // `apps: []`: only this app's own objects, never the other apps this console federates.
+      return { allowed: true, tenants: '*', apps: [] };
     }
     return { allowed: false, reason: 'forbidden' };
   };

@@ -245,6 +245,19 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     }
   });
 
+  it('keeps an empty `apps` grant (an app caller) to this app only', async () => {
+    const et = await owningApp();
+    const { call, provider } = await boot({
+      authorize: () => ({ allowed: true, tenants: '*', apps: [] }),
+      apps: { 'entre-textos': et.entry },
+    });
+    expect(
+      await call('GET /object/raw', { app: 'entre-textos', disk: 'fs', key: 'a.png' }),
+    ).toEqual({ status: 404, body: { error: 'unknown app' } });
+    expect((await call('GET /apps')).body).toMatchObject({ apps: [] });
+    await provider.shutdown();
+  });
+
   it('hides the apps an `authorize` grant does not name', async () => {
     const et = await owningApp();
     const { call } = await boot({
