@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.27
+
+### Patch Changes
+
+- [#345](https://github.com/DavideCarvalho/adonis-agora-media/pull/345) [`bdca58b`](https://github.com/DavideCarvalho/adonis-agora-media/commit/bdca58bc5347b999045b86424230f02d3794b508) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Describe media's infrastructure for telescope's Architecture page: the Drive disks it writes to, `disks.s3()` buckets (`s3`/`r2`/`gcs`/`minio`), the selected Lucid store and upload-session store connections, and the `consoleCommands` Redis connection. No app code needed.
+
 ## 1.0.0-rc.26
 
 ### Minor Changes
