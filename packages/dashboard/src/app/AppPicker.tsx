@@ -6,6 +6,7 @@ import {
   FederatedNotice,
 } from '../agora-kit/blocks/app-mode';
 import { ScopeMenu } from '../agora-kit/blocks/scope-menu';
+import { subscribeHashUrl } from '../agora-kit/url-state/hash-url';
 import { selectedApp } from '../client/dashboard-client';
 import type { AppPickerResponse } from '../types';
 import { useDashboard } from './context';
@@ -23,6 +24,19 @@ export function writeAppToUrl(app: string | undefined): void {
   window.history.pushState(null, '', url.toString());
   // A pushState fires nothing: tell the router and the URL-state adapter the URL moved.
   window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/**
+ * The page's query string (`?app=` / `?tenant=`), kept current: a pick writes it with
+ * `pushState` plus a `popstate`. The shell reads it so its cross-console links carry the new
+ * scope right after a pick.
+ */
+export function usePageSearch(): string {
+  return useSyncExternalStore(
+    subscribeHashUrl,
+    () => window.location.search,
+    () => '',
+  );
 }
 
 /** `?app=` as the URL has it now, following the picker and back/forward (`popstate`). */

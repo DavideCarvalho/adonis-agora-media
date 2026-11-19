@@ -6,7 +6,13 @@ import { readShellConfig } from '../agora-kit/shell-config';
 import { Button } from '../agora-kit/ui/button';
 import { NuqsHashAdapter } from '../agora-kit/url-state/nuqs-hash-adapter';
 import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
-import { AppPickerControl, SelectedAppNotice, useAppPicker, writeAppToUrl } from './AppPicker';
+import {
+  AppPickerControl,
+  SelectedAppNotice,
+  useAppPicker,
+  usePageSearch,
+  writeAppToUrl,
+} from './AppPicker';
 import type { Tab } from './hash-route';
 import { navigate, toHash, useHashRoute } from './hash-route';
 import { FolderIcon, LayersIcon, LogoMark, TransferIcon, UploadIcon } from './icons';
@@ -90,6 +96,8 @@ function Console() {
   // What the provider put in the page: switcher, ⌘K search, viewer, sign-out (all optional).
   const shell = useMemo(() => readShellConfig(CONFIG_ELEMENT_ID), []);
   const route = useHashRoute();
+  // Re-render the shell on a scope pick: its console links carry `?app=` / `?tenant=`.
+  usePageSearch();
 
   const nav = useMemo<NavSection[]>(() => {
     const item = (id: Tab, icon: React.ReactNode) => ({

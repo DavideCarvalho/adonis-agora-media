@@ -10,6 +10,8 @@ import {
 } from '@testing-library/react';
 import { useQueryState } from 'nuqs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetConsoleCache } from '../agora-kit/console-data';
+import { CONFIG_ELEMENT_ID } from '../client/dashboard-client';
 import { App } from './App';
 import { navigate } from './hash-route';
 import { renderView } from './testkit';
@@ -101,5 +103,56 @@ describe('the picked app (`?app=`) survives in-console navigation', () => {
     });
     await waitFor(() => expect(window.location.hash).toBe('#/collections?collection=avatar'));
     expect(window.location.search).toBe('?app=entre-textos');
+  });
+
+  it('into the console switcher right after an organization pick', async () => {
+    resetConsoleCache();
+    const block = document.createElement('script');
+    block.type = 'application/json';
+    block.id = CONFIG_ELEMENT_ID;
+    block.textContent = JSON.stringify({ switcher: { endpoint: '/x/api/consoles', others: 1 } });
+    document.head.appendChild(block);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              version: 1,
+              current: 'x',
+              consoles: [
+                { id: 'telescope', title: 'Telescope', icon: 'telescope', href: '/telescope' },
+              ],
+            }),
+          ),
+      ),
+    );
+    try {
+      window.history.replaceState(null, '', '/media#/uploads');
+      renderView(<App />, {
+        ...client(),
+        apps: vi.fn(async () => ({ local: { label: 'Hub' }, apps: [], selected: null })),
+        tenants: vi.fn(async () => ({
+          mode: 'pick',
+          all: true,
+          selected: null,
+          tenants: [
+            { id: 'org-1', label: 'Acme' },
+            { id: 'org-2', label: 'Globex' },
+          ],
+        })),
+        selectTenant: vi.fn(async () => undefined),
+      } as never);
+      fireEvent.click(await screen.findByRole('button', { name: /^Organization/ }));
+      fireEvent.mouseDown(await screen.findByRole('option', { name: /Globex/ }));
+      await waitFor(() => expect(window.location.search).toBe('?tenant=org-2'));
+      await act(async () => {
+        fireEvent.click(await screen.findByRole('button', { name: /switch console/ }));
+      });
+      const link = (await screen.findAllByRole('menuitem')).find((el) => el.tagName === 'A');
+      await waitFor(() => expect(link?.getAttribute('href')).toBe('/telescope?tenant=org-2'));
+    } finally {
+      block.remove();
+    }
   });
 });

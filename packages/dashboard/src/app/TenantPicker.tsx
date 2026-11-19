@@ -11,6 +11,8 @@ function writeTenantToUrl(tenant: string | undefined): void {
   if (tenant === undefined) url.searchParams.delete('tenant');
   else url.searchParams.set('tenant', tenant);
   window.history.pushState(null, '', url.toString());
+  // A pushState fires nothing: tell the shell and the URL-state adapter the URL moved.
+  window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
 /** The label of the picked organization (or "All organizations"). */
