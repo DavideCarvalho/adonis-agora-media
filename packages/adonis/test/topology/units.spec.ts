@@ -75,6 +75,25 @@ describe('topology config', () => {
       ],
       [{ topology: 'tenant', tenant: { url: 'https://x', partition: 'a', token: '' } }, /token/],
       [
+        { topology: 'tenant', tenant: { url: 'https://x', partition: '..', token: 's' } },
+        /partition/,
+      ],
+      [
+        {
+          topology: 'tenant',
+          tenant: { url: 'https://x', partition: 'a', token: 's', timeoutMs: -1 },
+        },
+        /timeoutMs/,
+      ],
+      [
+        { topology: 'control-plane', verifyTenant: verify(), controlPlane: { prefix: '_media' } },
+        /controlPlane.prefix/,
+      ],
+      [
+        { topology: 'control-plane', verifyTenant: verify(), controlPlane: { maxBytes: 0 } },
+        /maxBytes/,
+      ],
+      [
         {
           topology: 'tenant',
           tenant: { url: 'https://x', partition: 'a', token: 's' },

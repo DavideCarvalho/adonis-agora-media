@@ -262,6 +262,8 @@ export class MediaManager {
     let library = this.#partitionLibraries.get(key);
     if (!library) {
       const store = partition === undefined ? this.#store : partitionStore(this.#store, partition);
+      // Organization tenancy stays off here on purpose: a partition is an app, not an
+      // organization, and the guard store is what scopes it. Tenant rows carry no tenant.
       library = new MediaLibrary(this.#libraryOptions(store, undefined));
       this.#partitionLibraries.set(key, library);
     }
@@ -311,8 +313,10 @@ export class MediaManager {
    * this app's token, written and removed with the person's own access token. Media tenants only.
    */
   get accounts(): TenantAccounts {
-    if (!this.#options.accounts)
+    // Not faked: `media.fake()` covers `media.library`; account files still go to the control plane.
+    if (!this.#options.accounts) {
       throw new MediaTenantUnsupportedError('media.accounts (outside a tenant)');
+    }
     return this.#options.accounts;
   }
 
@@ -392,6 +396,7 @@ export class MediaManager {
    */
   get resumable(): ResumableUploadManager {
     if (this.#fake) return this.#fake.manager.resumable;
+    if (this.topology === 'tenant') throw new MediaTenantUnsupportedError('media.resumable');
     if (!this.#resumable) throw new ResumableUploadsNotConfiguredError();
     return this.#resumable;
   }
@@ -426,6 +431,7 @@ export class MediaManager {
    */
   get direct(): DirectUploadManager {
     if (this.#fake) return this.#fake.manager.direct;
+    if (this.topology === 'tenant') throw new MediaTenantUnsupportedError('media.direct');
     if (!this.#direct) throw new DirectUploadsNotConfiguredError();
     return this.#direct;
   }

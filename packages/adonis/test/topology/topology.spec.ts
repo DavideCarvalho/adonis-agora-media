@@ -245,6 +245,18 @@ describe('media topology: a control plane and its tenants, in process', () => {
       size: 15,
     });
     expect(record.size).toBe(15);
+    // A declared size the body does not match is refused, never stored.
+    await expect(
+      et.library.attach({
+        ownerType: 'Post',
+        ownerId: 'p4',
+        collection: 'documents',
+        fileName: 'liar.txt',
+        mimeType: 'text/plain',
+        contents: Readable.from([Buffer.from('short')]),
+        size: 500,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: 'E_MEDIA_SIZE_MISMATCH' });
     expect((await et.library.rename(record.id, 'Renamed')).name).toBe('Renamed');
     const stored = (await hubStore.find(record.id))!;
     await et.library.delete(record.id);
@@ -361,6 +373,8 @@ describe('media topology: a control plane and its tenants, in process', () => {
       }),
     ).rejects.toBeInstanceOf(MediaTenantUnsupportedError);
     expect(et.topology).toBe('tenant');
+    expect(() => et.resumable).toThrow(MediaTenantUnsupportedError);
+    expect(() => et.direct).toThrow(MediaTenantUnsupportedError);
   });
 
   it('fakes a tenant in memory like any other app', async () => {

@@ -428,6 +428,18 @@ export function assertMediaTopology(config: MediaConfig): void {
     if (typeof tenant.url === 'string' && !/^https?:\/\//.test(tenant.url)) {
       throw new Error('media: tenant.url must be an absolute http(s) URL or a function');
     }
+    for (const key of ['timeoutMs', 'uploadTimeoutMs'] as const) {
+      const value = tenant[key];
+      if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+        throw new Error(`media: tenant.${key} must be a positive number of milliseconds`);
+      }
+    }
+    if (
+      tenant.retries !== undefined &&
+      !(Number.isInteger(tenant.retries) && tenant.retries >= 0)
+    ) {
+      throw new Error('media: tenant.retries must be a whole number, 0 or more');
+    }
     if (tenant.urls !== undefined && tenant.urls !== 'app' && tenant.urls !== 'control-plane') {
       throw new Error("media: tenant.urls is 'app' or 'control-plane'");
     }
@@ -456,6 +468,18 @@ export function assertMediaTopology(config: MediaConfig): void {
       throw new Error(
         "media: a control plane needs `verifyTenant` (authkitTenantVerifier({ issuer, resource: 'urn:agora:media' }) or sharedSecretVerifier({ partitions })): a tenant is never trusted without a token",
       );
+    }
+    const prefix = config.controlPlane?.prefix;
+    if (prefix !== undefined && !/^\/[A-Za-z0-9_.~/-]*$/.test(prefix)) {
+      throw new Error("media: controlPlane.prefix is a path starting with '/' (like '/_media')");
+    }
+    for (const [key, value] of [
+      ['controlPlane.maxBytes', config.controlPlane?.maxBytes],
+      ['controlPlane.accounts.maxBytes', config.controlPlane?.accounts?.maxBytes],
+    ] as const) {
+      if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+        throw new Error(`media: ${key} must be a positive number of bytes`);
+      }
     }
     const accounts = config.controlPlane?.accounts;
     if (accounts && typeof accounts.verifyUser !== 'function') {

@@ -23,7 +23,7 @@ export const DEFAULT_CONTROL_PLANE_PREFIX = '/_media';
 export type MediaTopology = 'standalone' | 'control-plane' | 'tenant';
 
 /** A partition (the tenant app's name, from its token): what an app key may be everywhere. */
-export const PARTITION_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+export const PARTITION_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,64}$/;
 /** An owner type a tenant may use: a model name, no `/`. */
 export const OWNER_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
 /** An owner id a tenant may use: a primary key, no `/`, never `.` or `..`. */

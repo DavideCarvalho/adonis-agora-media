@@ -149,9 +149,23 @@ function str(value: unknown): string | undefined {
 }
 
 /** Counts the bytes going through and fails past `limit`. */
-function limitBytes(limit: number): Transform {
+function limitBytes(limit: number, expected?: number): Transform {
   let total = 0;
   return new Transform({
+    // The declared size is stored as the record's size: the body must be exactly that long.
+    flush(callback) {
+      if (expected !== undefined && total !== expected) {
+        callback(
+          new Refusal(
+            400,
+            'E_MEDIA_SIZE_MISMATCH',
+            `The body is ${total} bytes, not the declared ${expected}.`,
+          ),
+        );
+        return;
+      }
+      callback();
+    },
     transform(chunk: Buffer, _encoding, callback) {
       total += chunk.length;
       if (total > limit) {
@@ -574,7 +588,7 @@ export class MediaControlPlane {
     const person = await this.#person(ctx);
     const collection = this.#accountCollection(ctx.params.collection);
     const mimeType = str(ctx.request.header('x-media-mime-type'));
-    if (!mimeType) throw new Refusal(415, 'E_MEDIA_BAD_REQUEST', 'x-media-mime-type is required.');
+    if (!mimeType) throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'x-media-mime-type is required.');
     const fileName = str(ctx.request.header('x-media-file-name')) ?? 'file';
     const body = this.#body(ctx, this.#accounts().maxBytes ?? DEFAULT_ACCOUNT_MAX_BYTES);
     const library = await this.#library();
@@ -695,11 +709,9 @@ export class MediaControlPlane {
     if (Number.isFinite(declared) && declared > limit) {
       throw new Refusal(413, 'E_MEDIA_TOO_LARGE', `The file is larger than ${limit} bytes.`);
     }
-    const contents = ctx.request.request.pipe(limitBytes(limit));
+    const size = Number.isFinite(declared) && declared > 0 ? declared : undefined;
+    const contents = ctx.request.request.pipe(limitBytes(limit, size));
     ctx.request.request.on('error', (error) => contents.destroy(error));
-    return {
-      contents,
-      ...(Number.isFinite(declared) && declared > 0 ? { size: declared } : {}),
-    };
+    return { contents, ...(size !== undefined ? { size } : {}) };
   }
 }

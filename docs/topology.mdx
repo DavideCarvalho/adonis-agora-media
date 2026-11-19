@@ -69,6 +69,10 @@ export default defineConfig({
 | `controlPlane.maxBytes` | The largest upload. Default 100 MiB. |
 | `controlPlane.accounts` | A person's own files, shared by every app. See [Account files](#account-files). |
 
+Organizations ([`tenancy`](/docs/media/tenancy)) apply to the control plane's own files only: the
+apps' files are scoped by app, carry no organization, and the control plane's own reads with an
+organization do not see them.
+
 The collections are the control plane's: an app names one (`collection: 'covers'`) and the control
 plane applies its rules and runs its conversions.
 
@@ -243,8 +247,8 @@ try {
 
 ### Tests
 
-`media.fake()` works on a tenant as on any app: the fake runs in memory and never calls the control
-plane.
+`media.fake()` works on a tenant as on any app: `media.library` runs in memory and never calls the
+control plane. `media.accounts` is not faked.
 
 ## Account files
 
