@@ -1,6 +1,8 @@
+import type { MediaStore } from '../media_store.js';
+import { partitionStore } from '../topology/partition_store.js';
 import type { MediaDashboardConfig } from './define_config.js';
 import type { ObjectUrlStrategy } from './object_urls.js';
-import { DashboardService, type MediaManagerLike } from './service.js';
+import { DashboardError, DashboardService, type MediaManagerLike } from './service.js';
 import { normalizePath } from './spa.js';
 import { consoleKeyPrefixes, scopedManager } from './tenant_scope.js';
 
@@ -98,4 +100,56 @@ export function buildConsoleService(
     { ...options, ...(keyPrefixes !== undefined ? { keyPrefixes } : {}) },
     insights,
   );
+}
+
+/**
+ * The console's {@link DashboardService} over one tenant app of this media control plane
+ * (`apps: { <partition>: { mode: 'control-plane' } }`): that app's records only, and the disks
+ * confined to its files (`<partition>/`). The data lives here and this server runs the actions; a
+ * record is deleted with its files and conversions, as the tenant's own `delete` does.
+ */
+export function buildPartitionConsoleService(
+  manager: MediaManagerLike & {
+    controlPlaneLibrary(partition?: string): { delete(id: string): Promise<void> };
+  },
+  config: ConsoleServiceConfig,
+  partition: string,
+  actions: boolean,
+): DashboardService {
+  const store = partitionStore(manager.store as MediaStore, partition);
+  const library = manager.controlPlaneLibrary(partition);
+  const view: MediaManagerLike = {
+    storage: manager.storage,
+    hasResumable: false,
+    resumable: {
+      list: async () => [],
+      abort: () => Promise.reject(new DashboardError('no upload sessions for this app', 404)),
+      listParts: async () => [],
+    },
+    store: {
+      list: (options) => store.list(options),
+      find: (id) => store.find(id),
+      delete: async (id) => {
+        if (await store.find(id)) await library.delete(id);
+      },
+    },
+  };
+  const service = new DashboardService(
+    view,
+    {
+      diskNames: consoleDiskNames(config),
+      storage: config.storage !== false,
+      actions,
+      objectUrls: {
+        strategy: consoleObjectUrlStrategy(config),
+        apiBasePath: consoleApiBase(config.console),
+      },
+      keyPrefixes: [`${partition}/`],
+    },
+    config.console.objectInsights ?? [],
+  );
+  // Another app's media: the console's own upload panel (this app's upload routes) stays off.
+  const topology = service.topology.bind(service);
+  service.topology = () => ({ ...topology(), app: partition });
+  return service;
 }

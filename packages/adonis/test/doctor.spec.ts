@@ -16,6 +16,8 @@ describe('media doctor checks', () => {
       'media.console-gate',
       'media.account-console',
       'media.tenancy-schema',
+      'media.topology',
+      'media.control-plane',
     ]);
     expect(agoraDoctorChecks).toBe(mediaDoctorChecks);
     expect(mediaDoctorChecks.find((c) => c.id === 'media.tenancy-schema')?.cost).toBe('deep');

@@ -16,7 +16,11 @@ import { handleAccountUpload } from '../src/account_console/upload_endpoint.js';
 import { UPLOAD_SCRIPT } from '../src/account_console/upload_script.js';
 import { resolveMediaTenancy } from '../src/agora/tenancy.js';
 import { buildConsoleService, readConsoleServiceConfig } from '../src/dashboard/console_service.js';
-import type { DirectUploadPolicyModule, MediaConfig } from '../src/define_config.js';
+import {
+  assertMediaTopology,
+  type DirectUploadPolicyModule,
+  type MediaConfig,
+} from '../src/define_config.js';
 import type { DirectUploadRequest } from '../src/direct_upload_handler.js';
 import { DirectUploadHandler } from '../src/direct_upload_handler.js';
 import type { DriveServiceModule } from '../src/disks/drive.js';
@@ -37,6 +41,10 @@ import { setBootedApp } from '../src/services/booted_app.js';
 import { describeMediaConfig } from '../src/stack.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import { resolveStore } from '../src/stores/factory.js';
+import { resolveTenantVerifier } from '../src/topology/auth.js';
+import { MediaControlPlane } from '../src/topology/control_plane.js';
+import { partitionStore } from '../src/topology/partition_store.js';
+import { buildTenantManager } from '../src/topology/tenant_manager.js';
 import type { TusRequest } from '../src/tus.js';
 import { TusUploadHandler } from '../src/tus.js';
 import type { DirectUploadPolicy, MultipartPart } from '../src/types.js';
@@ -70,6 +78,9 @@ export default class MediaProvider {
 
     this.app.container.singleton(MediaManager, async () => {
       const config = this.app.config.get<MediaConfig>('media', {});
+      assertMediaTopology(config);
+      // A tenant: records, files and conversions live on the control plane.
+      if (config.topology === 'tenant' && config.tenant) return buildTenantManager(config);
 
       // Validate + build the store from config first, so a misconfigured `store` fails fast (before
       // we touch Drive) rather than silently booting on a non-durable in-memory fallback.
@@ -139,6 +150,7 @@ export default class MediaProvider {
         defaultDisk,
         resolve,
         store,
+        ...(config.topology === 'control-plane' ? { topology: 'control-plane' as const } : {}),
         ...(imageProcessor !== undefined ? { imageProcessor } : {}),
         ...(config.collections !== undefined ? { collections: config.collections } : {}),
         ...(config.attachmentKeyPrefix !== undefined
@@ -404,6 +416,50 @@ export default class MediaProvider {
   }
 
   /**
+   * The tenant API of a media control plane (`topology: 'control-plane'`), under
+   * `controlPlane.prefix` (default `/_media`): other apps keep their media here through it, each
+   * request authorized by the app's token (`verifyTenant`).
+   */
+  #mountControlPlane(router: HttpRouterService, config: MediaConfig): void {
+    if (config.topology !== 'control-plane' || !config.verifyTenant) return;
+    const manager = () => this.app.container.make(MediaManager);
+    const logger = {
+      warn: (line: string) => void this.#log('warn', line),
+      error: (line: string) => void this.#log('error', line),
+    };
+    const plane = new MediaControlPlane({
+      library: async (partition) => (await manager()).controlPlaneLibrary(partition),
+      store: async (partition) => partitionStore((await manager()).store, partition),
+      verifyTenant: resolveTenantVerifier(config.verifyTenant),
+      ...(config.controlPlane?.prefix !== undefined ? { prefix: config.controlPlane.prefix } : {}),
+      ...(config.controlPlane?.collections !== undefined
+        ? { collections: config.controlPlane.collections }
+        : {}),
+      ...(config.controlPlane?.maxBytes !== undefined
+        ? { maxBytes: config.controlPlane.maxBytes }
+        : {}),
+      ...(config.controlPlane?.accounts !== undefined
+        ? { accounts: config.controlPlane.accounts }
+        : {}),
+      ...(config.delivery?.mode !== undefined ? { deliveryMode: config.delivery.mode } : {}),
+      logger,
+    });
+    plane.register({
+      route: (pattern, methods, handler) =>
+        router.route(pattern, methods, (ctx: HttpContext) => handler(ctx as never)),
+    });
+  }
+
+  async #log(level: 'warn' | 'error', line: string): Promise<void> {
+    try {
+      const logger = await this.app.container.make('logger');
+      logger[level](line);
+    } catch {
+      /* logging must never break a request */
+    }
+  }
+
+  /**
    * Mount the optional direct-S3 upload routes when `uploads.routes.enabled` is set. These are plain
    * AdonisJS routes (NOT controllers): each resolves the {@link MediaManager} singleton lazily and
    * delegates to its upload methods. The object key is taken from the request body/query — resolve
@@ -419,6 +475,7 @@ export default class MediaProvider {
    */
   #registerRoutes(router: HttpRouterService) {
     const config = this.app.config.get<MediaConfig>('media', {});
+    this.#mountControlPlane(router, config);
     this.#mountAccountRoutes(router);
     this.#mountTusRoutes(router, config);
     this.#mountDirectSessionRoutes(router, config);

@@ -15,6 +15,7 @@ import {
 } from '../src/dashboard/console_authorize.js';
 import {
   buildConsoleService,
+  buildPartitionConsoleService,
   type ConsoleServiceConfig,
   consoleDiskNames,
   readConsoleServiceConfig,
@@ -28,7 +29,11 @@ import {
   registerAgoraConsole,
   searchConsoles,
 } from '../src/dashboard/console_switcher.js';
-import type { AccessDeniedOption, MediaDashboardConfig } from '../src/dashboard/define_config.js';
+import {
+  type AccessDeniedOption,
+  isControlPlaneConsoleApp,
+  type MediaDashboardConfig,
+} from '../src/dashboard/define_config.js';
 import { registerMediaDevTools } from '../src/dashboard/dev_tools.js';
 import {
   readCollectionsQuery,
@@ -54,6 +59,7 @@ import {
   validateFederatedConsoleApp,
 } from '../src/federation/console.js';
 import { MediaManager } from '../src/media_manager.js';
+import { PARTITION_PATTERN } from '../src/topology/protocol.js';
 
 /** What the console's API routes run on: this app's service, or another app's (`?app=`). */
 type ConsoleService = DashboardService | FederatedConsoleService;
@@ -122,7 +128,30 @@ export default class MediaDashboardProvider {
           `[@adonis-agora/media] media_dashboard.apps: "${key}" is not a valid app key (1–64 characters of A-Z, a-z, 0-9, _ . -)`,
         );
       }
+      if (isControlPlaneConsoleApp(entry)) {
+        if (entry.actions !== undefined && typeof entry.actions !== 'boolean') {
+          throw new Error(
+            `[@adonis-agora/media] media_dashboard.apps.${key}.actions must be a boolean`,
+          );
+        }
+        if (!PARTITION_PATTERN.test(key)) {
+          throw new Error(
+            `[@adonis-agora/media] media_dashboard.apps.${key}: not a valid app name`,
+          );
+        }
+        continue;
+      }
       validateFederatedConsoleApp(key, entry, redisConnections);
+    }
+    const controlPlaneApps = Object.values(config.apps ?? {}).some(isControlPlaneConsoleApp);
+    if (
+      controlPlaneApps &&
+      this.app.config.get<{ topology?: string } | undefined>('media', undefined)?.topology !==
+        'control-plane'
+    ) {
+      this.#warn(
+        "[@adonis-agora/media] media_dashboard.apps lists control-plane apps, but config/media.ts is not topology: 'control-plane': they will show no media",
+      );
     }
 
     // The access check, resolved once: the console's routes, its dev tools and the switcher share
@@ -179,11 +208,20 @@ export default class MediaDashboardProvider {
       const picked = this.#selectedApp(config, ctx);
       if (picked === undefined) return local(ctx);
       if (picked === null) throw new DashboardError('unknown app', 404);
+      const spec = config.apps?.[picked];
+      if (isControlPlaneConsoleApp(spec)) {
+        const manager = await this.app.container.make(MediaManager);
+        return buildPartitionConsoleService(
+          manager,
+          this.#serviceConfig(config),
+          picked,
+          spec.actions ?? config.actions ?? false,
+        );
+      }
       const app = await this.#federatedApp(config, picked);
       const viewer = await resolveViewer(ctx, config.viewer).catch(() => null);
-      const entry = config.apps?.[picked];
       return new FederatedConsoleService(app, {
-        actions: entry ? federatedAppActions(entry, config.actions ?? false) : false,
+        actions: spec ? federatedAppActions(spec, config.actions ?? false) : false,
         actor: viewer?.email ?? viewer?.label ?? 'anonymous',
         rawUrl: (disk, key) =>
           `${apiBase}/object/raw?${new URLSearchParams({ app: picked, disk, key }).toString()}`,
@@ -217,15 +255,26 @@ export default class MediaDashboardProvider {
     const granted = this.#grantedApps(ctx);
     const apps = Object.entries(config.apps ?? {})
       .filter(([id]) => granted === undefined || granted.includes(id))
-      .map(([id, app]) => ({
-        id,
-        label: app.label ?? id,
-        mode: 'federated' as const,
-        // Who runs actions on that app's media from here: the app itself, or nobody.
-        actions: federatedAppActions(app, config.actions ?? false)
-          ? ('app' as const)
-          : ('none' as const),
-      }));
+      .map(([id, app]) =>
+        isControlPlaneConsoleApp(app)
+          ? {
+              id,
+              label: app.label ?? id,
+              // Its data lives here, and this server runs the actions.
+              mode: 'control-plane' as const,
+              actions:
+                (app.actions ?? config.actions ?? false) ? ('here' as const) : ('none' as const),
+            }
+          : {
+              id,
+              label: app.label ?? id,
+              mode: 'federated' as const,
+              // Who runs actions on that app's media from here: the app itself, or nobody.
+              actions: federatedAppActions(app, config.actions ?? false)
+                ? ('app' as const)
+                : ('none' as const),
+            },
+      );
     return {
       local: { label: config.appLabel ?? 'This app' },
       apps,
@@ -250,7 +299,9 @@ export default class MediaDashboardProvider {
     let app = this.#federated.get(id);
     if (!app) {
       const spec = config.apps?.[id];
-      if (!spec) return Promise.reject(new DashboardError('unknown app', 404));
+      if (!spec || isControlPlaneConsoleApp(spec)) {
+        return Promise.reject(new DashboardError('unknown app', 404));
+      }
       app = buildFederatedMediaApp(id, spec, this.app).catch((error: unknown) => {
         // A console-side failure to reach the app (its connection, its store): a 503 naming the
         // app, the cause in this app's log.

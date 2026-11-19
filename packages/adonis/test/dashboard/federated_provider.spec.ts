@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RedisConsoleChannel } from '../../src/federation/redis_channel.js';
+import { MediaManager } from '../../src/media_manager.js';
 import type { MediaRecord } from '../../src/media_record.js';
+import { FakeImageProcessor } from '../../src/testing/fake_image_processor.js';
+import { InMemoryDisk } from '../../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../../src/testing/in_memory_media_store.js';
 import { RedisBus } from '../support/redis_bus.js';
 
@@ -68,7 +71,7 @@ async function boot(
   const { router, routes, names, groups } = makeFakeRouter();
   const localStore = new InMemoryMediaStore();
   await localStore.save(record('hub-1'));
-  const manager = {
+  const manager = appConfig.__manager ?? {
     storage: { defaultDisk: 'fs', disk: () => ({}) },
     hasResumable: false,
     store: localStore,
@@ -439,5 +442,87 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     await expect(boot({ apps: { 'entre textos': et.entry } })).rejects.toThrow(
       /not a valid app key/,
     );
+  });
+});
+
+describe('MediaDashboardProvider — control-plane apps (a media control plane’s tenants)', () => {
+  const controlPlane = async () => {
+    const disk = new InMemoryDisk('memory://hub');
+    const store = new InMemoryMediaStore();
+    const manager = new MediaManager({
+      defaultDisk: 'fs',
+      resolve: () => disk,
+      store,
+      imageProcessor: new FakeImageProcessor(),
+      topology: 'control-plane',
+    });
+    const hubOwn = await manager.library.attach({
+      ownerType: 'HubAccount',
+      ownerId: 'ana',
+      collection: 'avatar',
+      fileName: 'a.txt',
+      mimeType: 'text/plain',
+      contents: Buffer.from('a'),
+    });
+    const et = await manager.controlPlaneLibrary('entre-textos').attach({
+      ownerType: 'entre-textos/User',
+      ownerId: '1',
+      collection: 'documents',
+      fileName: 'b.txt',
+      mimeType: 'text/plain',
+      contents: Buffer.from('b'),
+    });
+    const el = await manager.controlPlaneLibrary('eduliberta').attach({
+      ownerType: 'eduliberta/User',
+      ownerId: '1',
+      collection: 'documents',
+      fileName: 'c.txt',
+      mimeType: 'text/plain',
+      contents: Buffer.from('c'),
+    });
+    return { manager, disk, store, hubOwn, et, el };
+  };
+
+  it('lists them as control-plane apps whose actions run here, and shows only their media', async () => {
+    const hub = await controlPlane();
+    const { call } = await boot(
+      {
+        appLabel: 'Hub',
+        actions: true,
+        apps: {
+          'entre-textos': { mode: 'control-plane', label: 'Entre Textos' },
+          eduliberta: { mode: 'control-plane', actions: false },
+        },
+      },
+      { __manager: hub.manager, media: { topology: 'control-plane', disk: 'fs' } },
+    );
+    expect((await call('GET /apps')).body).toEqual({
+      local: { label: 'Hub' },
+      apps: [
+        { id: 'entre-textos', label: 'Entre Textos', mode: 'control-plane', actions: 'here' },
+        { id: 'eduliberta', label: 'eduliberta', mode: 'control-plane', actions: 'none' },
+      ],
+      selected: null,
+    });
+    const et = await call('GET /collections', { app: 'entre-textos' });
+    expect((et.body as { data: Array<{ id: string }> }).data.map((e) => e.id)).toEqual([hub.et.id]);
+    // Another app's record reads as missing from here.
+    expect((await call('GET /media-record', { app: 'entre-textos', id: hub.el.id })).status).toBe(
+      404,
+    );
+    // The disks are confined to the app's files.
+    const root = await call('GET /objects', { app: 'entre-textos', disk: 'fs' });
+    expect(JSON.stringify(root.body)).toContain('entre-textos/');
+    expect(JSON.stringify(root.body)).not.toContain('eduliberta');
+    // The actions run here: the record goes, with its file.
+    expect(
+      (await call('POST /media-record/delete', { app: 'entre-textos', id: hub.et.id })).status,
+    ).toBe(204);
+    expect(await hub.store.find(hub.et.id)).toBeNull();
+    expect(hub.disk.files.has(hub.et.path)).toBe(false);
+    // Read-only where the entry says so.
+    expect(
+      (await call('POST /media-record/delete', { app: 'eduliberta', id: hub.el.id })).status,
+    ).toBe(403);
   });
 });

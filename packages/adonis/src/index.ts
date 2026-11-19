@@ -52,9 +52,11 @@ export type {
   LucidUploadSessionStoreConfig,
   MediaAccessConfig,
   MediaConfig,
+  MediaControlPlaneConfig,
   MediaDeliveryConfig,
   MediaDirectUploadConfig,
   MediaResumableConfig,
+  MediaTenantConfig,
   MediaUploadsConfig,
   S3Credentials,
   S3DiskConfig,
@@ -151,8 +153,10 @@ export {
   ImageProcessorMissingError,
   ImageSizeNotAllowedError,
   MediaAccessDeniedError,
+  MediaControlPlaneError,
   MediaNotFoundError,
   MediaObjectMissingError,
+  MediaTenantUnsupportedError,
   MimeNotAllowedError,
   NotAnImageError,
   ResumableUploadsNotConfiguredError,
@@ -279,6 +283,27 @@ export {
   WEBVTT_MIME_TYPE,
 } from './streaming.js';
 export { tenantScopedStore } from './tenant_scoped_store.js';
+// Topologies: a media control plane (the Hub) and its tenants (the apps).
+export type {
+  AccountFileRead,
+  ControlPlaneAccountsOptions,
+  ControlPlaneUrlSource,
+  MediaTopology,
+  SharedSecretTenant,
+  TenantTokenSource,
+  TenantUrls,
+  TenantVerifierInput,
+  VerifiedTenant,
+  VerifiedUser,
+} from './topology/index.js';
+export {
+  MEDIA_RESOURCE,
+  MEDIA_SCOPES,
+  MediaControlPlane,
+  sharedSecretVerifier,
+  TenantAccounts,
+  TenantMediaLibrary,
+} from './topology/index.js';
 // Transformers (pluggable content transformations persisted as conversions)
 export type {
   Transformer,

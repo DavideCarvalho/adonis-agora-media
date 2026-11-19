@@ -141,6 +141,19 @@ export function mediaStackUses(config: MediaConfig, ctx: MediaStackContext = {})
     if (!same) uses.push(use);
   };
 
+  // A tenant uses no disk or table of its own: its media lives on the control plane.
+  if (config.topology === 'tenant' && config.tenant) {
+    const url = typeof config.tenant.url === 'string' ? config.tenant.url : undefined;
+    const host = endpointHost(url);
+    add({
+      tech: 'control-plane',
+      label: host ?? 'urn:agora:media',
+      ...(host ? { host } : {}),
+      purpose: 'media files',
+    });
+    return uses;
+  }
+
   const disk = (name: string | undefined, purpose: string) => {
     if (!name || config.disks?.[name] !== undefined) return;
     add({ tech: 'drive', label: name, purpose });

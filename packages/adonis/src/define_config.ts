@@ -11,6 +11,11 @@ import type { ImageProcessorFactory } from './processors/factory.js';
 import { processors } from './processors/factory.js';
 import type { LucidStoreConfig, StoreContext, StoreFactory } from './stores/factory.js';
 import { stores } from './stores/factory.js';
+import type { TenantTokenSource, TenantVerifierInput } from './topology/auth.js';
+import type { ControlPlaneAccountsOptions } from './topology/control_plane.js';
+import { type MediaTopology, PARTITION_PATTERN } from './topology/protocol.js';
+import type { ControlPlaneUrlSource } from './topology/tenant_client.js';
+import type { TenantUrls } from './topology/tenant_library.js';
 import { engines, transformers } from './transformers/factory.js';
 import type { DirectUploadPolicy } from './types.js';
 import type { UploadMode } from './upload_mode.js';
@@ -322,6 +327,174 @@ export interface MediaConfig {
    * Needs `@adonisjs/redis`. Off when omitted.
    */
   consoleCommands?: MediaConsoleCommandsConfig;
+  /**
+   * Where this app's media runs. `standalone` (default): its own records, disks and conversions.
+   * `control-plane`: the same, and other apps keep their media here too, through the API under
+   * `controlPlane.prefix` (needs `verifyTenant`). `tenant`: the records, files and conversions live
+   * on a control plane (`tenant`); `media.library` keeps its API and runs it there.
+   */
+  topology?: MediaTopology;
+  /**
+   * Control plane only: validates a tenant app's token. The app (the partition) and its
+   * capabilities (`media:read`, `media:write`) come from the verified token, never from the request.
+   * A function, a class instance, or `() => import('./verifier.js')`.
+   *
+   * With authkit: `authkitTenantVerifier({ issuer, resource: 'urn:agora:media' })` from
+   * `@adonis-agora/authkit-client`. Without it: `sharedSecretVerifier({ partitions })`.
+   */
+  verifyTenant?: TenantVerifierInput;
+  /** Control plane only: the tenant API. */
+  controlPlane?: MediaControlPlaneConfig;
+  /** Tenant only: the control plane this app keeps its media on. */
+  tenant?: MediaTenantConfig;
+}
+
+/** {@link MediaConfig.controlPlane}. */
+export interface MediaControlPlaneConfig {
+  /** Route prefix of the tenant API (mounted under `<prefix>/v1`). Default `/_media`. */
+  prefix?: string;
+  /** The collections tenants may use. Default: every collection. */
+  collections?: string[];
+  /** Largest upload, in bytes. Default 100 MiB. */
+  maxBytes?: number;
+  /**
+   * A person's own files, shared by every app (an avatar): apps read them with their service token,
+   * and a person's own access token writes to its `sub`.
+   */
+  accounts?: ControlPlaneAccountsOptions;
+}
+
+/** {@link MediaConfig.tenant}. */
+export interface MediaTenantConfig {
+  /**
+   * The control plane's URL including its prefix (`https://hub.example.com/_media`), or
+   * `controlPlaneUrl({ issuer, resource: 'urn:agora:media' })` from `@adonis-agora/authkit-client`
+   * (found in the issuer's discovery document).
+   */
+  url: ControlPlaneUrlSource;
+  /** This app's name on the control plane (the partition its token carries). */
+  partition: string;
+  /**
+   * This app's token: `authkitTenantToken({ issuer, clientId, clientSecret, resource:
+   * 'urn:agora:media' })` from `@adonis-agora/authkit-client`, a shared secret, or `{ get() }`.
+   */
+  token: TenantTokenSource;
+  /**
+   * Where `media.library.url()` and image URLs point: `app` (default), this app's delivery route
+   * (`delivery.path`), which reads the bytes from the control plane; `control-plane`, the storage
+   * URL the control plane hands out.
+   */
+  urls?: TenantUrls;
+  /** Per request. Default 10000. */
+  timeoutMs?: number;
+  /** Per upload. Default 120000. */
+  uploadTimeoutMs?: number;
+  /** Retries of a read after a network error or a 5xx. Default 1. Writes are never retried. */
+  retries?: number;
+}
+
+/** What a tenant does not have: its files live on the control plane. */
+const TENANT_FORBIDDEN = [
+  'disk',
+  'disks',
+  'store',
+  'stores',
+  'imageProcessor',
+  'uploads',
+  'tenancy',
+  'consoleCommands',
+  'accountConsole',
+  'verifyTenant',
+  'controlPlane',
+] as const;
+
+/** Refuses a topology that cannot work, at boot, with the change to make. */
+export function assertMediaTopology(config: MediaConfig): void {
+  const topology = config.topology ?? 'standalone';
+  if (!['standalone', 'control-plane', 'tenant'].includes(topology)) {
+    throw new Error(`media: unknown topology "${String(topology)}"`);
+  }
+  if (topology === 'tenant') {
+    const tenant = config.tenant;
+    if (!tenant?.url) throw new Error('media: tenant.url is required on a tenant');
+    if (!tenant.partition || !PARTITION_PATTERN.test(tenant.partition)) {
+      throw new Error('media: tenant.partition is required (1-64 characters of A-Z a-z 0-9 _ . -)');
+    }
+    if (!tenant.token) {
+      throw new Error(
+        "media: tenant.token is required (authkitTenantToken({ issuer, clientId, clientSecret, resource: 'urn:agora:media' }) or a shared secret)",
+      );
+    }
+    if (typeof tenant.url === 'string' && !/^https?:\/\//.test(tenant.url)) {
+      throw new Error('media: tenant.url must be an absolute http(s) URL or a function');
+    }
+    for (const key of ['timeoutMs', 'uploadTimeoutMs'] as const) {
+      const value = tenant[key];
+      if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+        throw new Error(`media: tenant.${key} must be a positive number of milliseconds`);
+      }
+    }
+    if (
+      tenant.retries !== undefined &&
+      !(Number.isInteger(tenant.retries) && tenant.retries >= 0)
+    ) {
+      throw new Error('media: tenant.retries must be a whole number, 0 or more');
+    }
+    if (tenant.urls !== undefined && tenant.urls !== 'app' && tenant.urls !== 'control-plane') {
+      throw new Error("media: tenant.urls is 'app' or 'control-plane'");
+    }
+    for (const key of TENANT_FORBIDDEN) {
+      if (config[key] !== undefined) {
+        throw new Error(
+          `media: \`${key}\` does not apply to a tenant: its media lives on the control plane`,
+        );
+      }
+    }
+    return;
+  }
+  if (config.tenant !== undefined) {
+    throw new Error('media: `tenant` only applies to topology "tenant"');
+  }
+  if (topology === 'control-plane') {
+    const verify = config.verifyTenant as unknown;
+    if (
+      typeof verify !== 'function' &&
+      !(
+        verify &&
+        typeof verify === 'object' &&
+        typeof (verify as { verify?: unknown }).verify === 'function'
+      )
+    ) {
+      throw new Error(
+        "media: a control plane needs `verifyTenant` (authkitTenantVerifier({ issuer, resource: 'urn:agora:media' }) or sharedSecretVerifier({ partitions })): a tenant is never trusted without a token",
+      );
+    }
+    const prefix = config.controlPlane?.prefix;
+    if (prefix !== undefined && !/^\/[A-Za-z0-9_.~/-]*$/.test(prefix)) {
+      throw new Error("media: controlPlane.prefix is a path starting with '/' (like '/_media')");
+    }
+    for (const [key, value] of [
+      ['controlPlane.maxBytes', config.controlPlane?.maxBytes],
+      ['controlPlane.accounts.maxBytes', config.controlPlane?.accounts?.maxBytes],
+    ] as const) {
+      if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+        throw new Error(`media: ${key} must be a positive number of bytes`);
+      }
+    }
+    const accounts = config.controlPlane?.accounts;
+    if (accounts && typeof accounts.verifyUser !== 'function') {
+      throw new Error('media: controlPlane.accounts.verifyUser is required');
+    }
+    if (accounts && (!Array.isArray(accounts.collections) || accounts.collections.length === 0)) {
+      throw new Error('media: controlPlane.accounts.collections lists at least one collection');
+    }
+    return;
+  }
+  if (config.verifyTenant !== undefined || config.controlPlane !== undefined) {
+    throw new Error(
+      'media: `verifyTenant` and `controlPlane` only apply to topology "control-plane"',
+    );
+  }
 }
 
 /** {@link MediaConfig.consoleCommands}. */
@@ -346,6 +519,7 @@ export interface MediaConsoleCommandsConfig {
  * {@link InferTransformers} can extract them from `typeof config` — no `as const` needed.
  */
 export function defineConfig<const T extends MediaConfig>(config: T = {} as T): T {
+  assertMediaTopology(config);
   return config;
 }
 

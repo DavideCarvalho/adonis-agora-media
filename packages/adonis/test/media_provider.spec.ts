@@ -96,3 +96,67 @@ describe('MediaProvider', () => {
     expect(router.get).not.toHaveBeenCalled();
   });
 });
+
+describe('MediaProvider — topologies', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("mounts a control plane's tenant API under its prefix once booted", async () => {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const router = makeFakeRouter();
+    const { app, bootedHandlers } = makeFakeApp(
+      {
+        topology: 'control-plane',
+        verifyTenant: () => null,
+        controlPlane: {
+          prefix: '/_hub-media',
+          accounts: { collections: ['avatar'], verifyUser: () => null },
+        },
+      },
+      router,
+    );
+    const provider = new MediaProvider(app as never);
+    provider.register();
+    await provider.boot();
+    for (const hook of bootedHandlers) await hook();
+    const mounted = router.route.mock.calls.map(
+      (call: unknown[]) => `${(call[1] as string[])[0]} ${call[0] as string}`,
+    );
+    expect(mounted).toContain('GET /_hub-media/v1/whoami');
+    expect(mounted).toContain('POST /_hub-media/v1/records');
+    expect(mounted).toContain('GET /_hub-media/v1/records/:id/file');
+    expect(mounted).toContain('PUT /_hub-media/v1/accounts/me/:collection');
+  });
+
+  it('builds a tenant manager without touching a store, a disk or Drive', async () => {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const { MediaManager } = await import('../src/media_manager.js');
+    let factory: (() => Promise<unknown>) | undefined;
+    const app = {
+      config: {
+        get: (key: string, def: unknown) =>
+          key === 'media'
+            ? {
+                topology: 'tenant',
+                tenant: { url: 'https://hub.example/_media', partition: 'et', token: 's' },
+              }
+            : def,
+      },
+      container: {
+        singleton: vi.fn((token: unknown, fn: () => Promise<unknown>) => {
+          if (token === MediaManager) factory = fn;
+        }),
+        make: vi.fn(async () => {
+          throw new Error('nothing to resolve');
+        }),
+        hasBinding: () => false,
+      },
+      booted: vi.fn(),
+    };
+    new MediaProvider(app as never).register();
+    const manager = (await factory!()) as InstanceType<typeof MediaManager>;
+    expect(manager.topology).toBe('tenant');
+    expect(manager.library.constructor.name).toBe('TenantMediaLibrary');
+  });
+});

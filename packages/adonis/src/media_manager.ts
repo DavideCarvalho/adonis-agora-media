@@ -9,11 +9,15 @@ import { AttachmentManager } from './attachment.js';
 import type { DeliveryMode, OnDemandImageConfig } from './delivery.js';
 import type { DeliverySigningConfig } from './delivery_signing.js';
 import { DirectUploadManager } from './direct_upload.js';
-import { DirectUploadsNotConfiguredError, ResumableUploadsNotConfiguredError } from './errors.js';
+import {
+  DirectUploadsNotConfiguredError,
+  MediaTenantUnsupportedError,
+  ResumableUploadsNotConfiguredError,
+} from './errors.js';
 import type { ImageProcessor } from './image_processor.js';
 import { MediaAccess } from './media_access.js';
 import type { MediaCollectionConfig, MediaCollectionRegistry } from './media_collection.js';
-import type { AttachExistingInput } from './media_library.js';
+import type { AttachExistingInput, MediaLibraryOptions } from './media_library.js';
 import { MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
 import type { MediaStore } from './media_store.js';
@@ -29,6 +33,9 @@ import {
   MediaFake,
   type MediaFakeOptions,
 } from './testing/media_fake.js';
+import { partitionStore } from './topology/partition_store.js';
+import type { MediaTopology } from './topology/protocol.js';
+import type { TenantAccounts } from './topology/tenant_accounts.js';
 import type { DiskResolver, MultipartPart } from './types.js';
 import {
   type AbortDirectUploadInput,
@@ -93,6 +100,16 @@ export interface MediaManagerOptions {
   deliveryStreamPath?: string;
   /** Organizations as tenants, resolved (`tenancy` in `config/media.ts`). Default: off. */
   tenancy?: ResolvedMediaTenancy;
+  /**
+   * Build the library from the options this manager would give it: a media tenant passes its
+   * remote library here (its records and files live on the control plane). Never used by
+   * {@link MediaManager.fake}, whose twin always runs the real library in memory.
+   */
+  library?: (options: MediaLibraryOptions) => MediaLibrary;
+  /** The media topology this manager runs in. Default `standalone`. */
+  topology?: MediaTopology;
+  /** On a media tenant: its account files on the control plane (`media.accounts`). */
+  accounts?: TenantAccounts;
 }
 
 /**
@@ -121,33 +138,17 @@ export class MediaManager {
   readonly #options: MediaManagerOptions;
   /** The in-memory twin every accessor defers to while {@link fake} is active. */
   #fake: { manager: MediaManager; handle: MediaFake; access: MediaAccess } | undefined;
+  /** {@link controlPlaneLibrary}'s libraries, by partition (`''`: the whole store). */
+  readonly #partitionLibraries = new Map<string, MediaLibrary>();
 
   constructor(options: MediaManagerOptions) {
     this.#options = options;
     this.#store = options.store;
     this.#storage = new StorageManager({ default: options.defaultDisk, resolve: options.resolve });
-    this.#library = new MediaLibrary({
-      storage: this.#storage,
-      store: options.store,
-      ...(options.collections !== undefined ? { collections: options.collections } : {}),
-      ...(options.imageProcessor !== undefined ? { imageProcessor: options.imageProcessor } : {}),
-      ...(options.emitDiagnostics !== undefined
-        ? { emitDiagnostics: options.emitDiagnostics }
-        : {}),
-      ...(options.deliveryMode !== undefined ? { deliveryMode: options.deliveryMode } : {}),
-      ...(options.deliverySignedTtlSeconds !== undefined
-        ? { deliverySignedTtlSeconds: options.deliverySignedTtlSeconds }
-        : {}),
-      ...(options.deliveryImages !== undefined ? { deliveryImages: options.deliveryImages } : {}),
-      ...(options.deliverySigning !== undefined
-        ? { deliverySigning: options.deliverySigning }
-        : {}),
-      ...(options.deliveryPath !== undefined ? { deliveryPath: options.deliveryPath } : {}),
-      ...(options.deliveryStreamPath !== undefined
-        ? { deliveryStreamPath: options.deliveryStreamPath }
-        : {}),
-      ...(options.tenancy !== undefined ? { tenancy: options.tenancy } : {}),
-    });
+    const libraryOptions = this.#libraryOptions(options.store, options.tenancy);
+    this.#library = options.library
+      ? options.library(libraryOptions)
+      : new MediaLibrary(libraryOptions);
     this.#access = new MediaAccess({
       library: this.#library,
       ...(options.accessIdentity !== undefined ? { identity: options.accessIdentity } : {}),
@@ -219,6 +220,56 @@ export class MediaManager {
     }
   }
 
+  /** What a {@link MediaLibrary} over `store` is built from: this manager's settings. */
+  #libraryOptions(
+    store: MediaStore,
+    tenancy: ResolvedMediaTenancy | undefined,
+  ): MediaLibraryOptions {
+    const options = this.#options;
+    return {
+      storage: this.#storage,
+      store,
+      ...(options.collections !== undefined ? { collections: options.collections } : {}),
+      ...(options.imageProcessor !== undefined ? { imageProcessor: options.imageProcessor } : {}),
+      ...(options.emitDiagnostics !== undefined
+        ? { emitDiagnostics: options.emitDiagnostics }
+        : {}),
+      ...(options.deliveryMode !== undefined ? { deliveryMode: options.deliveryMode } : {}),
+      ...(options.deliverySignedTtlSeconds !== undefined
+        ? { deliverySignedTtlSeconds: options.deliverySignedTtlSeconds }
+        : {}),
+      ...(options.deliveryImages !== undefined ? { deliveryImages: options.deliveryImages } : {}),
+      ...(options.deliverySigning !== undefined
+        ? { deliverySigning: options.deliverySigning }
+        : {}),
+      ...(options.deliveryPath !== undefined ? { deliveryPath: options.deliveryPath } : {}),
+      ...(options.deliveryStreamPath !== undefined
+        ? { deliveryStreamPath: options.deliveryStreamPath }
+        : {}),
+      ...(tenancy !== undefined ? { tenancy } : {}),
+    };
+  }
+
+  /**
+   * The library a media control plane runs a tenant app's requests on: this manager's disks,
+   * collections, processor and delivery settings, over the store seen through `partition` (only
+   * that app's records), with organization tenancy off. Without `partition`, the whole store
+   * (account files, shared by every app). One instance per partition, so lazy conversions of the
+   * same record are generated once.
+   */
+  controlPlaneLibrary(partition?: string): MediaLibrary {
+    const key = partition ?? '';
+    let library = this.#partitionLibraries.get(key);
+    if (!library) {
+      const store = partition === undefined ? this.#store : partitionStore(this.#store, partition);
+      // Organization tenancy stays off here on purpose: a partition is an app, not an
+      // organization, and the guard store is what scopes it. Tenant rows carry no tenant.
+      library = new MediaLibrary(this.#libraryOptions(store, undefined));
+      this.#partitionLibraries.set(key, library);
+    }
+    return library;
+  }
+
   /** Storage façade the layers resolve disks through. */
   get storage(): StorageManager {
     return this.#fake ? this.#fake.manager.storage : this.#storage;
@@ -252,6 +303,23 @@ export class MediaManager {
     return this.#options.tenancy ?? TENANCY_OFF;
   }
 
+  /** Where this app's media runs: `standalone`, `control-plane` (the Hub) or `tenant`. */
+  get topology(): MediaTopology {
+    return this.#options.topology ?? 'standalone';
+  }
+
+  /**
+   * A person's own files on the media control plane, shared by every app (an avatar): read with
+   * this app's token, written and removed with the person's own access token. Media tenants only.
+   */
+  get accounts(): TenantAccounts {
+    // Not faked: `media.fake()` covers `media.library`; account files still go to the control plane.
+    if (!this.#options.accounts) {
+      throw new MediaTenantUnsupportedError('media.accounts (outside a tenant)');
+    }
+    return this.#options.accounts;
+  }
+
   /** Direct-S3 upload coordinator (proxy + direct multipart modes). */
   get uploads(): UploadManager {
     return this.#fake ? this.#fake.manager.uploads : this.#uploads;
@@ -283,8 +351,9 @@ export class MediaManager {
       options.visibility,
     );
     const store = options.store ?? new InMemoryMediaStore();
+    const { library: _remote, accounts: _accounts, ...local } = this.#options;
     const manager = new MediaManager({
-      ...this.#options,
+      ...local,
       resolve,
       store,
       imageProcessor: options.imageProcessor ?? new FakeImageProcessor(),
@@ -327,6 +396,7 @@ export class MediaManager {
    */
   get resumable(): ResumableUploadManager {
     if (this.#fake) return this.#fake.manager.resumable;
+    if (this.topology === 'tenant') throw new MediaTenantUnsupportedError('media.resumable');
     if (!this.#resumable) throw new ResumableUploadsNotConfiguredError();
     return this.#resumable;
   }
@@ -361,6 +431,7 @@ export class MediaManager {
    */
   get direct(): DirectUploadManager {
     if (this.#fake) return this.#fake.manager.direct;
+    if (this.topology === 'tenant') throw new MediaTenantUnsupportedError('media.direct');
     if (!this.#direct) throw new DirectUploadsNotConfiguredError();
     return this.#direct;
   }
