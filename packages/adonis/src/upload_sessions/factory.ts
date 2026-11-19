@@ -1,6 +1,7 @@
 import type { ApplicationService } from '@adonisjs/core/types';
 import { UploadSessionStoreNotConfiguredError } from '../errors.js';
 import type { UploadSessionStore } from '../resumable_upload.js';
+import { markLucidStore } from '../stack.js';
 
 /**
  * Runtime context an {@link UploadSessionStoreFactory} thunk receives when the media provider builds
@@ -86,6 +87,7 @@ export const uploadSessions = {
       });
     };
     // Readable without building the store, so `agora:doctor` knows a schema is configured.
+    markLucidStore(factory, config.connection);
     return config.schema === undefined
       ? factory
       : Object.assign(factory, { schema: config.schema });

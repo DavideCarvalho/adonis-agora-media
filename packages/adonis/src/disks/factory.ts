@@ -1,3 +1,4 @@
+import { describeStackUse, endpointHost, s3EndpointTech } from '../stack.js';
 import type { Disk } from '../types.js';
 
 /**
@@ -69,7 +70,7 @@ export interface S3DiskConfig {
 export const disks = {
   /** S3 (or S3-compatible) disk — needs the optional `@aws-sdk/client-s3` peer. */
   s3(config: S3DiskConfig): DiskFactory {
-    return async () => {
+    const factory: DiskFactory = async () => {
       const { S3Client } = await import('@aws-sdk/client-s3');
       const { S3Disk } = await import('./s3.js');
       const client = new S3Client({
@@ -90,6 +91,14 @@ export const disks = {
         ...(config.visibility !== undefined ? { visibility: config.visibility } : {}),
       });
     };
+    // Telescope's Architecture page: the bucket, never the endpoint (it may carry credentials).
+    const host = endpointHost(config.endpoint) ?? config.region;
+    return describeStackUse(factory, {
+      tech: s3EndpointTech(config.endpoint),
+      label: config.bucket,
+      purpose: 'media files',
+      ...(host !== undefined ? { host } : {}),
+    });
   },
 };
 
