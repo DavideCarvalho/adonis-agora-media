@@ -55,6 +55,11 @@ describe('topology config', () => {
         tenant: { url: async () => 'https://hub.example/_media', partition: 'et', token: 's' },
       }),
     ).not.toThrow();
+    expect(() =>
+      defineConfig({
+        accounts: { url: 'https://hub.example/_media', partition: 'et', token: 's' },
+      }),
+    ).not.toThrow();
   });
 
   it('refuses what cannot work, saying what to change', () => {
@@ -109,6 +114,24 @@ describe('topology config', () => {
         },
         /at least one collection/,
       ],
+      [
+        {
+          topology: 'tenant',
+          tenant: { url: 'https://x', partition: 'a', token: 's' },
+          accounts: { url: 'https://x', partition: 'a', token: 's' },
+        },
+        /`accounts` does not apply to a tenant/,
+      ],
+      [
+        {
+          topology: 'control-plane',
+          verifyTenant: verify(),
+          accounts: { url: 'https://x', partition: 'a', token: 's' },
+        },
+        /only applies to topology "standalone"/,
+      ],
+      [{ accounts: { url: 'hub/_media', partition: 'a', token: 's' } }, /accounts.url must be/],
+      [{ accounts: { url: 'https://x', partition: 'a', token: '' } }, /accounts.token/],
     ];
     for (const [config, message] of bad) expect(() => assertMediaTopology(config)).toThrow(message);
   });
@@ -261,5 +284,16 @@ describe('doctor', () => {
     expect(checkTopology(tenant('et', 'et'))).toMatchObject({ status: 'ok' });
     expect(checkTopology({ topology: 'control-plane' })).toMatchObject({ status: 'error' });
     expect(checkDisks(tenant('et', 'et'), null)).toMatchObject({ status: 'skip' });
+  });
+
+  it('media.topology on a standalone app with account files elsewhere', () => {
+    expect(
+      checkTopology({
+        accounts: { url: 'https://hub.example/_media', partition: 'et', token: 's' },
+      }),
+    ).toMatchObject({
+      status: 'ok',
+      message: expect.stringContaining('account files on the control plane at https://hub.example'),
+    });
   });
 });

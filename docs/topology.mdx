@@ -331,6 +331,41 @@ export default class AvatarsController {
 | `accounts.replace(accessToken, collection, { contents, mimeType, fileName, size })` | Replaces the person's file. |
 | `accounts.remove(accessToken, collection)` | Removes the person's files. Idempotent. |
 
+### In an app that keeps its own media
+
+An app does not need to be a tenant to use account files. A standalone app keeps its own records,
+disks and conversions, and reads and writes people's account files on the control plane with
+`accounts`:
+
+```ts title="config/media.ts (an app that keeps its own media)"
+import env from '#start/env'
+import { authkitTenantToken, controlPlaneUrl } from '@adonis-agora/authkit-client'
+import { defineConfig } from '@adonis-agora/media'
+
+const issuer = env.get('AUTHKIT_ISSUER')
+
+export default defineConfig({
+  accounts: {
+    url: controlPlaneUrl({ issuer, resource: 'urn:agora:media' }),
+    partition: 'entre-textos',
+    token: authkitTenantToken({
+      issuer,
+      clientId: env.get('AGORA_SERVICE_CLIENT_ID'),
+      clientSecret: env.get('AGORA_SERVICE_CLIENT_SECRET'),
+      resource: 'urn:agora:media',
+    }),
+  },
+
+  disk: 'media',
+  store: 'lucid',
+  collections: [{ name: 'documents' }],
+})
+```
+
+`media.library` keeps using this app's own disks and store, and `media.accounts` works as in a
+tenant. `accounts` takes the same fields as `tenant` except `urls`. The app's token only needs
+`media:read`.
+
 ## The console
 
 The Hub's media console shows each tenant app in its **App** selector. See

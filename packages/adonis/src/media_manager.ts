@@ -108,7 +108,7 @@ export interface MediaManagerOptions {
   library?: (options: MediaLibraryOptions) => MediaLibrary;
   /** The media topology this manager runs in. Default `standalone`. */
   topology?: MediaTopology;
-  /** On a media tenant: its account files on the control plane (`media.accounts`). */
+  /** A person's own files on the control plane (`media.accounts`): a tenant's, or `accounts`. */
   accounts?: TenantAccounts;
 }
 
@@ -310,12 +310,15 @@ export class MediaManager {
 
   /**
    * A person's own files on the media control plane, shared by every app (an avatar): read with
-   * this app's token, written and removed with the person's own access token. Media tenants only.
+   * this app's token, written and removed with the person's own access token. On a media tenant, or
+   * a standalone app with `accounts` in `config/media.ts`.
    */
   get accounts(): TenantAccounts {
     // Not faked: `media.fake()` covers `media.library`; account files still go to the control plane.
     if (!this.#options.accounts) {
-      throw new MediaTenantUnsupportedError('media.accounts (outside a tenant)');
+      throw new MediaTenantUnsupportedError(
+        'media.accounts (outside a tenant, and no `accounts` in config/media.ts)',
+      );
     }
     return this.#options.accounts;
   }

@@ -159,4 +159,36 @@ describe('MediaProvider — topologies', () => {
     expect(manager.topology).toBe('tenant');
     expect(manager.library.constructor.name).toBe('TenantMediaLibrary');
   });
+
+  it('gives a standalone app media.accounts when config/media.ts has `accounts`', async () => {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const { MediaManager } = await import('../src/media_manager.js');
+    let factory: (() => Promise<unknown>) | undefined;
+    const app = {
+      config: {
+        get: (key: string, def: unknown) =>
+          key === 'media'
+            ? {
+                disk: 'local',
+                accounts: { url: 'https://hub.example/_media', partition: 'et', token: 's' },
+              }
+            : def,
+      },
+      container: {
+        singleton: vi.fn((token: unknown, fn: () => Promise<unknown>) => {
+          if (token === MediaManager) factory = fn;
+        }),
+        make: vi.fn(async () => {
+          throw new Error('nothing to resolve');
+        }),
+        hasBinding: () => false,
+      },
+      booted: vi.fn(),
+    };
+    new MediaProvider(app as never).register();
+    const manager = (await factory!()) as InstanceType<typeof MediaManager>;
+    expect(manager.topology).toBe('standalone');
+    expect(manager.library.constructor.name).toBe('MediaLibrary');
+    expect(manager.accounts.constructor.name).toBe('TenantAccounts');
+  });
 });

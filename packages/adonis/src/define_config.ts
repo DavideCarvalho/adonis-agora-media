@@ -347,7 +347,19 @@ export interface MediaConfig {
   controlPlane?: MediaControlPlaneConfig;
   /** Tenant only: the control plane this app keeps its media on. */
   tenant?: MediaTenantConfig;
+  /**
+   * Standalone only: the control plane that keeps people's own files (an avatar,
+   * `controlPlane.accounts` there), for an app that keeps its own media. Turns on `media.accounts`.
+   * A tenant does not need it: its `media.accounts` uses `tenant`.
+   */
+  accounts?: MediaAccountsConfig;
 }
+
+/**
+ * {@link MediaConfig.accounts}: where a standalone app reads and writes people's own files. The same
+ * fields as {@link MediaTenantConfig}, without `urls`.
+ */
+export type MediaAccountsConfig = Omit<MediaTenantConfig, 'urls'>;
 
 /** {@link MediaConfig.controlPlane}. */
 export interface MediaControlPlaneConfig {
@@ -408,6 +420,30 @@ const TENANT_FORBIDDEN = [
   'controlPlane',
 ] as const;
 
+/** The client fields shared by `tenant` and `accounts`. */
+function assertControlPlaneClient(key: 'tenant' | 'accounts', client: MediaAccountsConfig): void {
+  if (!client.partition || !PARTITION_PATTERN.test(client.partition)) {
+    throw new Error(`media: ${key}.partition is required (1-64 characters of A-Z a-z 0-9 _ . -)`);
+  }
+  if (!client.token) {
+    throw new Error(
+      `media: ${key}.token is required (authkitTenantToken({ issuer, clientId, clientSecret, resource: 'urn:agora:media' }) or a shared secret)`,
+    );
+  }
+  if (typeof client.url === 'string' && !/^https?:\/\//.test(client.url)) {
+    throw new Error(`media: ${key}.url must be an absolute http(s) URL or a function`);
+  }
+  for (const field of ['timeoutMs', 'uploadTimeoutMs'] as const) {
+    const value = client[field];
+    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+      throw new Error(`media: ${key}.${field} must be a positive number of milliseconds`);
+    }
+  }
+  if (client.retries !== undefined && !(Number.isInteger(client.retries) && client.retries >= 0)) {
+    throw new Error(`media: ${key}.retries must be a whole number, 0 or more`);
+  }
+}
+
 /** Refuses a topology that cannot work, at boot, with the change to make. */
 export function assertMediaTopology(config: MediaConfig): void {
   const topology = config.topology ?? 'standalone';
@@ -417,28 +453,11 @@ export function assertMediaTopology(config: MediaConfig): void {
   if (topology === 'tenant') {
     const tenant = config.tenant;
     if (!tenant?.url) throw new Error('media: tenant.url is required on a tenant');
-    if (!tenant.partition || !PARTITION_PATTERN.test(tenant.partition)) {
-      throw new Error('media: tenant.partition is required (1-64 characters of A-Z a-z 0-9 _ . -)');
-    }
-    if (!tenant.token) {
+    assertControlPlaneClient('tenant', tenant);
+    if (config.accounts !== undefined) {
       throw new Error(
-        "media: tenant.token is required (authkitTenantToken({ issuer, clientId, clientSecret, resource: 'urn:agora:media' }) or a shared secret)",
+        'media: `accounts` does not apply to a tenant: its media.accounts uses `tenant`',
       );
-    }
-    if (typeof tenant.url === 'string' && !/^https?:\/\//.test(tenant.url)) {
-      throw new Error('media: tenant.url must be an absolute http(s) URL or a function');
-    }
-    for (const key of ['timeoutMs', 'uploadTimeoutMs'] as const) {
-      const value = tenant[key];
-      if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
-        throw new Error(`media: tenant.${key} must be a positive number of milliseconds`);
-      }
-    }
-    if (
-      tenant.retries !== undefined &&
-      !(Number.isInteger(tenant.retries) && tenant.retries >= 0)
-    ) {
-      throw new Error('media: tenant.retries must be a whole number, 0 or more');
     }
     if (tenant.urls !== undefined && tenant.urls !== 'app' && tenant.urls !== 'control-plane') {
       throw new Error("media: tenant.urls is 'app' or 'control-plane'");
@@ -454,6 +473,15 @@ export function assertMediaTopology(config: MediaConfig): void {
   }
   if (config.tenant !== undefined) {
     throw new Error('media: `tenant` only applies to topology "tenant"');
+  }
+  if (config.accounts !== undefined) {
+    if (topology !== 'standalone') {
+      throw new Error(
+        'media: `accounts` only applies to topology "standalone": a control plane keeps account files itself (`controlPlane.accounts`)',
+      );
+    }
+    if (!config.accounts.url) throw new Error('media: accounts.url is required');
+    assertControlPlaneClient('accounts', config.accounts);
   }
   if (topology === 'control-plane') {
     const verify = config.verifyTenant as unknown;

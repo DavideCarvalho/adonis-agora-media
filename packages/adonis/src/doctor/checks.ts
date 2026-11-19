@@ -328,7 +328,15 @@ export function checkTopology(media: MediaConfig | undefined): AgoraDoctorResult
       }.`,
     };
   }
-  return { status: 'ok', message: 'Standalone: this app keeps its own media.' };
+  const accounts = media.accounts;
+  return {
+    status: 'ok',
+    message: `Standalone: this app keeps its own media${
+      accounts
+        ? `, and reads account files on the control plane at ${typeof accounts.url === 'string' ? accounts.url : 'its discovered URL'}`
+        : ''
+    }.`,
+  };
 }
 
 /** What a control plane's `whoami` answers. */
