@@ -1,6 +1,7 @@
 import type { ApplicationService } from '@adonisjs/core/types';
 import { StoreNotConfiguredError } from '../errors.js';
 import type { MediaStore } from '../media_store.js';
+import { markLucidStore } from '../stack.js';
 
 /**
  * Runtime context a {@link StoreFactory} thunk receives when the media provider builds the
@@ -102,6 +103,7 @@ export const stores = {
       });
     };
     // Readable without building the store, so `agora:doctor` knows a schema is configured.
+    markLucidStore(factory, config.connection);
     return config.schema === undefined
       ? factory
       : Object.assign(factory, { schema: config.schema });

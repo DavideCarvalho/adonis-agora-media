@@ -34,6 +34,7 @@ import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
 import { setBootedApp } from '../src/services/booted_app.js';
+import { describeMediaConfig } from '../src/stack.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import { resolveStore } from '../src/stores/factory.js';
 import type { TusRequest } from '../src/tus.js';
@@ -229,6 +230,9 @@ export default class MediaProvider {
         () => {},
       );
     }
+
+    // What media runs on, for telescope's Architecture page (read from the config after boot).
+    await this.#describeStack();
 
     // Media's "My files" page in the authkit account console, when authkit's registry is in the
     // app and `accountConsole.collections` lists something. No import of authkit: a binding name and
@@ -745,6 +749,38 @@ export default class MediaProvider {
     if (!thunk) return undefined;
     const policy = (await thunk()).default;
     return typeof policy === 'function' ? new policy() : policy;
+  }
+
+  /**
+   * Tag `config/media.ts` with the disks, stores and Redis connection it selects (see
+   * `../src/stack.js`), so telescope's Architecture page draws them without app code. Never throws.
+   */
+  async #describeStack(): Promise<void> {
+    try {
+      const config = this.app.config.get<MediaConfig | undefined>('media', undefined);
+      if (config === null || typeof config !== 'object') return;
+      const database = this.app.config.get<
+        { connection?: string; connections?: Record<string, { client?: string }> } | undefined
+      >('database', undefined);
+      const dbClients: Record<string, string> = {};
+      for (const [name, conn] of Object.entries(database?.connections ?? {})) {
+        if (typeof conn?.client === 'string') dbClients[name] = conn.client;
+      }
+      const defaultRedisConnection = this.app.config.get<string | undefined>(
+        'redis.connection',
+        undefined,
+      );
+      const defaultDisk =
+        config.disk ?? (await this.#resolveDefaultDiskName().catch(() => undefined));
+      describeMediaConfig(config, {
+        ...(defaultDisk ? { defaultDisk } : {}),
+        ...(database?.connection ? { defaultDbConnection: database.connection } : {}),
+        dbClients,
+        ...(defaultRedisConnection ? { defaultRedisConnection } : {}),
+      });
+    } catch {
+      // Describing is best-effort: a config it cannot read describes nothing.
+    }
   }
 
   /** A config `imageProcessor` may be a ready instance or a lazy factory thunk. */
