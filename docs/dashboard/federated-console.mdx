@@ -338,6 +338,32 @@ authorizeAppCaller({
 })
 ```
 
+## Control-plane apps
+
+When this app is a media [control plane](/docs/media/topology) (`topology: 'control-plane'`), the
+apps that keep their media here are listed with `mode: 'control-plane'`, by their partition:
+
+```ts title="config/media_dashboard.ts"
+export default defineConfig({
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+  appLabel: 'Hub',
+  actions: true,
+  apps: {
+    'entre-textos': { mode: 'control-plane', label: 'Entre Textos' },
+    reports: { mode: 'control-plane', label: 'Reports', actions: false },
+    lumen: { label: 'Lumen', store: stores.lucid({ connection: 'lumen' }), controlPlane: { prefix: 'lumen' } },
+  },
+})
+```
+
+Their data lives in this app, so the console reads it from this app's own tables and disks: only
+that app's records, and on the disks only its files (under `<partition>/`). Their actions run here:
+deleting a record removes its files and conversions. `actions` (default: the console's own) turns
+them off for one app. They need no Redis, no `origin` and no credentials.
+
+The selector hints them **control plane**, next to the federated apps. Uploading from the console
+stays this app's own.
+
 ## Database access
 
 The console reads the other app's tables with its own database connection. On Postgres, give that

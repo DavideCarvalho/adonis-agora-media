@@ -151,6 +151,34 @@ describe('federated apps in the picker', () => {
     window.history.replaceState(null, '', '/media');
   });
 
+  it('hints control-plane apps, with no federated badge or notice', async () => {
+    window.history.replaceState(null, '', '/media?app=lumen#/browse');
+    const apps = vi.fn(
+      async (): Promise<AppPickerResponse> => ({
+        local: { label: 'Hub' },
+        apps: [{ id: 'lumen', label: 'Lumen', mode: 'control-plane', actions: 'here' }],
+        selected: 'lumen',
+      }),
+    );
+    renderView(
+      <>
+        <AppPickerControl />
+        <SelectedAppNotice />
+      </>,
+      { apps },
+    );
+    const trigger = await screen.findByRole('button', { name: /^App/ });
+    await waitFor(() => expect(trigger.textContent).toContain('Lumen'));
+    expect(document.querySelector('[data-app-mode]')).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Hub',
+      'Lumencontrol plane',
+    ]);
+    window.history.replaceState(null, '', '/media');
+  });
+
   it('notices a federated app at the top of the page, saying who runs the actions', async () => {
     window.history.replaceState(null, '', '/media?app=entre-textos#/browse');
     renderView(<SelectedAppNotice />, { apps: server() });

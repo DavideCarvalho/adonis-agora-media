@@ -485,3 +485,35 @@ export class MediaAccessDeniedError extends Error {
     this.status = anonymous ? 401 : 403;
   }
 }
+
+/**
+ * A tenant's call to the media control plane failed. `status` is what the tenant answers when the
+ * error reaches its delivery route: `503` when the control plane did not answer (down, timed out,
+ * its URL did not resolve), else the control plane's own status. `code` is the control plane's
+ * error code when it sent one (`E_MEDIA_MIME_NOT_ALLOWED`, …), so a caller can tell a refused file
+ * from an outage exactly as it would in a standalone app.
+ */
+export class MediaControlPlaneError extends Error {
+  readonly code: string;
+  constructor(
+    message: string,
+    readonly status: number,
+    code?: string,
+  ) {
+    super(message);
+    this.name = 'MediaControlPlaneError';
+    this.code =
+      code ?? (status === 503 ? 'E_MEDIA_CONTROL_PLANE_UNAVAILABLE' : 'E_MEDIA_CONTROL_PLANE');
+  }
+}
+
+/** A `media.library` method that does not exist on a tenant: its files live on the control plane. */
+export class MediaTenantUnsupportedError extends Error {
+  readonly code = 'E_MEDIA_TENANT_UNSUPPORTED';
+  constructor(operation: string) {
+    super(
+      `${operation} is not available on a media tenant: the files live on the control plane, which runs it (or does not offer it to tenants).`,
+    );
+    this.name = 'MediaTenantUnsupportedError';
+  }
+}

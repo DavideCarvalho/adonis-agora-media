@@ -15,6 +15,7 @@ import {
   DeliverySignatureError,
   ImageSizeNotAllowedError,
   MediaAccessDeniedError,
+  MediaControlPlaneError,
   MediaNotFoundError,
   NotAnImageError,
   TransformNotReadyError,
@@ -455,6 +456,8 @@ function httpStatusOf(error: unknown): number | undefined {
   if (error instanceof ConversionArtifactMissingError) return 404;
   if (error instanceof ImageSizeNotAllowedError) return 400;
   if (error instanceof NotAnImageError) return 400;
+  // A tenant whose control plane did not answer (503) or refused (its own status).
+  if (error instanceof MediaControlPlaneError) return error.status >= 500 ? 503 : error.status;
   return undefined;
 }
 

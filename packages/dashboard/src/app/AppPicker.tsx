@@ -112,8 +112,8 @@ const APP_TEXT = {
 
 /**
  * The topbar's "App" control (the federated console): whose media the console shows, in the kit's
- * searchable `ScopeMenu` (this app first, federated apps hinted, the shown app's mode badged next
- * to it). Nothing when the console shows only this app.
+ * searchable `ScopeMenu` (this app first, federated and control-plane apps hinted, the shown app's
+ * mode badged next to it). Nothing when the console shows only this app.
  */
 export function AppPickerControl() {
   const { picker, fresh } = useAppPicker();
@@ -143,7 +143,11 @@ export function AppPickerControl() {
         items={picker.apps.map((a) => ({
           id: a.id,
           label: a.label,
-          ...(a.mode === 'federated' ? { hint: 'federated' } : {}),
+          ...(a.mode === 'federated'
+            ? { hint: 'federated' }
+            : a.mode === 'control-plane'
+              ? { hint: 'control plane' }
+              : {}),
         }))}
         // "Everything" here is this app: the option first, `?app=` absent.
         all

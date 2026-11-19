@@ -1,0 +1,342 @@
+---
+title: Control Plane and Tenants
+description: Keep several apps' media on one central app (a Hub). The apps keep calling media.library as before; records, files and conversions live on the control plane.
+icon: Network
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+By default every app keeps its own media: its records, its disks, its conversions. With a
+**control plane**, one app (a Hub) stores the media of several apps, and those apps run as
+**tenants** of it:
+
+- the tenant apps keep calling `media.library` (`attach`, `for(...).list()`, `find`, `url`,
+  `image`, `deliver`, `delete`) and `media.access` exactly as before;
+- records, files and conversions live on the control plane, which runs the collections' rules
+  (MIME whitelist, `single`, `stripMetadata`, conversions);
+- each app only sees its own media, and the Hub's media console shows each app.
+
+| `topology` | What the app does |
+| --- | --- |
+| `standalone` (default) | Keeps its own media. |
+| `control-plane` | Keeps its own media, and other apps' too, through the API under `controlPlane.prefix`. |
+| `tenant` | Keeps no media: every call runs on the control plane. |
+
+## The control plane
+
+The control plane is configured like any app, plus `topology`, `verifyTenant` and `controlPlane`:
+
+```ts title="config/media.ts (the Hub)"
+import env from '#start/env'
+import { authkitTenantVerifier } from '@adonis-agora/authkit-client'
+import { defineConfig, disks, processors, stores } from '@adonis-agora/media'
+
+export default defineConfig({
+  topology: 'control-plane',
+  verifyTenant: authkitTenantVerifier({
+    issuer: env.get('AUTHKIT_ISSUER'),
+    resource: 'urn:agora:media',
+  }),
+  controlPlane: {
+    collections: ['documents', 'covers', 'avatar'],
+  },
+
+  disk: 'media',
+  disks: { media: disks.s3({ bucket: env.get('MEDIA_S3_BUCKET'), region: 'us-east-1' }) },
+  store: 'lucid',
+  stores: { lucid: stores.lucid({ connection: 'pg' }) },
+  imageProcessor: processors.sharp(),
+  delivery: { mode: 'proxy' },
+  collections: [
+    { name: 'documents', acceptsMimeTypes: ['application/pdf'] },
+    {
+      name: 'covers',
+      acceptsMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+      conversions: [
+        { name: 'sm', width: 320, format: 'webp', eager: true },
+        { name: 'lg', width: 1280, format: 'webp' },
+      ],
+    },
+  ],
+})
+```
+
+| Option | What it is |
+| --- | --- |
+| `verifyTenant` | Validates an app's token. The app (its partition) and what it may do come from the verified token, never from the request. A function, a class instance, or `() => import('./verifier.js')`. |
+| `controlPlane.prefix` | Where the tenant API is mounted (under `<prefix>/v1`). Default `/_media`. |
+| `controlPlane.collections` | The collections apps may use. Default: every collection. |
+| `controlPlane.maxBytes` | The largest upload. Default 100 MiB. |
+| `controlPlane.accounts` | A person's own files, shared by every app. See [Account files](#account-files). |
+
+The collections are the control plane's: an app names one (`collection: 'covers'`) and the control
+plane applies its rules and runs its conversions.
+
+### Tokens and capabilities
+
+Each app calls the control plane with its own service token. With authkit, register the resource
+and give each app's service client the capabilities it needs:
+
+| Capability | What it allows |
+| --- | --- |
+| `media:read` | Reading records, files, URLs and image props; reading account files. |
+| `media:write` | Adding, renaming and deleting records. |
+
+```ts title="config/authkit.ts (the issuer)"
+serviceTenants: {
+  resources: {
+    'urn:agora:media': {
+      url: 'https://hub.example.com/_media',
+      capabilities: ['media:read', 'media:write'],
+    },
+  },
+},
+```
+
+The resource's `url` is what tenants find through the issuer's discovery document.
+
+Without authkit, give each app a shared secret:
+
+```ts title="config/media.ts (the Hub)"
+import { sharedSecretVerifier } from '@adonis-agora/media'
+
+verifyTenant: sharedSecretVerifier({
+  partitions: {
+    'entre-textos': env.get('MEDIA_SECRET_ENTRE_TEXTOS'),
+    reports: { secret: env.get('MEDIA_SECRET_REPORTS'), capabilities: ['media:read'] },
+  },
+}),
+```
+
+<Callout type="warn" title="CSRF">
+  The tenant API is called by servers with a bearer token, not by browsers with a session. Exempt
+  `controlPlane.prefix` from CSRF in `config/shield.ts` (`exceptRoutes`).
+</Callout>
+
+## A tenant app
+
+```ts title="config/media.ts (an app)"
+import env from '#start/env'
+import { authkitTenantToken, controlPlaneUrl } from '@adonis-agora/authkit-client'
+import { defineConfig } from '@adonis-agora/media'
+
+const issuer = env.get('AUTHKIT_ISSUER')
+
+export default defineConfig({
+  topology: 'tenant',
+  tenant: {
+    url: controlPlaneUrl({ issuer, resource: 'urn:agora:media' }),
+    partition: 'entre-textos',
+    token: authkitTenantToken({
+      issuer,
+      clientId: env.get('AGORA_SERVICE_CLIENT_ID'),
+      clientSecret: env.get('AGORA_SERVICE_CLIENT_SECRET'),
+      resource: 'urn:agora:media',
+    }),
+  },
+  delivery: { path: '/media/:id' },
+  collections: [{ name: 'covers', access: { read: 'public' } }],
+})
+```
+
+| Option | What it is |
+| --- | --- |
+| `tenant.url` | The control plane, with its prefix: a URL (`https://hub.example.com/_media`) or `controlPlaneUrl(...)`, which reads it from the issuer's discovery document and looks it up again when the control plane stops answering. |
+| `tenant.partition` | This app's name on the control plane. Its token must be for this same app. |
+| `tenant.token` | This app's token: `authkitTenantToken(...)`, a shared secret, or `{ get() }`. |
+| `tenant.urls` | Where file URLs point: `app` (default) or `control-plane`. See [URLs](#urls). |
+| `tenant.timeoutMs` | Per request. Default `10000`. |
+| `tenant.uploadTimeoutMs` | Per upload. Default `120000`. |
+| `tenant.retries` | Retries of a read after a network error or a `5xx`. Default `1`. Writes are never retried. |
+
+A tenant has no `disk`, `disks`, `store`, `stores`, `imageProcessor`, `uploads`, `tenancy`,
+`consoleCommands` or `accountConsole`: `defineConfig` refuses them. What it keeps:
+
+- `collections`, for their `access` rules (who may read and write), which `media.access` applies in
+  this app;
+- `delivery.path`, `delivery.signing` and `delivery.images`, for this app's own delivery route;
+- `access.identity`.
+
+### Using it
+
+The code does not change:
+
+```ts title="app/controllers/books_controller.ts"
+import media from '@adonis-agora/media/services/main'
+
+export default class BooksController {
+  async updateCover({ request, params }: HttpContext) {
+    const file = request.file('cover', { size: '5mb' })!
+    await media.library.attach({
+      ownerType: 'Book',
+      ownerId: params.id,
+      collection: 'covers',
+      fileName: file.clientName,
+      mimeType: `${file.type}/${file.subtype}`,
+      contents: createReadStream(file.tmpPath!),
+      size: file.size,
+    })
+  }
+
+  async show({ params, inertia }: HttpContext) {
+    const [cover] = await media.library.list('Book', params.id, 'covers')
+    return inertia.render('books/show', {
+      cover: cover ? await media.library.image(cover.id) : null,
+    })
+  }
+}
+```
+
+```ts title="start/routes.ts"
+import media from '@adonis-agora/media/services/main'
+
+router.get('/media/:id', media.access.deliveryRoute())
+```
+
+| Call | On a tenant |
+| --- | --- |
+| `library.attach()`, `for(...).attach()` | Streams the file to the control plane, which stores it and runs the eager conversions. |
+| `library.find()`, `list()`, `for(...).list()`, `page()` | Read from the control plane. |
+| `library.rename()`, `delete()` | Run on the control plane (`delete` removes the files and conversions too). |
+| `library.ensureConversion()` | Generates the conversion on the control plane. |
+| `library.deliver()`, `media.access.deliveryRoute()`, `serve()` | Stream the file (or a conversion, or a resized width) from the control plane. |
+| `library.url()` | This app's delivery URL (signed with `delivery.signing`), or the control plane's storage URL with `urls: 'control-plane'`. |
+| `library.signedUrl()` | A storage URL signed by the control plane. Not available when it delivers by proxy. |
+| `library.image()` | The control plane's presets, with each URL built here. |
+| `library.attachExisting()`, `transform()`, `setFocalPoint()`, `stream()`, `streamFile()`, `media.attachments`, `media.resumable`, `media.direct`, `media.disk()` | Not available: they throw `E_MEDIA_TENANT_UNSUPPORTED`. |
+
+Owner types are each app's own: `Book 42` of one app and `Book 42` of another are different owners.
+
+### URLs
+
+With `urls: 'app'` (the default), every URL a tenant hands out points at its own delivery route
+(`delivery.path`), which reads the bytes from the control plane. Pages load images from their own
+origin, so a strict `img-src 'self'` holds, and it works when the control plane delivers by proxy
+(`delivery.mode: 'proxy'` on the control plane, the storage not reachable from browsers).
+
+With `urls: 'control-plane'`, `url()` and `image()` hand out the storage URL the control plane
+returns (public or signed), and `deliver()` redirects to it. The control plane must not deliver by
+proxy, and your CSP must allow the storage's origin.
+
+### When the control plane is down
+
+Every call fails fast with `MediaControlPlaneError`, `status: 503` and the code
+`E_MEDIA_CONTROL_PLANE_UNAVAILABLE`. Writes are not retried; reads are retried once. The delivery
+route answers `503`, and browsers keep the copies they cached (`Cache-Control: private, max-age=60`).
+
+A refusal from the control plane keeps its status and code: a file of the wrong type is `422` with
+`E_MEDIA_MIME_NOT_ALLOWED`, `E_MEDIA_CONTENT_TYPE_MISMATCH` or `E_MEDIA_CONTENT_SIGNATURE_UNRECOGNIZED`,
+a file too large `413`, a collection the control plane does not offer `403`.
+
+```ts
+import { MediaControlPlaneError } from '@adonis-agora/media'
+
+try {
+  await media.library.attach(input)
+} catch (error) {
+  if (error instanceof MediaControlPlaneError && error.status === 422) {
+    return response.unprocessableEntity({ message: 'Use a PNG, JPEG or WebP image.' })
+  }
+  throw error
+}
+```
+
+### Tests
+
+`media.fake()` works on a tenant as on any app: the fake runs in memory and never calls the control
+plane.
+
+## Account files
+
+Some files belong to a person rather than to one app, such as an avatar shown in every app. The
+control plane keeps them under the person's account (the `sub` of their tokens):
+
+- an app **reads** them with its service token (`media:read`);
+- the **person** writes and removes them with their own access token: the control plane writes to
+  the token's `sub`, so no app can change another person's file. An impersonation token (`act`) is
+  refused.
+
+```ts title="config/media.ts (the Hub)"
+import app from '@adonisjs/core/services/app'
+import { inProcessAccessTokenVerifier } from '@adonis-agora/authkit-server'
+
+// The Hub is the issuer: people's access tokens are verified in process.
+const userTokens = inProcessAccessTokenVerifier(async () => app.container.make('authkit.server'))
+
+controlPlane: {
+  accounts: {
+    collections: ['avatar'],
+    ownerType: 'HubAccount',
+    clients: ['entre-textos', 'eduliberta'],
+    verifyUser: (token) => userTokens.verify(token),
+  },
+},
+collections: [
+  {
+    name: 'avatar',
+    single: true,
+    acceptsMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    stripMetadata: true,
+    conversions: [{ name: 'md', width: 256, height: 256, fit: 'cover', format: 'webp', eager: true }],
+  },
+],
+```
+
+| Option | What it is |
+| --- | --- |
+| `collections` | The collections that hold account files. Make them `single: true` to keep one per person. |
+| `verifyUser` | Verifies a person's access token: `{ sub, scopes, clientId, actor }`, or `null`. |
+| `ownerType` | The owner type of account files. Default `Account`. |
+| `clients` | The OIDC clients whose tokens may write. Default: any. |
+| `scope` | The scope a person's token needs to write. Default `profile`. |
+| `maxBytes` | The largest upload. Default 5 MiB. |
+
+In a tenant, `media.accounts` reads and writes them:
+
+```ts title="app/controllers/avatars_controller.ts"
+import media from '@adonis-agora/media/services/main'
+
+export default class AvatarsController {
+  /** `GET /avatars/:id` — served by this app, with ETag and 304. */
+  async show(ctx: HttpContext) {
+    return media.accounts.serve(ctx, ctx.params.id, 'avatar', { conversion: 'md' })
+  }
+
+  /** `PUT /me/avatar` — the person's own token, never the app's. */
+  async update({ request, session, response }: HttpContext) {
+    const file = request.file('avatar', { size: '5mb' })!
+    await media.accounts.replace(session.get('access_token'), 'avatar', {
+      contents: await readFile(file.tmpPath!),
+      mimeType: `${file.type}/${file.subtype}`,
+    })
+    return response.redirect().back()
+  }
+
+  async destroy({ session, response }: HttpContext) {
+    await media.accounts.remove(session.get('access_token'), 'avatar')
+    return response.redirect().back()
+  }
+}
+```
+
+| Method | What it does |
+| --- | --- |
+| `accounts.serve(ctx, accountId, collection, { conversion, width, cacheControl })` | Answers with the file: `200`, `304` when the browser's copy is current, `404` when there is none. |
+| `accounts.read(accountId, collection, { conversion, width, ifNoneMatch })` | `{ kind: 'file', stream, contentType, size, etag }`, `{ kind: 'not-modified' }` or `{ kind: 'not-found' }`. |
+| `accounts.records(accountId, collection)` | The person's records. |
+| `accounts.replace(accessToken, collection, { contents, mimeType, fileName, size })` | Replaces the person's file. |
+| `accounts.remove(accessToken, collection)` | Removes the person's files. Idempotent. |
+
+## The console
+
+The Hub's media console shows each tenant app in its **App** selector. See
+[Federated console](/docs/media/dashboard/federated-console#control-plane-apps).
+
+## Health checks
+
+`node ace agora:doctor` checks:
+
+| Check | What it verifies |
+| --- | --- |
+| `media.topology` | The topology fields in `config/media.ts` can work. |
+| `media.control-plane` | A tenant reaches its control plane, the token is accepted for this app's partition, and it carries `media:read` and `media:write`. |

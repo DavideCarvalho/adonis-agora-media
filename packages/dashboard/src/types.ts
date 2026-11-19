@@ -277,13 +277,17 @@ export interface AppPickerResponse {
   apps: Array<{
     id: string;
     label: string;
-    /** How this console reaches the app: `federated` reads the app's own store. Older servers omit it. */
-    mode?: 'federated' | undefined;
     /**
-     * Who runs actions on that app's media from here: `app` (the app itself, which this console
-     * asks), or `none` (read-only here). Older servers omit it.
+     * How this console reaches the app: `federated` reads the app's own store; `control-plane`: the
+     * app keeps its media on this console's server. Older servers omit it.
      */
-    actions?: 'app' | 'none' | undefined;
+    mode?: 'federated' | 'control-plane' | undefined;
+    /**
+     * Who runs actions on that app's media from here: `here` (this console's server, for a
+     * control-plane app), `app` (the app itself, which this console asks), or `none` (read-only
+     * here). Older servers omit it.
+     */
+    actions?: 'here' | 'app' | 'none' | undefined;
   }>;
   selected: string | null;
 }

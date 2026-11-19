@@ -141,9 +141,33 @@ export interface MediaDashboardConfig {
    * grants (`tenants`) only apply to this app: a viewer granted another app sees all of its media.
    * Each entry is checked at boot (`controlPlane`, `timeoutMs`, `origin`).
    */
-  apps?: Record<string, FederatedConsoleApp>;
+  apps?: Record<string, FederatedConsoleApp | ControlPlaneConsoleApp>;
   /** The name of THIS app in the app selector (shown once `apps` is set). Defaults to `This app`. */
   appLabel?: string;
+}
+
+/**
+ * A tenant app of this media control plane (`topology: 'control-plane'` in `config/media.ts`), by
+ * its partition: its media lives here, so the console reads it from this app's own tables and disks
+ * (only that app's records and files) and runs its actions here.
+ *
+ * ```ts
+ * apps: { 'entre-textos': { mode: 'control-plane', label: 'Entre Textos' } }
+ * ```
+ */
+export interface ControlPlaneConsoleApp {
+  mode: 'control-plane';
+  /** The name in the selector. Defaults to the key. */
+  label?: string;
+  /** Whether this console runs actions on that app's media. Default: the console's own `actions`. */
+  actions?: boolean;
+}
+
+/** Whether an `apps` entry is a tenant app of this control plane. */
+export function isControlPlaneConsoleApp(
+  entry: FederatedConsoleApp | ControlPlaneConsoleApp | undefined,
+): entry is ControlPlaneConsoleApp {
+  return (entry as { mode?: unknown } | undefined)?.mode === 'control-plane';
 }
 
 export type { ConsoleViewer, FederatedConsoleApp, SignOutOption, ViewerHook };

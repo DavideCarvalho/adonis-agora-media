@@ -1,7 +1,9 @@
 import type { ApplicationService } from '@adonisjs/core/types';
 import { accountCollections } from '../account_console/extension.js';
 import { resolveMediaTenancy } from '../agora/tenancy.js';
-import type { MediaConfig } from '../define_config.js';
+import { assertMediaTopology, type MediaConfig } from '../define_config.js';
+import { DEFAULT_CONTROL_PLANE_PREFIX, MEDIA_SCOPES } from '../topology/protocol.js';
+import { type MediaTenantClient, tenantClientOf } from '../topology/tenant_client.js';
 import type { AgoraDoctorCheck, AgoraDoctorResult } from './agora_doctor.js';
 
 const DOCS = 'https://davidecarvalho.github.io/agora/docs/media';
@@ -49,6 +51,12 @@ export function checkDisks(
 ): AgoraDoctorResult {
   if (media === undefined) {
     return { status: 'skip', message: 'config/media.ts is not present.' };
+  }
+  if (media.topology === 'tenant') {
+    return {
+      status: 'skip',
+      message: 'A media tenant has no disk: its files live on the control plane.',
+    };
   }
   if (drive === 'unknown') {
     return {
@@ -289,6 +297,128 @@ export const dbSchemaDoctorCheck: AgoraDoctorCheck = {
 };
 
 /** Every media check, in report order. Ids are frozen for 1.x. */
+/** `media.topology`: the topology in config/media.ts is one that can work. */
+export function checkTopology(media: MediaConfig | undefined): AgoraDoctorResult {
+  if (media === undefined) return { status: 'skip', message: 'config/media.ts is not present.' };
+  try {
+    assertMediaTopology(media);
+  } catch (error) {
+    return {
+      status: 'error',
+      message: (error as Error).message,
+      fix: 'Fix the topology fields in config/media.ts.',
+      docs: `${DOCS}/topology`,
+    };
+  }
+  const topology = media.topology ?? 'standalone';
+  if (topology === 'tenant') {
+    const url = typeof media.tenant?.url === 'string' ? media.tenant.url : 'its discovered URL';
+    return {
+      status: 'ok',
+      message: `Tenant "${media.tenant?.partition}": media lives on the control plane at ${url}.`,
+    };
+  }
+  if (topology === 'control-plane') {
+    const prefix = media.controlPlane?.prefix ?? DEFAULT_CONTROL_PLANE_PREFIX;
+    const accounts = media.controlPlane?.accounts;
+    return {
+      status: 'ok',
+      message: `Control plane: the tenant API is under ${prefix}/v1${
+        accounts ? `, with account files in ${accounts.collections.join(', ')}` : ''
+      }.`,
+    };
+  }
+  return { status: 'ok', message: 'Standalone: this app keeps its own media.' };
+}
+
+/** What a control plane's `whoami` answers. */
+interface Whoami {
+  partition?: unknown;
+  capabilities?: unknown;
+  delivery?: unknown;
+}
+
+/**
+ * `media.control-plane`: a tenant reaches its control plane, which accepts its token for its
+ * partition with `media:read` and `media:write`.
+ */
+export async function checkControlPlane(
+  media: MediaConfig | undefined,
+  options: { fetch?: typeof fetch } = {},
+): Promise<AgoraDoctorResult> {
+  if (media?.topology !== 'tenant' || !media.tenant) {
+    return { status: 'skip', message: 'This app is not a media tenant.' };
+  }
+  let client: MediaTenantClient;
+  try {
+    client = tenantClientOf(media, options);
+  } catch (error) {
+    return { status: 'error', message: (error as Error).message, docs: `${DOCS}/topology` };
+  }
+  let who: Whoami;
+  try {
+    who = await client.json<Whoami>('/whoami');
+  } catch (error) {
+    const failure = error as { status?: number; message?: string };
+    if (failure.status === 401) {
+      return {
+        status: 'error',
+        message: 'The media control plane refused this app’s token (401).',
+        fix: 'Check the authkit client credentials of tenant.token, and that the client is registered for urn:agora:media.',
+        docs: `${DOCS}/topology`,
+      };
+    }
+    if (failure.status === 404) {
+      return {
+        status: 'error',
+        message: `${client.url ?? 'The control plane'} has no media tenant API (404).`,
+        fix: "Point tenant.url at the control plane's prefix (…/_media), and set topology: 'control-plane' there.",
+        docs: `${DOCS}/topology`,
+      };
+    }
+    return {
+      status: 'error',
+      message: `The media control plane did not answer: ${failure.message ?? 'unknown error'}.`,
+      fix: 'Check tenant.url (or the issuer listing urn:agora:media) and that the control plane is up.',
+      docs: `${DOCS}/topology`,
+    };
+  }
+  const capabilities = Array.isArray(who.capabilities) ? (who.capabilities as string[]) : [];
+  const partition = String(who.partition ?? '');
+  const where = client.url ?? 'the control plane';
+  if (partition !== media.tenant.partition) {
+    return {
+      status: 'error',
+      message: `The token is for app "${partition}", not "${media.tenant.partition}": files would land in another app's partition.`,
+      fix: 'Use this app’s own service client in tenant.token, or fix tenant.partition.',
+      docs: `${DOCS}/topology`,
+    };
+  }
+  const missing = [MEDIA_SCOPES.read, MEDIA_SCOPES.write].filter((c) => !capabilities.includes(c));
+  if (missing.includes(MEDIA_SCOPES.read)) {
+    return {
+      status: 'error',
+      message: `${where}: the token of ${partition} lacks ${missing.join(' and ')}.`,
+      fix: `Grant the client ${missing.join(' and ')} on urn:agora:media.`,
+      docs: `${DOCS}/topology`,
+    };
+  }
+  if (missing.length > 0) {
+    return {
+      status: 'warn',
+      message: `${where}: ${partition} may read but not write (no ${MEDIA_SCOPES.write}).`,
+      fix: `Grant the client ${MEDIA_SCOPES.write} on urn:agora:media if this app adds or deletes files.`,
+      docs: `${DOCS}/topology`,
+    };
+  }
+  return {
+    status: 'ok',
+    message: `${where}: ${partition} with ${capabilities.join(', ')} (${
+      who.delivery === 'proxy' ? 'bytes through the control plane' : 'storage URLs available'
+    }).`,
+  };
+}
+
 export const mediaDoctorChecks: AgoraDoctorCheck[] = [
   {
     id: 'media.disks',
@@ -322,5 +452,18 @@ export const mediaDoctorChecks: AgoraDoctorCheck[] = [
     title: 'Tenant column present',
     cost: 'deep',
     run: (app) => checkTenancySchema(app),
+  },
+  {
+    id: 'media.topology',
+    lib: 'media',
+    title: 'Topology',
+    run: (app) => checkTopology(app.config.get<MediaConfig | undefined>('media', undefined)),
+  },
+  {
+    id: 'media.control-plane',
+    lib: 'media',
+    title: 'Control plane reachable and token accepted',
+    cost: 'deep',
+    run: (app) => checkControlPlane(app.config.get<MediaConfig | undefined>('media', undefined)),
   },
 ];
