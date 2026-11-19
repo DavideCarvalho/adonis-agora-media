@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.20
+
+### Patch Changes
+
+- [#347](https://github.com/DavideCarvalho/adonis-agora-media/pull/347) [`a5b269b`](https://github.com/DavideCarvalho/adonis-agora-media/commit/a5b269b7a1d7cb0ee9df0ba48e1d007b614500c4) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - App and Organization pickers: screen readers hear "App: Hub" (not the two spans run together), search matches an option's hint, the highlight stays on a real option when the list shrinks, and focus returns to the button after a pick.
+
 ## 10.0.0-rc.19
 
 ### Patch Changes
