@@ -232,13 +232,28 @@ export function tenantClientOf(
 ): MediaTenantClient {
   const tenant = config.tenant;
   if (!tenant) throw new Error('media: not a tenant (no `tenant` in config/media.ts)');
+  return clientOf(tenant, options);
+}
+
+/** The client `accounts` describes (a standalone app's account files), or none. */
+export function accountsClientOf(
+  config: MediaConfig,
+  options: { fetch?: typeof fetch } = {},
+): MediaTenantClient | undefined {
+  return config.accounts ? clientOf(config.accounts, options) : undefined;
+}
+
+function clientOf(
+  source: NonNullable<MediaConfig['accounts']>,
+  options: { fetch?: typeof fetch },
+): MediaTenantClient {
   return new MediaTenantClient({
-    url: tenant.url,
-    partition: tenant.partition,
-    token: tenant.token,
-    ...(tenant.timeoutMs !== undefined ? { timeoutMs: tenant.timeoutMs } : {}),
-    ...(tenant.uploadTimeoutMs !== undefined ? { uploadTimeoutMs: tenant.uploadTimeoutMs } : {}),
-    ...(tenant.retries !== undefined ? { retries: tenant.retries } : {}),
+    url: source.url,
+    partition: source.partition,
+    token: source.token,
+    ...(source.timeoutMs !== undefined ? { timeoutMs: source.timeoutMs } : {}),
+    ...(source.uploadTimeoutMs !== undefined ? { uploadTimeoutMs: source.uploadTimeoutMs } : {}),
+    ...(source.retries !== undefined ? { retries: source.retries } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
 }

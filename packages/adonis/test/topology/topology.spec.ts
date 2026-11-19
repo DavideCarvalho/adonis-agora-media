@@ -18,7 +18,7 @@ import {
 } from '../../src/topology/auth.js';
 import { MediaControlPlane } from '../../src/topology/control_plane.js';
 import { partitionStore } from '../../src/topology/partition_store.js';
-import { buildTenantManager } from '../../src/topology/tenant_manager.js';
+import { buildTenantManager, standaloneAccountsOf } from '../../src/topology/tenant_manager.js';
 import { addressOf, close, serveControlPlane } from './http_harness.js';
 
 const png = Buffer.concat([
@@ -427,6 +427,40 @@ describe('media topology: a control plane and its tenants, in process', () => {
       await et.accounts.remove('ana-token', 'avatar');
       expect((await et.accounts.read('ana', 'avatar')).kind).toBe('not-found');
       await et.accounts.remove('ana-token', 'avatar'); // idempotent
+    });
+
+    it('works from a standalone app that keeps its own media (`accounts`)', async () => {
+      const config = defineConfig({
+        accounts: { url: `${base}/_media`, partition: 'eduliberta', token: 'el-secret' },
+      });
+      const ownDisk = new InMemoryDisk('memory://el', 'private');
+      const el = new MediaManager({
+        defaultDisk: 'own',
+        resolve: () => ownDisk,
+        store: new InMemoryMediaStore(),
+        accounts: standaloneAccountsOf(config)!,
+      });
+      // Its own files stay here...
+      const own = await el.library.attach({
+        ownerType: 'User',
+        ownerId: 7,
+        collection: 'documents',
+        fileName: 'a.txt',
+        mimeType: 'text/plain',
+        contents: Buffer.from('mine'),
+      });
+      expect(own.ownerType).toBe('User');
+      expect(el.topology).toBe('standalone');
+      // ...and the person's avatar lives on the control plane.
+      const record = await el.accounts.replace('ana-token', 'avatar', {
+        contents: png,
+        mimeType: 'image/png',
+      });
+      expect(record.ownerType).toBe('HubAccount');
+      const read = await el.accounts.read('ana', 'avatar', { conversion: 'md' });
+      expect(read.kind).toBe('file');
+      await el.accounts.remove('ana-token', 'avatar');
+      expect(standaloneAccountsOf(defineConfig({}))).toBeUndefined();
     });
 
     it('refuses a token without the scope, an impersonation, another client, or nobody', async () => {

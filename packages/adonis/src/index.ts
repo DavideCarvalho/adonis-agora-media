@@ -51,6 +51,7 @@ export type {
   LucidStoreConfig,
   LucidUploadSessionStoreConfig,
   MediaAccessConfig,
+  MediaAccountsConfig,
   MediaConfig,
   MediaControlPlaneConfig,
   MediaDeliveryConfig,

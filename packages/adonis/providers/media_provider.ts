@@ -44,7 +44,7 @@ import { resolveStore } from '../src/stores/factory.js';
 import { resolveTenantVerifier } from '../src/topology/auth.js';
 import { MediaControlPlane } from '../src/topology/control_plane.js';
 import { partitionStore } from '../src/topology/partition_store.js';
-import { buildTenantManager } from '../src/topology/tenant_manager.js';
+import { buildTenantManager, standaloneAccountsOf } from '../src/topology/tenant_manager.js';
 import type { TusRequest } from '../src/tus.js';
 import { TusUploadHandler } from '../src/tus.js';
 import type { DirectUploadPolicy, MultipartPart } from '../src/types.js';
@@ -146,11 +146,15 @@ export default class MediaProvider {
         driveAvailable,
       });
 
+      // A standalone app that reads people's own files (an avatar) on a control plane.
+      const accounts = standaloneAccountsOf(config);
+
       return new MediaManager({
         defaultDisk,
         resolve,
         store,
         ...(config.topology === 'control-plane' ? { topology: 'control-plane' as const } : {}),
+        ...(accounts !== undefined ? { accounts } : {}),
         ...(imageProcessor !== undefined ? { imageProcessor } : {}),
         ...(config.collections !== undefined ? { collections: config.collections } : {}),
         ...(config.attachmentKeyPrefix !== undefined

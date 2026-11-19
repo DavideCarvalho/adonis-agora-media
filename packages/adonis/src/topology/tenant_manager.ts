@@ -2,13 +2,25 @@ import type { MediaConfig } from '../define_config.js';
 import { MediaTenantUnsupportedError } from '../errors.js';
 import { MediaManager } from '../media_manager.js';
 import { TenantAccounts } from './tenant_accounts.js';
-import { tenantClientOf } from './tenant_client.js';
+import { accountsClientOf, tenantClientOf } from './tenant_client.js';
 import { RemoteMediaStore, TenantMediaLibrary } from './tenant_library.js';
 
 /** The disk name a tenant reports: it has none of its own. */
 export const TENANT_DISK = 'control-plane';
 
 export { tenantClientOf };
+
+/**
+ * `media.accounts` of a standalone app (`accounts` in `config/media.ts`): a person's own files on
+ * the control plane, while this app keeps its own media. None without `accounts`.
+ */
+export function standaloneAccountsOf(
+  config: MediaConfig,
+  options: { fetch?: typeof fetch } = {},
+): TenantAccounts | undefined {
+  const client = accountsClientOf(config, options);
+  return client ? new TenantAccounts(client) : undefined;
+}
 
 /**
  * The {@link MediaManager} of a tenant: `media.library` runs on the control plane, `media.accounts`
