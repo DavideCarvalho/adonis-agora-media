@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.19
+
+### Patch Changes
+
+- [#346](https://github.com/DavideCarvalho/adonis-agora-media/pull/346) [`51e60fd`](https://github.com/DavideCarvalho/adonis-agora-media/commit/51e60fdbf7995c182a5ec83f33ab518364a2c792) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - The App and Organization pickers use the console kit's shared `ScopeMenu` / `ScopeChip`, the same searchable picker as telescope's (federated apps hinted, the shown app's mode badge kept). Going to another console, a sidebar page or a ⌘K command keeps `?app=` / `?tenant=`.
+
 ## 10.0.0-rc.18
 
 ### Minor Changes
