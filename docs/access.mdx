@@ -1,6 +1,6 @@
 ---
 title: Authorization
-description: "media.access — who may read and upload media: a ready delivery route, per-collection rules, authorized image(), and bridges to @adonis-agora/authkit and @adonis-agora/authz."
+description: "media.access — who may read and upload media: a ready delivery route, per-collection rules, authorized image(), and bridges to @adonis-agora/authkit-server, @adonis-agora/authkit-client and @adonis-agora/authz."
 icon: ShieldCheck
 ---
 
@@ -202,6 +202,5 @@ and `403` otherwise. It also carries the `action`, the `collection` and the `med
 <Callout type="info" title="Uploads">
   The upload routes are driven by your [`DirectUploadPolicy`](/docs/media/uploads/direct-upload-policy),
   which decides an upload's key and what it becomes. Apply the collection's `write` rule there with
-  `await media.access.authorize(ctx, 'write', { collection })` in `onInitiate`. A ready-made policy
-  that does this for you is on the roadmap.
+  `await media.access.authorize(ctx, 'write', { collection })` in `onInitiate`.
 </Callout>
