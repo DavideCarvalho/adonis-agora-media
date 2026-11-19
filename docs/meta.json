@@ -23,7 +23,6 @@
     "cli",
     "errors",
     "testing",
-    "roadmap",
     "migrating-to-1-0"
   ],
   "root": true,
