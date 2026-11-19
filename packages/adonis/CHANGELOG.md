@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.28
+
+### Patch Changes
+
+- [#348](https://github.com/DavideCarvalho/adonis-agora-media/pull/348) [`80a42aa`](https://github.com/DavideCarvalho/adonis-agora-media/commit/80a42aa5b473da480944009ef60d1012b18052cd) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Ship the console with the shared App/Organization picker: the dashboard is bundled into this package at build time, and the picker changesets only bumped the dashboard package, so this release carries it to apps.
+
 ## 1.0.0-rc.27
 
 ### Patch Changes
