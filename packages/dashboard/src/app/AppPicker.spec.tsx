@@ -20,16 +20,19 @@ describe('AppPickerControl (federated console)', () => {
     const apps = vi.fn(async () => picker([]));
     renderView(<AppPickerControl />, { apps });
     await waitFor(() => expect(apps).toHaveBeenCalled());
-    expect(screen.queryByRole('button', { name: 'App' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^App/ })).toBeNull();
   });
 
   it('puts the picked app in the URL, drops the old folder, and scopes every API call', async () => {
     window.history.replaceState(null, '', '/media#/browse/s3?prefix=avatars%2F');
     renderView(<AppPickerControl />, {
-      apps: async () => picker([{ id: 'entre-textos', label: 'Entre Textos' }]),
+      apps: async () => ({
+        ...picker([{ id: 'entre-textos', label: 'Entre Textos' }]),
+        selected: new URLSearchParams(window.location.search).get('app'),
+      }),
     });
-    fireEvent.click(await screen.findByRole('button', { name: 'App' }));
-    fireEvent.click(await screen.findByRole('option', { name: /Entre Textos/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^App/ }));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Entre Textos/ }));
     await waitFor(() => expect(window.location.search).toBe('?app=entre-textos'));
     expect(window.location.hash).toBe('#/browse');
     expect(withScope('/api/collections?first=50')).toBe(
@@ -40,8 +43,8 @@ describe('AppPickerControl (federated console)', () => {
       '/api/object/raw?disk=s3&app=entre-textos',
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'App' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Hub' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^App/ }));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Hub' }));
     await waitFor(() => expect(window.location.search).toBe(''));
     expect(withScope('/api/collections')).toBe('/api/collections');
   });
@@ -62,7 +65,7 @@ describe('AppPickerControl follows the server and the URL', () => {
   it("shows the server's app, not a forged `?app=` it does not serve", async () => {
     window.history.replaceState(null, '', '/media?app=forged#/browse');
     renderView(<AppPickerControl />, { apps: server() });
-    const trigger = await screen.findByRole('button', { name: 'App' });
+    const trigger = await screen.findByRole('button', { name: /^App/ });
     await waitFor(() => expect(trigger.textContent).toContain('Hub'));
     expect(trigger.textContent).not.toContain('forged');
   });
@@ -71,9 +74,9 @@ describe('AppPickerControl follows the server and the URL', () => {
     window.history.replaceState(null, '', '/media#/browse');
     const apps = server();
     renderView(<AppPickerControl />, { apps });
-    const trigger = await screen.findByRole('button', { name: 'App' });
+    const trigger = await screen.findByRole('button', { name: /^App/ });
     fireEvent.click(trigger);
-    fireEvent.click(await screen.findByRole('option', { name: /Entre Textos/ }));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Entre Textos/ }));
     await waitFor(() => expect(trigger.textContent).toContain('Entre Textos'));
 
     // "Back": the URL is this app's again, and the browser says so with a popstate.
@@ -120,20 +123,30 @@ describe('federated apps in the picker', () => {
       };
     });
 
-  it('badges each federated app, in the list and on the trigger', async () => {
+  it('hints federated apps in a searchable listbox, and badges the app shown', async () => {
     window.history.replaceState(null, '', '/media?app=eduliberta#/browse');
     renderView(<AppPickerControl />, { apps: server() });
-    const trigger = await screen.findByRole('button', { name: 'App' });
-    await waitFor(() => expect(trigger.querySelector('[data-app-mode="federated"]')).toBeTruthy());
-    expect(trigger.querySelector('[data-app-mode]')?.getAttribute('title')).toContain(
-      'Read-only here',
-    );
+    const trigger = await screen.findByRole('button', { name: /^App/ });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('listbox');
+    await waitFor(() => expect(trigger.textContent).toContain('EduLiberta'));
+    const badge = await waitFor(() => {
+      const el = document.querySelector('[data-app-picker] [data-app-mode="federated"]');
+      expect(el).toBeTruthy();
+      return el;
+    });
+    expect(badge?.getAttribute('title')).toContain('Read-only here');
     fireEvent.click(trigger);
-    const options = await screen.findAllByRole('option');
-    expect(options.map((o) => o.querySelector('[data-app-mode]') !== null)).toEqual([
-      false,
-      true,
-      true,
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Hub',
+      'Entre Textosfederated',
+      'EduLibertafederated',
+    ]);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search apps' }), {
+      target: { value: 'entre' },
+    });
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Entre Textosfederated',
     ]);
     window.history.replaceState(null, '', '/media');
   });
