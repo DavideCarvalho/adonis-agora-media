@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.30
+
+### Minor Changes
+
+- [#350](https://github.com/DavideCarvalho/adonis-agora-media/pull/350) [`a2bc269`](https://github.com/DavideCarvalho/adonis-agora-media/commit/a2bc26946d71668d50d4171b2fe60644ee25042c) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `media.accounts` in an app that keeps its own media: `accounts: { url, partition, token }` in `config/media.ts` (same fields as `tenant`, without `urls`) points a standalone app at the control plane that keeps people's account files (an avatar), while `media.library` stays on the app's own disks and store. Refused on a tenant (which uses `tenant`) and on a control plane.
+
 ## 1.0.0-rc.29
 
 ### Minor Changes
