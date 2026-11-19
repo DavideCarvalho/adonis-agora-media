@@ -1,11 +1,12 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   AppModeBadge,
   actionsUnavailableReason,
   FederatedNotice,
 } from '../agora-kit/blocks/app-mode';
-import { Popover, PopoverContent, PopoverTrigger } from '../agora-kit/ui/popover';
+import { ScopeMenu } from '../agora-kit/blocks/scope-menu';
+import { subscribeHashUrl } from '../agora-kit/url-state/hash-url';
 import { selectedApp } from '../client/dashboard-client';
 import type { AppPickerResponse } from '../types';
 import { useDashboard } from './context';
@@ -23,6 +24,19 @@ export function writeAppToUrl(app: string | undefined): void {
   window.history.pushState(null, '', url.toString());
   // A pushState fires nothing: tell the router and the URL-state adapter the URL moved.
   window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+/**
+ * The page's query string (`?app=` / `?tenant=`), kept current: a pick writes it with
+ * `pushState` plus a `popstate`. The shell reads it so its cross-console links carry the new
+ * scope right after a pick.
+ */
+export function usePageSearch(): string {
+  return useSyncExternalStore(
+    subscribeHashUrl,
+    () => window.location.search,
+    () => '',
+  );
 }
 
 /** `?app=` as the URL has it now, following the picker and back/forward (`popstate`). */
@@ -90,17 +104,20 @@ export function SelectedAppNotice() {
   );
 }
 
-const chip =
-  'mono flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel-2 px-2 text-[11px] text-fg-2';
+const APP_TEXT = {
+  noun: 'App',
+  search: 'Search apps',
+  empty: 'No apps.',
+};
 
 /**
- * The topbar's "App" control (the federated console): whose media the console shows. Nothing when
- * the console shows only this app.
+ * The topbar's "App" control (the federated console): whose media the console shows, in the kit's
+ * searchable `ScopeMenu` (this app first, federated apps hinted, the shown app's mode badged next
+ * to it). Nothing when the console shows only this app.
  */
 export function AppPickerControl() {
   const { picker, fresh } = useAppPicker();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
   const urlApp = useUrlApp();
 
   // The URL's app moved (a pick, or back/forward): every view's data belongs to the app left.
@@ -118,58 +135,31 @@ export function AppPickerControl() {
   // listed ones), the URL's own value only until the server has answered for it.
   const current = fresh ? (picker.selected ?? undefined) : urlApp;
   const currentApp = current === undefined ? undefined : picker.apps.find((a) => a.id === current);
-  const label = current === undefined ? picker.local.label : (currentApp?.label ?? current);
-  const choose = (app: string | undefined) => {
-    setOpen(false);
-    writeAppToUrl(app);
-  };
-  const options: Array<Omit<PickerApp, 'id'> & { id: string | undefined }> = [
-    { id: undefined, label: picker.local.label },
-    ...picker.apps,
-  ];
-  const option =
-    'flex w-full flex-col rounded px-2 py-1.5 text-left text-xs text-fg hover:bg-hover aria-selected:bg-brand-soft';
+  const local = picker.local.label;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        className={`${chip} max-w-72 hover:border-line-strong`}
-        aria-label="App"
-        data-app-picker=""
-      >
-        <span className="hidden text-faint sm:inline">App</span>
-        <span className="truncate">{label}</span>
-        {currentApp && (
-          <AppModeBadge
-            appLabel={currentApp.label}
-            mode={currentApp.mode}
-            actions={currentApp.actions}
-            className="hidden sm:inline-flex"
-          />
-        )}
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 gap-1 p-1">
-        <div role="listbox" aria-label="Apps" className="max-h-72 overflow-y-auto">
-          {options.map((o) => (
-            <button
-              key={o.id ?? ''}
-              type="button"
-              role="option"
-              aria-selected={current === o.id}
-              onClick={() => choose(o.id)}
-              className={option}
-            >
-              <span className="flex w-full min-w-0 items-center justify-between gap-2">
-                <span className="truncate">{o.label}</span>
-                <AppModeBadge appLabel={o.label} mode={o.mode} actions={o.actions} />
-              </span>
-              {o.id !== undefined && o.label !== o.id && (
-                <span className="mono truncate text-[10px] text-faint">{o.id}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <div className="flex items-center gap-1.5" data-app-picker="">
+      <ScopeMenu
+        items={picker.apps.map((a) => ({
+          id: a.id,
+          label: a.label,
+          ...(a.mode === 'federated' ? { hint: 'federated' } : {}),
+        }))}
+        // "Everything" here is this app: the option first, `?app=` absent.
+        all
+        current={current}
+        text={{ ...APP_TEXT, all: local, some: local }}
+        labelOf={(id) => picker.apps.find((a) => a.id === id)?.label ?? id}
+        onChoose={writeAppToUrl}
+      />
+      {currentApp && (
+        <AppModeBadge
+          appLabel={currentApp.label}
+          mode={currentApp.mode}
+          actions={currentApp.actions}
+          className="hidden sm:inline-flex"
+        />
+      )}
+    </div>
   );
 }
