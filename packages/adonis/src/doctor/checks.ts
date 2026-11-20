@@ -214,7 +214,10 @@ export async function checkTimestampsSchema(app: ApplicationService): Promise<Ag
     return { status: 'skip', message: 'No upload sessions are stored in SQL.' };
   }
   if (missing.length === 0) {
-    return { status: 'ok', message: `The ${probed.join(' and ')} tables have updated_at.` };
+    return {
+      status: 'ok',
+      message: `The ${probed.join(' and ')} ${probed.length > 1 ? 'tables have' : 'table has'} updated_at.`,
+    };
   }
   return {
     status: 'warn',
