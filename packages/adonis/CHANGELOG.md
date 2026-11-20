@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.0.0-rc.32
+
+### Patch Changes
+
+- [#356](https://github.com/DavideCarvalho/adonis-agora-media/pull/356) [`a905f2d`](https://github.com/DavideCarvalho/adonis-agora-media/commit/a905f2d70456f0b6be2bd2a21291d8f3f87f1249) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Fix: on a table without the new `updated_at` column, starting an upload inside a transaction failed on Postgres ("current transaction is aborted"). The column check ran a query that fails when the column is missing, which aborts the surrounding transaction (Lucid's global test transaction, or a request wrapped in one). It now reads `information_schema` (`PRAGMA table_info` on SQLite) and never fails.
+
 ## 1.0.0-rc.31
 
 ### Minor Changes
