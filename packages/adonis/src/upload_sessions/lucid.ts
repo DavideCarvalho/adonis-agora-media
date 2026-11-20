@@ -70,6 +70,9 @@ interface PartRow {
  * keeping the schema portable, exactly like {@link LucidMediaStore}. Publish the migration with
  * `node ace configure @adonis-agora/media`.
  */
+/** How long a "no `updated_at` column" answer is trusted before probing again. */
+const UPDATED_AT_REPROBE_MS = 60_000;
+
 export class LucidUploadSessionStore implements UploadSessionStore {
   private readonly table: string;
   private readonly partsTable: string;
@@ -79,8 +82,8 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   private readonly tableNames: [string, string];
   private readonly connectionName: string | undefined;
   private readonly tenantColumn: boolean;
-  /** Whether the sessions table has `updated_at`, once known (see {@link hasUpdatedAtColumn}). */
-  #updatedAtColumn: Promise<boolean> | undefined;
+  /** The last `updated_at` probe and when it ran (see {@link hasUpdatedAtColumn}). */
+  #updatedAtProbe: { found: Promise<boolean>; at: number; missing: boolean } | undefined;
 
   constructor(
     private readonly db: Database,
@@ -126,40 +129,41 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 
   /**
-   * Whether the sessions table has its `updated_at` column (a zero-row probe, run once per store).
-   * Tables created before the column existed keep working without it: the store then neither writes
-   * nor reads `updatedAt`. Add it with `node ace media:publish-migration timestamps`.
+   * Whether the sessions table has its `updated_at` column (a zero-row probe). Tables created before
+   * the column existed keep working without it: the store then neither writes nor reads
+   * `updatedAt`. Add it with `node ace media:publish-migration timestamps`. A found column is
+   * remembered; a missing one (or table) is probed again at most once a minute, so a migration run
+   * under a live process is picked up.
    */
   hasUpdatedAtColumn(): Promise<boolean> {
-    this.#updatedAtColumn ??= this.#probeUpdatedAt().then((found) => {
-      // `null`: the table itself is not there yet, so ask again next time.
-      if (found === null) this.#updatedAtColumn = undefined;
-      return found === true;
-    });
-    return this.#updatedAtColumn;
+    const now = Date.now();
+    const last = this.#updatedAtProbe;
+    if (last === undefined || (last.missing && now - last.at >= UPDATED_AT_REPROBE_MS)) {
+      const probe = { found: this.#probeUpdatedAt(), at: now, missing: false };
+      probe.found = probe.found.then((found) => {
+        probe.missing = !found;
+        return found;
+      });
+      this.#updatedAtProbe = probe;
+    }
+    return (this.#updatedAtProbe as { found: Promise<boolean> }).found;
   }
 
-  async #probeUpdatedAt(): Promise<boolean | null> {
+  async #probeUpdatedAt(): Promise<boolean> {
     try {
       await this.client().from(this.table).select('updated_at').whereRaw('1 = 0');
       return true;
     } catch {
-      try {
-        await this.client().from(this.table).select('id').whereRaw('1 = 0');
-        return false;
-      } catch {
-        return null;
-      }
+      return false;
     }
   }
 
   async create(session: UploadSession): Promise<UploadSession> {
     const createdAt = session.createdAt ?? new Date();
-    const stored: UploadSession = {
-      ...session,
-      createdAt,
-      updatedAt: session.updatedAt ?? createdAt,
-    };
+    const { updatedAt: _updatedAt, ...rest } = session;
+    const stored: UploadSession = { ...rest, createdAt };
+    // Only what get/list can read back: no `updatedAt` on a table without the column.
+    if (await this.hasUpdatedAtColumn()) stored.updatedAt = session.updatedAt ?? createdAt;
     await this.#upsert(stored, false);
     return { ...stored };
   }
@@ -170,8 +174,19 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 
   async update(session: UploadSession): Promise<UploadSession> {
-    const stored: UploadSession = { ...session, updatedAt: new Date() };
+    const { updatedAt: _updatedAt, ...rest } = session;
+    const stored: UploadSession = rest;
+    if (await this.hasUpdatedAtColumn()) stored.updatedAt = new Date();
     await this.#upsert(stored, true);
+    // `created_at` never moves; a caller's copy without it gets the stored one back.
+    if (stored.createdAt === undefined) {
+      const row = (await this.client()
+        .from(this.table)
+        .where('id', session.id)
+        .select('created_at')
+        .first()) as Pick<SessionRow, 'created_at'> | null;
+      if (row) stored.createdAt = new Date(Number(row.created_at));
+    }
     return { ...stored };
   }
 

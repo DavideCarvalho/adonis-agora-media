@@ -218,7 +218,9 @@ export async function checkTimestampsSchema(app: ApplicationService): Promise<Ag
   }
   return {
     status: 'warn',
-    message: `The ${missing.join(' and ')} table has no updated_at column: sessions show no "Updated" time.`,
+    message: `The ${missing.join(' and ')} ${
+      missing.length > 1 ? 'tables have' : 'table has'
+    } no updated_at column: sessions show no "Updated" time.`,
     fix: 'Run `node ace media:publish-migration timestamps` and `node ace migration:run`.',
     docs: `${DOCS}/stores-and-processors`,
   };

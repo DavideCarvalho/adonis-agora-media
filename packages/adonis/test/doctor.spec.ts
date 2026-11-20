@@ -144,6 +144,24 @@ describe('media doctor checks', () => {
     );
     expect(warn.status).toBe('warn');
     expect(warn.fix).toContain('media:publish-migration timestamps');
+    expect(warn.message).toContain('resumable upload sessions table has no updated_at');
+    const both = await checkTimestampsSchema(
+      app({
+        uploads: {
+          resumable: {
+            store: 'sql',
+            stores: { sql: async () => ({ hasUpdatedAtColumn: async () => false }) },
+          },
+          direct: {
+            store: 'sql',
+            stores: { sql: async () => ({ hasUpdatedAtColumn: async () => false }) },
+          },
+        },
+      }),
+    );
+    expect(both.message).toContain(
+      'resumable upload sessions and direct upload sessions tables have no updated_at',
+    );
   });
 
   it('MediaProvider registers its checks from boot()', async () => {

@@ -7,9 +7,8 @@ import { BaseSchema } from '@adonisjs/lucid/schema'
  * The nullable 'updated_at' column of 'media_upload_sessions' (epoch-ms, like 'created_at'), for
  * tables created before it existed. Sessions already stored keep it NULL until their next write.
  * Safe to run when the column is already there: it is added only when missing.
- */
-/**
- * The database schema of 'media_upload_sessions': the same value as 'schema' in
+ *
+ * 'schema' is the database schema of 'media_upload_sessions': the same value as 'schema' in
  * uploadSessions.lucid(). Leave it undefined for the connection's current one.
  */
 const schema: string | undefined = undefined

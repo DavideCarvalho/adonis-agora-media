@@ -1,5 +1,5 @@
 import type { Database } from '@adonisjs/lucid/database';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UploadSession } from '../src/resumable_upload.js';
 import { ResumableUploadManager } from '../src/resumable_upload.js';
 import { StorageManager } from '../src/storage_manager.js';
@@ -137,9 +137,13 @@ describe('upload session timestamps', () => {
     expect(made.updatedAt).toEqual(created);
     expect((await store.get('t'))?.updatedAt).toEqual(created);
 
-    // The caller's copy may lack createdAt (or carry another one): it never moves.
-    await store.update(session({ id: 't', offset: 3, parts: 1, createdAt: undefined }));
+    // The caller's copy may lack createdAt: it never moves, and update hands the stored one back.
+    const returned = await store.update(
+      session({ id: 't', offset: 3, parts: 1, createdAt: undefined }),
+    );
+    expect(returned.createdAt).toEqual(created);
     const after = await store.get('t');
+    expect(returned.updatedAt).toEqual(after?.updatedAt);
     expect(after?.createdAt).toEqual(created);
     expect(after?.updatedAt?.getTime()).toBeGreaterThan(created.getTime());
     expect((await store.list())[0]?.updatedAt).toEqual(after?.updatedAt);
@@ -163,8 +167,10 @@ describe('upload session timestamps', () => {
     });
     const legacy = new LucidUploadSessionStore(db);
     expect(await legacy.hasUpdatedAtColumn()).toBe(false);
-    await legacy.create(session({ id: 'old' }));
-    await legacy.update(session({ id: 'old', offset: 2 }));
+    // What create/update return matches what get/list read back: no updatedAt without the column.
+    expect((await legacy.create(session({ id: 'old' }))).updatedAt).toBeUndefined();
+    expect((await legacy.update(session({ id: 'old', offset: 2 }))).updatedAt).toBeUndefined();
+    expect((await legacy.list())[0]?.updatedAt).toBeUndefined();
     const old = await legacy.get('old');
     expect(old?.offset).toBe(2);
     expect(old?.updatedAt).toBeUndefined();
@@ -183,10 +189,26 @@ describe('upload session timestamps', () => {
     expect(await new LucidUploadSessionStore(db).hasUpdatedAtColumn()).toBe(false);
   });
 
-  it('lucid: probes again while the table does not exist yet', async () => {
-    const store = new LucidUploadSessionStore(db);
-    expect(await store.hasUpdatedAtColumn()).toBe(false);
-    await runUploadSessionsMigration(db);
-    expect(await store.hasUpdatedAtColumn()).toBe(true);
+  it('lucid: a missing column is probed again at most once a minute', async () => {
+    let now = Date.parse('2026-07-12T00:00:00.000Z');
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const store = new LucidUploadSessionStore(db);
+      expect(await store.hasUpdatedAtColumn()).toBe(false);
+      await runUploadSessionsMigration(db);
+      // Still the cached answer within the minute…
+      now += 30_000;
+      expect(await store.hasUpdatedAtColumn()).toBe(false);
+      // …then the migration run under the live process is picked up, and remembered.
+      now += 30_000;
+      expect(await store.hasUpdatedAtColumn()).toBe(true);
+      await db.connection().schema.alterTable('media_upload_sessions', (table) => {
+        table.dropColumn('updated_at');
+      });
+      now += 120_000;
+      expect(await store.hasUpdatedAtColumn()).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
