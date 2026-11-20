@@ -1,5 +1,11 @@
 # @adonis-agora/media-dashboard
 
+## 10.0.0-rc.22
+
+### Minor Changes
+
+- [#355](https://github.com/DavideCarvalho/adonis-agora-media/pull/355) [`7ee2095`](https://github.com/DavideCarvalho/adonis-agora-media/commit/7ee2095cc9df0897600353812f49c75468790bad) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - Record and upload-session details show Created and Updated; the Collections "Created" column and the Uploads "Age" column show the full timestamp on hover. `UploadInfo` has `updatedAt`.
+
 ## 10.0.0-rc.21
 
 ### Minor Changes
