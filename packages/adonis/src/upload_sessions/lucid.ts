@@ -160,9 +160,10 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     try {
       const dialect = this.dialect() ?? '';
       if (dialect.includes('sqlite') || dialect.includes('libsql')) {
+        const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
         const pragma = this.schema
-          ? `PRAGMA ${JSON.stringify(this.schema)}.table_info(${JSON.stringify(table)})`
-          : `PRAGMA table_info(${JSON.stringify(table)})`;
+          ? `PRAGMA ${quote(this.schema)}.table_info(${quote(table)})`
+          : `PRAGMA table_info(${quote(table)})`;
         const rows = rowsOf(await client.rawQuery(pragma));
         return rows.some((row) => String(row.name) === 'updated_at');
       }
