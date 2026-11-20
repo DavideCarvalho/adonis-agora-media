@@ -759,6 +759,7 @@ function toUploadInfo(session: UploadSession): UploadInfo {
     parts: session.parts,
     multipart: session.multipartUploadId !== undefined,
     ...(session.createdAt ? { createdAt: session.createdAt.toISOString() } : {}),
+    updatedAt: session.updatedAt ? session.updatedAt.toISOString() : null,
     ...(session.tenantId !== undefined ? { tenantId: session.tenantId } : {}),
   };
 }

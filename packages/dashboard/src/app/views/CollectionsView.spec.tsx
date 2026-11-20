@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CollectionListResponse, MediaEntry } from '../../types';
 import { renderView } from '../testkit';
-import { CollectionsView } from './CollectionsView';
+import { CollectionsView, RecordDetailBody } from './CollectionsView';
 
 function entry(over: Partial<MediaEntry> = {}): MediaEntry {
   return {
@@ -138,6 +138,32 @@ describe('CollectionsView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(screen.getByText('second')).toBeTruthy());
     expect(collections).toHaveBeenLastCalledWith(expect.objectContaining({ after: 'c2' }));
+  });
+});
+
+describe('CollectionsView: timestamps', () => {
+  it('lists a Created column with the full timestamp in the title', async () => {
+    renderView(<CollectionsView route={{ tab: 'collections' }} />, baseClient());
+    await waitFor(() => expect(screen.getByText('sunset')).toBeTruthy());
+    expect(screen.getByRole('columnheader', { name: 'Created' })).toBeTruthy();
+    const cell = screen.getByText('2026-07-13 10:00');
+    expect(cell.getAttribute('title')).toBe(new Date('2026-07-13T10:00:00.000Z').toLocaleString());
+  });
+
+  it('shows Created and Updated on the record detail', () => {
+    renderView(
+      <RecordDetailBody
+        detail={{ record: entry(), variants: [] }}
+        deleting={false}
+        deleteError={undefined}
+        onDelete={() => undefined}
+      />,
+      {},
+    );
+    expect(screen.getByText('Created')).toBeTruthy();
+    expect(screen.getByText('Updated')).toBeTruthy();
+    expect(screen.getByText('2026-07-13 10:00')).toBeTruthy();
+    expect(screen.getByText('2026-07-13 11:00')).toBeTruthy();
   });
 });
 

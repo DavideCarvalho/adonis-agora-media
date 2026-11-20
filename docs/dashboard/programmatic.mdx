@@ -193,7 +193,7 @@ The second subpath is the one to import from a frontend: it carries only these d
 | `CollectionSummary` / `CollectionsSummaryResponse` | `{ key, count, sumSize }` / `ListResponse<CollectionSummary>` |
 | `MediaVariant` / `MediaDetailResponse` | `{ name, url }` / `{ record, variants }` |
 | `UploadFilter` | `{ disk?, prefix? }` |
-| `UploadInfo` / `UploadListResponse` | `{ id, disk, key, offset, size, percent, parts, multipart, createdAt? }` / `ListResponse<UploadInfo>` |
+| `UploadInfo` / `UploadListResponse` | `{ id, disk, key, offset, size, percent, parts, multipart, createdAt?, updatedAt }` — `updatedAt` is an ISO string, or `null` when the store does not know it / `ListResponse<UploadInfo>` |
 | `UploadPart` / `UploadDetailResponse` | `{ partNumber, etag }` / `{ upload, parts }` |
 | `ObjectInsight` | `{ title, facts?, links?, note? }` — with `ObjectInsightFact` (`{ label, value }`) and `ObjectInsightLink` (`{ label, href }`). |
 | `ObjectInsightsResponse` | `{ insights }` |

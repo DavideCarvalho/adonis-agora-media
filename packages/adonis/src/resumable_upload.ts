@@ -33,6 +33,11 @@ export interface UploadSession {
   multipartUploadId?: string;
   /** When the session was created. */
   createdAt?: Date;
+  /**
+   * When the session last changed (a chunk or part landed). The built-in stores set it on `create`
+   * (= `createdAt`) and on every `update`. Absent for sessions stored before the column existed.
+   */
+  updatedAt?: Date;
   /** When the session expires (TUS `expiration` extension); absent = never expires. */
   expiresAt?: Date;
   /** Decoded TUS `Upload-Metadata`, retained for finalization/inspection. */

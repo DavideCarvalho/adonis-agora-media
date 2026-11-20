@@ -35,7 +35,10 @@ export interface LucidUploadSessionStoreOptions {
   tenantColumn?: boolean;
 }
 
-/** Physical row shape of the `media_upload_sessions` table. Timestamps are epoch-ms integers. */
+/**
+ * Physical row shape of the `media_upload_sessions` table. Timestamps are epoch-ms integers.
+ * `updated_at` is nullable and may be missing from tables created before it existed.
+ */
 interface SessionRow {
   id: string;
   disk: string;
@@ -47,6 +50,7 @@ interface SessionRow {
   multipart_upload_id: string | null;
   metadata: string | null;
   created_at: number;
+  updated_at?: number | null;
   expires_at: number | null;
   tenant_id?: string | null;
 }
@@ -75,6 +79,8 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   private readonly tableNames: [string, string];
   private readonly connectionName: string | undefined;
   private readonly tenantColumn: boolean;
+  /** Whether the sessions table has `updated_at`, once known (see {@link hasUpdatedAtColumn}). */
+  #updatedAtColumn: Promise<boolean> | undefined;
 
   constructor(
     private readonly db: Database,
@@ -119,13 +125,42 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     return this.connectionName ? this.db.connection(this.connectionName) : this.db.connection();
   }
 
+  /**
+   * Whether the sessions table has its `updated_at` column (a zero-row probe, run once per store).
+   * Tables created before the column existed keep working without it: the store then neither writes
+   * nor reads `updatedAt`. Add it with `node ace media:publish-migration timestamps`.
+   */
+  hasUpdatedAtColumn(): Promise<boolean> {
+    this.#updatedAtColumn ??= this.#probeUpdatedAt().then((found) => {
+      // `null`: the table itself is not there yet, so ask again next time.
+      if (found === null) this.#updatedAtColumn = undefined;
+      return found === true;
+    });
+    return this.#updatedAtColumn;
+  }
+
+  async #probeUpdatedAt(): Promise<boolean | null> {
+    try {
+      await this.client().from(this.table).select('updated_at').whereRaw('1 = 0');
+      return true;
+    } catch {
+      try {
+        await this.client().from(this.table).select('id').whereRaw('1 = 0');
+        return false;
+      } catch {
+        return null;
+      }
+    }
+  }
+
   async create(session: UploadSession): Promise<UploadSession> {
-    const stored: UploadSession = { ...session, createdAt: session.createdAt ?? new Date() };
-    await this.client()
-      .table(this.table)
-      .insert(toRow(stored, this.tenantColumn))
-      .onConflict('id')
-      .merge();
+    const createdAt = session.createdAt ?? new Date();
+    const stored: UploadSession = {
+      ...session,
+      createdAt,
+      updatedAt: session.updatedAt ?? createdAt,
+    };
+    await this.#upsert(stored, false);
     return { ...stored };
   }
 
@@ -135,12 +170,23 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 
   async update(session: UploadSession): Promise<UploadSession> {
+    const stored: UploadSession = { ...session, updatedAt: new Date() };
+    await this.#upsert(stored, true);
+    return { ...stored };
+  }
+
+  /**
+   * Insert or overwrite one session row. With `keepCreated`, an existing row keeps its `created_at`
+   * (an update never moves it).
+   */
+  async #upsert(session: UploadSession, keepCreated: boolean): Promise<void> {
+    const row = toRow(session, this.tenantColumn, await this.hasUpdatedAtColumn());
+    const { created_at: _createdAt, ...changed } = row;
     await this.client()
       .table(this.table)
-      .insert(toRow(session, this.tenantColumn))
+      .insert(row)
       .onConflict('id')
-      .merge();
-    return { ...session };
+      .merge(keepCreated ? changed : row);
   }
 
   async delete(id: string): Promise<void> {
@@ -183,9 +229,10 @@ export class LucidUploadSessionStore implements UploadSessionStore {
   }
 }
 
-function toRow(session: UploadSession, tenantColumn: boolean): SessionRow {
+function toRow(session: UploadSession, tenantColumn: boolean, updatedAt: boolean): SessionRow {
   return {
     ...(tenantColumn ? { tenant_id: session.tenantId ?? null } : {}),
+    ...(updatedAt ? { updated_at: (session.updatedAt ?? new Date()).getTime() } : {}),
     id: session.id,
     disk: session.disk,
     key: session.key,
@@ -213,6 +260,9 @@ function fromRow(row: SessionRow): UploadSession {
   };
   if (row.tenant_id !== undefined) session.tenantId = row.tenant_id;
   if (row.multipart_upload_id) session.multipartUploadId = row.multipart_upload_id;
+  if (row.updated_at !== undefined && row.updated_at !== null) {
+    session.updatedAt = new Date(Number(row.updated_at));
+  }
   if (row.expires_at !== null) session.expiresAt = new Date(Number(row.expires_at));
   if (row.metadata) {
     try {

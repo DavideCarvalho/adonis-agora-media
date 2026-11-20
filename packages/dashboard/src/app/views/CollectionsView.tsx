@@ -32,7 +32,7 @@ import {
   useTopology,
 } from '../queries';
 import { tenantLabel, useShowsTenantColumn, useTenantPicker } from '../TenantPicker';
-import { Empty, Field, formatBytes, formatDate, useToasts } from '../ui';
+import { DateText, Empty, Field, formatBytes, useToasts } from '../ui';
 
 const EMPTY_FILTER: CollectionFilter = {};
 
@@ -226,7 +226,12 @@ export function RecordDetailBody({
           <Fact label="Owner">
             {record.ownerType} · {record.ownerId}
           </Fact>
-          <Fact label="Created">{formatDate(record.createdAt)}</Fact>
+          <Fact label="Created">
+            <DateText iso={record.createdAt} />
+          </Fact>
+          <Fact label="Updated">
+            <DateText iso={record.updatedAt} />
+          </Fact>
         </dl>
         {deleteError && <p className="mt-3 text-xs text-bad">{deleteError}</p>}
       </Panel>
@@ -504,7 +509,7 @@ export function RecordsTable({
       header: 'Created',
       align: 'right',
       hideBelow: 'md',
-      cell: (m) => <span className="mono tnum text-faint">{formatDate(m.createdAt)}</span>,
+      cell: (m) => <DateText iso={m.createdAt} className="mono tnum text-faint" />,
     },
   ];
   return (

@@ -5,6 +5,7 @@ import {
   checkConsoleGate,
   checkDisks,
   checkTenancySchema,
+  checkTimestampsSchema,
   mediaDoctorChecks,
 } from '../src/doctor/checks.js';
 import { agoraDoctorChecks } from '../src/doctor/index.js';
@@ -16,6 +17,7 @@ describe('media doctor checks', () => {
       'media.console-gate',
       'media.account-console',
       'media.tenancy-schema',
+      'media.timestamps-schema',
       'media.topology',
       'media.control-plane',
     ]);
@@ -121,6 +123,27 @@ describe('media doctor checks', () => {
     } finally {
       delete (globalThis as Record<symbol, unknown>)[SLOT];
     }
+  });
+
+  it('media.timestamps-schema', async () => {
+    const app = (media: unknown) =>
+      ({
+        config: { get: (key: string, def: unknown) => (key === 'media' ? media : def) },
+      }) as never;
+    const uploads = (store: unknown) => ({
+      uploads: { resumable: { store: 'sql', stores: { sql: async () => store } } },
+    });
+    expect((await checkTimestampsSchema(app(undefined))).status).toBe('skip');
+    expect((await checkTimestampsSchema(app({}))).status).toBe('skip');
+    expect((await checkTimestampsSchema(app(uploads({})))).status).toBe('skip');
+    expect(
+      (await checkTimestampsSchema(app(uploads({ hasUpdatedAtColumn: async () => true })))).status,
+    ).toBe('ok');
+    const warn = await checkTimestampsSchema(
+      app(uploads({ hasUpdatedAtColumn: async () => false })),
+    );
+    expect(warn.status).toBe('warn');
+    expect(warn.fix).toContain('media:publish-migration timestamps');
   });
 
   it('MediaProvider registers its checks from boot()', async () => {

@@ -16,6 +16,7 @@ export {
   checkDisks,
   checkStoreSchema,
   checkTenancySchema,
+  checkTimestampsSchema,
   type DriveDisks,
   dbSchemaDoctorCheck,
   hasConfiguredSchema,
