@@ -111,6 +111,8 @@ export interface UploadInfo {
   parts: number;
   multipart: boolean;
   createdAt?: string;
+  /** When the session last changed (ISO 8601), or `null` when the store does not know. */
+  updatedAt?: string | null;
   /** The organization (tenant) of the upload, when the app turned tenancy on (`null`: none). */
   tenantId?: string | null;
 }

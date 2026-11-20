@@ -61,6 +61,7 @@ export class MediaUploadsShow extends MediaConsoleCommand {
       ['Multipart', upload.multipart ? 'yes' : 'no'],
       ['Organization', upload.tenantId],
       ['Started', upload.createdAt ?? '-'],
+      ['Updated', upload.updatedAt ?? '-'],
     ]);
     this.printTable(
       ['Part', 'ETag'],

@@ -17,7 +17,7 @@ import { navigate } from '../hash-route';
 import { ArrowLeftIcon, TransferIcon } from '../icons';
 import { useAbortUpload, useTopology, useUploadDetail, useUploads } from '../queries';
 import { tenantLabel, useShowsTenantColumn, useTenantPicker } from '../TenantPicker';
-import { Bar, Dot, formatBytes, relativeAge } from '../ui';
+import { Bar, DateText, Dot, formatBytes, fullTimestamp, relativeAge } from '../ui';
 
 function progressText(upload: UploadInfo): string {
   return upload.percent === null
@@ -130,7 +130,15 @@ export function UploadDetailBody({
             <span className="mono tnum text-xs">{upload.size ?? 'unknown'}</span>
           </DetailRow>
           <DetailRow label="Multipart">{upload.multipart ? 'yes' : 'no'}</DetailRow>
-          <DetailRow label="Age">{relativeAge(upload.createdAt)}</DetailRow>
+          <DetailRow label="Created">
+            <DateText iso={upload.createdAt} />
+            {upload.createdAt ? (
+              <span className="text-faint"> · {relativeAge(upload.createdAt)} ago</span>
+            ) : null}
+          </DetailRow>
+          <DetailRow label="Updated">
+            <DateText iso={upload.updatedAt} />
+          </DetailRow>
         </dl>
         {cancelFailed && <p className="mt-3 text-xs text-bad">Failed to cancel session.</p>}
       </Panel>
@@ -273,7 +281,11 @@ export function UploadsTable({
       header: 'Age',
       hideBelow: 'sm',
       align: 'right',
-      cell: (u) => <span className="mono tnum text-faint">{relativeAge(u.createdAt)}</span>,
+      cell: (u) => (
+        <span className="mono tnum text-faint" title={fullTimestamp(u.createdAt)}>
+          {relativeAge(u.createdAt)}
+        </span>
+      ),
     },
   ];
   return (

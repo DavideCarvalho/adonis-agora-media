@@ -280,6 +280,52 @@ for (const target of targets) {
       expect(await tenantIndex()).toEqual([]);
     });
 
+    it('adds updated_at to the sessions table in the schema, idempotently, and back out', async () => {
+      const name = freshSchema();
+      await runMigrationStub(db, 'create_media_upload_sessions_table.stub', { schema: name });
+      const updatedAtTables = async (where: string) =>
+        (
+          await raw(
+            "SELECT table_name AS name FROM information_schema.columns WHERE table_schema = ? AND column_name = 'updated_at' ORDER BY table_name",
+            [where],
+          )
+        ).map((row) => String(row.name));
+      // Fresh tables already have it; the migration then changes nothing.
+      expect(await updatedAtTables(name)).toEqual(['media_upload_sessions']);
+      await runMigrationStub(db, 'add_media_upload_sessions_updated_at.stub', {
+        schema: name,
+        direction: 'down',
+      });
+      expect(await updatedAtTables(name)).toEqual([]);
+
+      statements = [];
+      const legacy = new LucidUploadSessionStore(db, { schema: name });
+      expect(await legacy.hasUpdatedAtColumn()).toBe(false);
+      await legacy.create({ id: 'old', disk: 'fs', key: 'k', offset: 0, parts: 0 });
+
+      await runMigrationStub(db, 'add_media_upload_sessions_updated_at.stub', { schema: name });
+      await runMigrationStub(db, 'add_media_upload_sessions_updated_at.stub', { schema: name });
+      expect(await updatedAtTables(name)).toEqual(['media_upload_sessions']);
+      expect(await updatedAtTables(await defaultSchema())).toEqual([]);
+
+      const store = new LucidUploadSessionStore(db, { schema: name });
+      expect((await store.get('old'))?.updatedAt).toBeUndefined();
+      const created = new Date('2026-07-12T00:00:00.000Z');
+      await store.create({
+        id: 'new',
+        disk: 'fs',
+        key: 'k2',
+        offset: 0,
+        parts: 0,
+        createdAt: created,
+      });
+      await store.update({ id: 'new', disk: 'fs', key: 'k2', offset: 1, parts: 1 } as never);
+      const found = await store.get('new');
+      expect(found?.createdAt).toEqual(created);
+      expect(found?.updatedAt?.getTime()).toBeGreaterThan(created.getTime());
+      expectAllQualified();
+    });
+
     it.skipIf(mysql)('reports a table the role cannot write to', async () => {
       const name = freshSchema();
       await runMigrationStub(db, 'create_media_upload_sessions_table.stub', { schema: name });

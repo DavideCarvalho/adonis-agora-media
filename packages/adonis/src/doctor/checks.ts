@@ -181,6 +181,54 @@ export async function checkTenancySchema(app: ApplicationService): Promise<Agora
   };
 }
 
+/** A store `media.timestamps-schema` can probe (the Lucid upload-session store). */
+interface UpdatedAtProbe {
+  hasUpdatedAtColumn(): Promise<boolean>;
+}
+
+/**
+ * `media.timestamps-schema` (deep): every Lucid upload-sessions store (resumable and direct) has its
+ * `updated_at` column. Without it the store still works, but sessions show no "Updated" time.
+ */
+export async function checkTimestampsSchema(app: ApplicationService): Promise<AgoraDoctorResult> {
+  const media = app.config.get<MediaConfig | undefined>('media', undefined);
+  if (media === undefined) return { status: 'skip', message: 'config/media.ts is not present.' };
+  const { resolveUploadSessionStore } = await import('../upload_sessions/factory.js');
+  const tenancy = resolveMediaTenancy(media.tenancy).enabled ? { tenancy: true } : {};
+  const probed: string[] = [];
+  const missing: string[] = [];
+  for (const [label, uploads] of [
+    ['resumable upload sessions', media.uploads?.resumable],
+    ['direct upload sessions', media.uploads?.direct],
+  ] as const) {
+    if (uploads?.store === undefined) continue;
+    const store = (await resolveUploadSessionStore(uploads, {
+      app,
+      ...tenancy,
+    })) as Partial<UpdatedAtProbe>;
+    if (typeof store.hasUpdatedAtColumn !== 'function') continue;
+    probed.push(label);
+    if (!(await store.hasUpdatedAtColumn())) missing.push(label);
+  }
+  if (probed.length === 0) {
+    return { status: 'skip', message: 'No upload sessions are stored in SQL.' };
+  }
+  if (missing.length === 0) {
+    return {
+      status: 'ok',
+      message: `The ${probed.join(' and ')} ${probed.length > 1 ? 'tables have' : 'table has'} updated_at.`,
+    };
+  }
+  return {
+    status: 'warn',
+    message: `The ${missing.join(' and ')} ${
+      missing.length > 1 ? 'tables have' : 'table has'
+    } no updated_at column: sessions show no "Updated" time.`,
+    fix: 'Run `node ace media:publish-migration timestamps` and `node ace migration:run`.',
+    docs: `${DOCS}/stores-and-processors`,
+  };
+}
+
 /** A store `media.db-schema` can inspect (the Lucid media and upload-session stores). */
 interface SchemaInspectable {
   inspectSchema(): Promise<{
@@ -460,6 +508,13 @@ export const mediaDoctorChecks: AgoraDoctorCheck[] = [
     title: 'Tenant column present',
     cost: 'deep',
     run: (app) => checkTenancySchema(app),
+  },
+  {
+    id: 'media.timestamps-schema',
+    lib: 'media',
+    title: 'Upload sessions have updated_at',
+    cost: 'deep',
+    run: (app) => checkTimestampsSchema(app),
   },
   {
     id: 'media.topology',

@@ -1,0 +1,47 @@
+{{{
+  exports({ to: app.migrationsPath(`${new Date().getTime()}_add_media_upload_sessions_updated_at.ts`) })
+}}}
+import { BaseSchema } from '@adonisjs/lucid/schema'
+
+/**
+ * The nullable 'updated_at' column of 'media_upload_sessions' (epoch-ms, like 'created_at'), for
+ * tables created before it existed. Sessions already stored keep it NULL until their next write.
+ * Safe to run when the column is already there: it is added only when missing.
+ *
+ * 'schema' is the database schema of 'media_upload_sessions': the same value as 'schema' in
+ * uploadSessions.lucid(). Leave it undefined for the connection's current one.
+ */
+const schema: string | undefined = undefined
+
+export default class extends BaseSchema {
+  protected tableName = 'media_upload_sessions'
+
+  async up() {
+    if (!(await this.hasUpdatedAt())) {
+      this.in(schema).alterTable(this.tableName, (table) => {
+        table.bigInteger('updated_at').nullable()
+      })
+    }
+  }
+
+  async down() {
+    if (await this.hasUpdatedAt()) {
+      this.in(schema).alterTable(this.tableName, (table) => {
+        table.dropColumn('updated_at')
+      })
+    }
+  }
+
+  private async hasUpdatedAt() {
+    // On MySQL a dotted name, not withSchema(): knex's MySQL hasColumn ignores withSchema().
+    if (this.db.dialect.name === 'mysql') {
+      return this.schema.hasColumn(schema ? schema + '.' + this.tableName : this.tableName, 'updated_at')
+    }
+    return this.in(schema).hasColumn(this.tableName, 'updated_at')
+  }
+
+  /** The schema builder, pointed at 'name' when it is set. */
+  private in(name: string | undefined) {
+    return name ? this.schema.withSchema(name) : this.schema
+  }
+}

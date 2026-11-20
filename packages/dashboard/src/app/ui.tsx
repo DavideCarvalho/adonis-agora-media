@@ -46,6 +46,28 @@ export function formatDate(iso: string | null | undefined): string {
   return date.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+/** The full local timestamp of `iso` for a `title` tooltip, or `undefined` when there is none. */
+export function fullTimestamp(iso: string | null | undefined): string | undefined {
+  if (!iso) return undefined;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? undefined : date.toLocaleString();
+}
+
+/** A short date ({@link formatDate}) whose `title` is the full timestamp; `—` when unknown. */
+export function DateText({
+  iso,
+  className,
+}: {
+  iso: string | null | undefined;
+  className?: string;
+}) {
+  return (
+    <span className={className} title={fullTimestamp(iso)}>
+      {formatDate(iso)}
+    </span>
+  );
+}
+
 /** Compact relative age (`3m`, `2h`, `5d`). */
 export function relativeAge(iso: string | null | undefined): string {
   if (!iso) return '—';

@@ -14,7 +14,12 @@ export class InMemoryUploadSessionStore implements UploadSessionStore {
   private readonly parts = new Map<string, Map<number, string>>();
 
   async create(session: UploadSession): Promise<UploadSession> {
-    const stored: UploadSession = { ...session, createdAt: session.createdAt ?? new Date() };
+    const createdAt = session.createdAt ?? new Date();
+    const stored: UploadSession = {
+      ...session,
+      createdAt,
+      updatedAt: session.updatedAt ?? createdAt,
+    };
     this.sessions.set(stored.id, { ...stored });
     return { ...stored };
   }
@@ -25,8 +30,15 @@ export class InMemoryUploadSessionStore implements UploadSessionStore {
   }
 
   async update(session: UploadSession): Promise<UploadSession> {
-    this.sessions.set(session.id, { ...session });
-    return { ...session };
+    // `createdAt` never moves: keep the stored one when the caller's copy lacks it.
+    const createdAt = this.sessions.get(session.id)?.createdAt ?? session.createdAt;
+    const stored: UploadSession = {
+      ...session,
+      ...(createdAt !== undefined ? { createdAt } : {}),
+      updatedAt: new Date(),
+    };
+    this.sessions.set(session.id, { ...stored });
+    return { ...stored };
   }
 
   async delete(id: string): Promise<void> {

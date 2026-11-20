@@ -36,6 +36,7 @@ export default class extends BaseSchema {
       table.string('multipart_upload_id').nullable()
       table.text('metadata').nullable()
       table.bigInteger('created_at').notNullable()
+      table.bigInteger('updated_at').nullable()
       table.bigInteger('expires_at').nullable()
       table.index(['disk'], 'media_upload_sessions_disk_idx')
     })

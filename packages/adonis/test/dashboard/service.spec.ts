@@ -225,6 +225,7 @@ describe('DashboardService', () => {
           parts: 3,
           multipartUploadId: 'MP1',
           createdAt: new Date('2026-07-13T09:00:00Z'),
+          updatedAt: new Date('2026-07-13T09:05:00Z'),
         },
         { id: 'u2', disk: 's3', key: 'unknown.bin', offset: 10, size: undefined, parts: 1 },
       ]),
@@ -240,8 +241,12 @@ describe('DashboardService', () => {
       percent: 50,
       multipart: true,
       createdAt: '2026-07-13T09:00:00.000Z',
+      updatedAt: '2026-07-13T09:05:00.000Z',
     });
+    // Unknown timestamps: createdAt absent (as before), updatedAt null.
     expect(res.data[1]).toMatchObject({ id: 'u2', percent: null, size: null, multipart: false });
+    expect(res.data[1]?.updatedAt).toBeNull();
+    expect(res.data[1]).not.toHaveProperty('createdAt');
   });
 
   it('orders uploads by createdAt, newest first unless asked for oldest first', async () => {

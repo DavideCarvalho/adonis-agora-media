@@ -27,6 +27,7 @@ could not run.
 | `media.console-gate` | The media console has an `authorize`. | warn here, error in production |
 | `media.account-console` | Every collection `accountConsole` lists exists and has an `access.read` rule. | warn |
 | `media.tenancy-schema` | With tenancy on, the `media` table has its `tenant_id` column (`--deep`). | error |
+| `media.timestamps-schema` | Every Lucid upload-sessions table has its `updated_at` column (`--deep`). | warn |
 
 Every lib also reports `media.registered`, `media.peers` and `media.agora-siblings`.
 

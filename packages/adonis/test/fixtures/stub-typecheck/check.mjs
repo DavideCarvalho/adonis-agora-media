@@ -57,6 +57,8 @@ const STUBS = [
   'database/migrations/create_media_table.stub',
   'database/migrations/create_media_upload_sessions_table.stub',
   'database/migrations/add_media_tenant_id.stub',
+  // Published only by `node ace media:publish-migration timestamps`, for tables created before it.
+  'database/migrations/add_media_upload_sessions_updated_at.stub',
 ];
 
 /**
@@ -65,8 +67,11 @@ const STUBS = [
  * tested-and-green" failure this file exists to prevent, one level up.
  */
 function assertStubListMatchesConfigure() {
-  const configure = readFileSync(join(pkgRoot, 'configure.ts'), 'utf8');
-  const published = [...configure.matchAll(/'([\w/]+\.stub)'/g)].map((m) => m[1]);
+  // `configure` and `media:publish-migration` are the two ways a stub reaches an app.
+  const configure =
+    readFileSync(join(pkgRoot, 'configure.ts'), 'utf8') +
+    readFileSync(join(pkgRoot, 'commands/publish_migration.ts'), 'utf8');
+  const published = [...new Set([...configure.matchAll(/'([\w/]+\.stub)'/g)].map((m) => m[1]))];
   const missing = published.filter((p) => !STUBS.includes(p));
   const extra = STUBS.filter((p) => !published.includes(p));
   if (missing.length || extra.length) {
