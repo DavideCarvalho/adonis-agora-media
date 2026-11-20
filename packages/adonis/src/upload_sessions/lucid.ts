@@ -13,6 +13,7 @@ import {
   type LucidDatabase,
   type MediaSchemaInspection,
   qualifiedTable,
+  rowsOf,
 } from '../stores/lucid-schema.js';
 import type { MultipartPart } from '../types.js';
 
@@ -149,10 +150,32 @@ export class LucidUploadSessionStore implements UploadSessionStore {
     return (this.#updatedAtProbe as { found: Promise<boolean> }).found;
   }
 
+  /**
+   * Reads the catalog (never selects the column itself): a failing statement inside a Postgres
+   * transaction would abort it, and the app's next query would fail with 25P02.
+   */
   async #probeUpdatedAt(): Promise<boolean> {
+    const client = this.client();
+    const table = this.tableNames[0];
     try {
-      await this.client().from(this.table).select('updated_at').whereRaw('1 = 0');
-      return true;
+      const dialect = this.dialect() ?? '';
+      if (dialect.includes('sqlite') || dialect.includes('libsql')) {
+        const pragma = this.schema
+          ? `PRAGMA ${JSON.stringify(this.schema)}.table_info(${JSON.stringify(table)})`
+          : `PRAGMA table_info(${JSON.stringify(table)})`;
+        const rows = rowsOf(await client.rawQuery(pragma));
+        return rows.some((row) => String(row.name) === 'updated_at');
+      }
+      const schemaExpr = dialect.includes('mysql') ? 'DATABASE()' : 'current_schema()';
+      const rows = rowsOf(
+        await client.rawQuery(
+          `SELECT column_name AS name FROM information_schema.columns WHERE table_schema = ${
+            this.schema ? '?' : schemaExpr
+          } AND table_name = ? AND column_name = 'updated_at'`,
+          this.schema ? [this.schema, table] : [table],
+        ),
+      );
+      return rows.length > 0;
     } catch {
       return false;
     }
