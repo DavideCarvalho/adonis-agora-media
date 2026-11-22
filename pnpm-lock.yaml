@@ -246,8 +246,8 @@ importers:
         specifier: 3.1169.0
         version: 3.1169.0
       '@mediabunny/server':
-        specifier: 1.66.0
-        version: 1.66.0(mediabunny@1.66.0)
+        specifier: 1.66.1
+        version: 1.66.1(mediabunny@1.66.0)
       '@smithy/util-stream':
         specifier: 4.8.2
         version: 4.8.2
@@ -1451,13 +1451,13 @@ packages:
     resolution: {integrity: sha512-6QEf6yqFbETdwGITKq57aYoPfX/3K8XFNwsAlx0C1M7o8cb79sv1M3w+tWuWvIcSbNqrLF7OD7YpZMVVz335hQ==}
     engines: {node: '>=20.0.0'}
 
-  '@mediabunny/prores@1.66.0':
-    resolution: {integrity: sha512-+NIJsOGhZiqTTNkqdrrTDQIkIadYL8ue/dfWmZwYmZ/GDTyHPl9jThjYDV97QyBeQj6+kZRm88LD7Gi0O9dreQ==}
+  '@mediabunny/prores@1.66.2':
+    resolution: {integrity: sha512-kkUPDHiTSjQ0dU7hUijJeeDyoX+UUsTe+pQ0Z3bbKwVp4G1DdUoYXHpcO3Y37u2fSXm0P52NqIRaAWhssHpl/g==}
     peerDependencies:
       mediabunny: ^1.49.0
 
-  '@mediabunny/server@1.66.0':
-    resolution: {integrity: sha512-sjLOofci25KaUVhgrvNjUKspjdwUT6vQ7v7BXTymmwiPwSqeZ+nQehCZOjuWYWTk4wv1TLGuPbOLav+sLbhpew==}
+  '@mediabunny/server@1.66.1':
+    resolution: {integrity: sha512-1oa3TaDy3bHwF06gjm32auY7BQZKMFC/rkmI866UckzNdKVtvTdpid4uPWmae8yw3pKaX3NIG4rb0aIPkv69ug==}
     peerDependencies:
       mediabunny: ^1.45.0
 
@@ -5700,14 +5700,14 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@mediabunny/prores@1.66.0(mediabunny@1.66.0)':
+  '@mediabunny/prores@1.66.2(mediabunny@1.66.0)':
     dependencies:
       mediabunny: 1.66.0
       turbores: 1.2.5
 
-  '@mediabunny/server@1.66.0(mediabunny@1.66.0)':
+  '@mediabunny/server@1.66.1(mediabunny@1.66.0)':
     dependencies:
-      '@mediabunny/prores': 1.66.0(mediabunny@1.66.0)
+      '@mediabunny/prores': 1.66.2(mediabunny@1.66.0)
       mediabunny: 1.66.0
       node-av: 6.2.0
     transitivePeerDependencies:
