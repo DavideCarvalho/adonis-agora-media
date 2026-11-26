@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import { MediaControlPlaneError } from '../errors.js';
+import { isHeaderSafe, safeContentType } from '../http_safety.js';
 import type { MediaRecord } from '../media_record.js';
 import { fromWireRecord, type WireMediaRecord } from './protocol.js';
 import { type MediaTenantClient, nodeStreamOf } from './tenant_client.js';
@@ -110,12 +111,12 @@ export class TenantAccounts {
       ctx.response.status(404);
       return ctx.response.send('');
     }
-    if (read.etag) ctx.response.header('etag', read.etag);
+    if (read.etag && isHeaderSafe(read.etag)) ctx.response.header('etag', read.etag);
     if (read.kind === 'not-modified') {
       ctx.response.status(304);
       return ctx.response.send('');
     }
-    ctx.response.header('content-type', read.contentType);
+    ctx.response.header('content-type', safeContentType(read.contentType));
     if (read.size !== undefined) ctx.response.header('content-length', String(read.size));
     ctx.response.header('x-content-type-options', 'nosniff');
     return ctx.response.stream(read.stream);

@@ -392,6 +392,97 @@ describe('media topology: a control plane and its tenants, in process', () => {
     et.restore();
   });
 
+  describe('request input never reaches a header unchecked', () => {
+    const get = (path: string, token = 'et-secret', app = 'entre-textos') =>
+      fetch(`${base}/_media/v1${path}`, {
+        headers: { authorization: `Bearer ${token}`, 'x-media-app': app },
+      });
+    const photo = async () =>
+      tenant('entre-textos', 'et-secret').library.attach({
+        ownerType: 'User',
+        ownerId: 'etag',
+        collection: 'photos',
+        fileName: 'e.png',
+        mimeType: 'image/png',
+        contents: png,
+      });
+
+    it('answers 400 for a conversion or a size a header cannot carry, and keeps running', async () => {
+      const record = await photo();
+      for (const query of [
+        'conversion=%0A',
+        'conversion=%01',
+        'conversion=%E6%97%A5%E6%9C%AC',
+        'conversion=a%0D%0Aset-cookie:%20x=1',
+        'w=%0A',
+        'w=%E6%97%A5%E6%9C%AC',
+        'w=abc',
+        'w=0',
+        'w=99999',
+        'w=64&q=%01',
+        'w=64&q=500',
+      ]) {
+        const res = await get(`/records/${record.id}/file?${query}`);
+        expect(res.status, query).toBe(400);
+        expect(await res.json()).toMatchObject({ code: 'E_MEDIA_BAD_REQUEST' });
+      }
+      // Still serving, with a header-safe ETag (and one per size and quality).
+      const ok = await get(`/records/${record.id}/file?conversion=thumb`);
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get('etag')).toMatch(/^"[A-Za-z0-9_~.-]+"$/);
+      await ok.arrayBuffer();
+    });
+
+    it('a tenant delivering by proxy answers its visitor 400, never relays a crash', async () => {
+      const record = await photo();
+      const et = tenant('entre-textos', 'et-secret');
+      for (const conversion of ['\n', '\u0001', '日本']) {
+        await expect(et.library.deliver(record.id, { conversion })).rejects.toMatchObject({
+          status: 400,
+        });
+      }
+      await expect(et.library.deliver(record.id, { width: '日本' })).rejects.toMatchObject({
+        status: 400,
+      });
+    });
+
+    it('refuses a declared mimeType that is not a type/subtype (it may become a Content-Type)', async () => {
+      for (const mimeType of [
+        'text/plain\r\nset-cookie: x=1',
+        '日本/x',
+        'text',
+        'text/plain; x=1',
+      ]) {
+        await expect(
+          tenant('entre-textos', 'et-secret').library.attach({
+            ownerType: 'User',
+            ownerId: 'mime',
+            collection: 'documents',
+            fileName: 'a.txt',
+            mimeType,
+            contents: Buffer.from('hi'),
+          }),
+        ).rejects.toMatchObject({ status: 400 });
+      }
+    });
+
+    it('generating a conversion needs media:write, a read-only token may not', async () => {
+      const record = await photo();
+      const post = (token: string, app: string) =>
+        fetch(`${base}/_media/v1/records/${record.id}/conversions/lg`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'x-media-app': app },
+        });
+      expect((await post('ro-secret', 'reader')).status).toBe(403);
+      expect(
+        (await get(`/records/${record.id}/image?generate=1`, 'ro-secret', 'reader')).status,
+      ).toBe(403);
+      // The app that may write generates it.
+      const made = await post('et-secret', 'entre-textos');
+      expect(made.status).toBe(200);
+    });
+  });
+
   describe("a person's own files (accounts)", () => {
     it('writes with the person’s token, reads with the app’s, revalidates with the ETag', async () => {
       const et = tenant('entre-textos', 'et-secret');

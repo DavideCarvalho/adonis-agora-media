@@ -13,6 +13,7 @@ import {
   TransformNotReadyError,
   UnsafeFileNameError,
 } from '../errors.js';
+import { isHeaderSafe, isMimeType, safeContentType } from '../http_safety.js';
 import type { MediaLibrary } from '../media_library.js';
 import type { MediaRecord } from '../media_record.js';
 import type { MediaStore } from '../media_store.js';
@@ -34,6 +35,7 @@ import {
   OWNER_TYPE_PATTERN,
   PARTITION_PATTERN,
   partitionOwnerType,
+  readRendition,
   toWireRecord,
   withoutPartition,
 } from './protocol.js';
@@ -406,6 +408,10 @@ export class MediaControlPlane {
     if (!fileName || !mimeType) {
       throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'fileName and mimeType are required.');
     }
+    // It may be served back as a Content-Type: a bare `type/subtype`, nothing else.
+    if (!isMimeType(mimeType)) {
+      throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'mimeType must be a type/subtype MIME type.');
+    }
     const id = str(header.id);
     if (id !== undefined && !OWNER_ID_PATTERN.test(id)) {
       throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'An invalid id.');
@@ -463,10 +469,14 @@ export class MediaControlPlane {
   }
 
   async ensureConversion(ctx: ControlPlaneContext) {
-    const { partition } = await this.#tenant(ctx, MEDIA_SCOPES.read);
+    // Generating a conversion writes to the app's storage: write, not read.
+    const { partition } = await this.#tenant(ctx, MEDIA_SCOPES.write);
+    const conversion = str(ctx.params.conversion) ?? '';
+    if (!NAME_PATTERN.test(conversion)) {
+      throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'A valid conversion name is required.');
+    }
     const library = await this.#library(partition);
     const record = await this.#record(library, ctx.params.id);
-    const conversion = str(ctx.params.conversion) ?? '';
     const updated = await library.ensureConversion(record.id, conversion);
     return ctx.response.json({ data: this.#wire(partition, updated) });
   }
@@ -496,6 +506,9 @@ export class MediaControlPlane {
     const record = await this.#record(library, ctx.params.id);
     const qs = ctx.request.qs();
     const conversion = str(qs.conversion);
+    if (conversion !== undefined && !NAME_PATTERN.test(conversion)) {
+      throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'A valid conversion name is required.');
+    }
     const expiresIn = Number(str(qs.expiresIn));
     const signed = Number.isFinite(expiresIn) && expiresIn > 0;
     const result: DeliveryResult = await library.deliver(record.id, {
@@ -513,16 +526,21 @@ export class MediaControlPlane {
   }
 
   async recordImage(ctx: ControlPlaneContext) {
-    const { partition } = await this.#tenant(ctx, MEDIA_SCOPES.read);
+    const qs = ctx.request.qs();
+    // `generate=1` renders the missing conversions into the app's storage: write, not read.
+    const generate = str(qs.generate) === '1';
+    const { partition } = await this.#tenant(
+      ctx,
+      generate ? MEDIA_SCOPES.write : MEDIA_SCOPES.read,
+    );
     const library = await this.#library(partition);
     const record = await this.#record(library, ctx.params.id);
-    const qs = ctx.request.qs();
     const conversions = str(qs.conversions)
       ?.split(',')
       .filter((name) => NAME_PATTERN.test(name));
     const image = await library.image(record.id, {
       ...(conversions !== undefined && conversions.length > 0 ? { conversions } : {}),
-      ...(str(qs.generate) === '1' ? { generate: true } : {}),
+      ...(generate ? { generate: true } : {}),
       // The tenant builds the URLs (its own route, or this server's): each is a token here.
       url: (conversion) => `${IMAGE_URL_TOKEN}${conversion ?? ''}`,
     });
@@ -589,6 +607,13 @@ export class MediaControlPlane {
     const collection = this.#accountCollection(ctx.params.collection);
     const mimeType = str(ctx.request.header('x-media-mime-type'));
     if (!mimeType) throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', 'x-media-mime-type is required.');
+    if (!isMimeType(mimeType)) {
+      throw new Refusal(
+        400,
+        'E_MEDIA_BAD_REQUEST',
+        'x-media-mime-type must be a type/subtype MIME type.',
+      );
+    }
     const fileName = str(ctx.request.header('x-media-file-name')) ?? 'file';
     const body = this.#body(ctx, this.#accounts().maxBytes ?? DEFAULT_ACCOUNT_MAX_BYTES);
     const library = await this.#library();
@@ -663,7 +688,19 @@ export class MediaControlPlane {
       quality?: string | undefined;
     },
   ) {
-    const etag = mediaEtag(record, { conversion: rendition.conversion, width: rendition.width });
+    // Validated BEFORE anything reaches a header: a raw `?conversion=%0A` in the ETag would make
+    // Node throw when the response is written, outside any handler (an unhandled rejection).
+    let valid: ReturnType<typeof readRendition>;
+    try {
+      valid = readRendition(rendition);
+    } catch (error) {
+      throw new Refusal(400, 'E_MEDIA_BAD_REQUEST', (error as Error).message);
+    }
+    const etag = mediaEtag(record, {
+      conversion: valid.conversion,
+      width: valid.width,
+      quality: valid.width !== undefined ? valid.quality : undefined,
+    });
     ctx.response.header('etag', etag);
     ctx.response.header('cache-control', CACHE_CONTROL);
     if (etagMatches(ctx.request.header('if-none-match') ?? undefined, etag)) {
@@ -673,17 +710,15 @@ export class MediaControlPlane {
     const accept = ctx.request.header('accept') ?? undefined;
     const result = await library.deliver(record.id, {
       mode: 'proxy',
-      ...(rendition.conversion !== undefined ? { conversion: rendition.conversion } : {}),
-      ...(rendition.width !== undefined
-        ? { width: rendition.width, quality: rendition.quality, accept }
-        : {}),
+      ...(valid.conversion !== undefined ? { conversion: valid.conversion } : {}),
+      ...(valid.width !== undefined ? { width: valid.width, quality: valid.quality, accept } : {}),
     });
     if (result.kind !== 'stream') throw new Error('media: proxy delivery answered a redirect');
-    ctx.response.header('content-type', result.mimeType);
+    ctx.response.header('content-type', safeContentType(result.mimeType));
     if (result.size !== undefined) ctx.response.header('content-length', String(result.size));
     if (result.fileName)
       ctx.response.header('x-media-file-name', encodeURIComponent(result.fileName));
-    if (result.vary) ctx.response.header('vary', result.vary);
+    if (result.vary && isHeaderSafe(result.vary)) ctx.response.header('vary', result.vary);
     ctx.response.header('x-content-type-options', 'nosniff');
     return ctx.response.stream(result.stream);
   }

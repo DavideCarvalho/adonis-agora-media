@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { MediaConversion, MediaRecord } from '../media_record.js';
 
 /**
@@ -131,11 +132,61 @@ export function fromWireRecord(value: unknown): MediaRecord {
  */
 export function mediaEtag(
   record: Pick<MediaRecord, 'id' | 'updatedAt'>,
-  rendition: { conversion?: string | undefined; width?: number | string | undefined } = {},
+  rendition: {
+    conversion?: string | undefined;
+    width?: number | string | undefined;
+    quality?: number | string | undefined;
+  } = {},
 ): string {
   const variant =
-    rendition.conversion ?? (rendition.width !== undefined ? `w${rendition.width}` : 'o');
-  return `"${record.id}.${variant}.${record.updatedAt.getTime().toString(36)}"`;
+    rendition.conversion ??
+    (rendition.width !== undefined
+      ? `w${rendition.width}${rendition.quality !== undefined ? `q${rendition.quality}` : ''}`
+      : 'o');
+  return `"${etagPart(record.id)}.${etagPart(variant)}.${record.updatedAt.getTime().toString(36)}"`;
+}
+
+/**
+ * One part of an ETag, header-safe whatever it holds: kept as is when made of `etagc` characters
+ * that cannot be confused with the separators, otherwise a short hash of it.
+ */
+function etagPart(value: string): string {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value)
+    ? value
+    : `~${createHash('sha256').update(value, 'utf8').digest('base64url').slice(0, 22)}`;
+}
+
+/** Largest width a resize request may ask for (the library's own ceiling for signed URLs). */
+export const MAX_RENDITION_WIDTH = 8192;
+
+/**
+ * The rendition query of a file read (`conversion`, `w`, `q`), validated: a conversion name, a
+ * whole width in `1..8192`, a whole quality in `1..100`. Throws a `TypeError` naming the bad one.
+ */
+export function readRendition(query: {
+  conversion?: string | undefined;
+  width?: string | undefined;
+  quality?: string | undefined;
+}): { conversion?: string; width?: string; quality?: string } {
+  const { conversion, width, quality } = query;
+  if (conversion !== undefined && !NAME_PATTERN.test(conversion)) {
+    throw new TypeError(
+      '`conversion` must be a conversion name (1-64 characters of A-Z a-z 0-9 _ . -).',
+    );
+  }
+  const whole = (value: string | undefined, name: string, max: number) => {
+    if (value === undefined) return;
+    if (!/^[0-9]{1,5}$/.test(value) || Number(value) < 1 || Number(value) > max) {
+      throw new TypeError(`\`${name}\` must be a whole number from 1 to ${max}.`);
+    }
+  };
+  whole(width, 'w', MAX_RENDITION_WIDTH);
+  whole(quality, 'q', 100);
+  return {
+    ...(conversion !== undefined ? { conversion } : {}),
+    ...(width !== undefined ? { width: String(Number(width)) } : {}),
+    ...(quality !== undefined ? { quality: String(Number(quality)) } : {}),
+  };
 }
 
 /** `If-None-Match` matches `etag`? Accepts a list and the weak form. */
