@@ -1,6 +1,7 @@
 import { ListLoader } from '@adonisjs/core/ace';
 import AgoraDoctor from './agora_doctor.js';
 import { MediaDisksList } from './console_disks.js';
+import MediaConsoleKey from './console_key.js';
 import {
   MediaFoldersCreate,
   MediaObjectsCopy,
@@ -24,7 +25,7 @@ import MediaTenancyBackfill from './tenancy_backfill.js';
 
 /**
  * The commands barrel for `@adonis-agora/media`: `agora:doctor`, `media:doctor`,
- * `media:publish-migration`, `media:tenancy:backfill` and the console commands (`media:disks:*`,
+ * `media:publish-migration`, `media:tenancy:backfill`, `media:console-key` and the console commands (`media:disks:*`,
  * `media:objects:*`, `media:folders:*`, `media:collections:*`, `media:records:*`,
  * `media:uploads:*`). Registered in an app's `adonisrc` via
  * `rcFile.addCommand('@adonis-agora/media/commands')`, which this package's `configure` does.
@@ -34,6 +35,7 @@ const loader = new ListLoader([
   MediaDoctor,
   MediaPublishMigration,
   MediaTenancyBackfill,
+  MediaConsoleKey,
   MediaDisksList,
   MediaObjectsList,
   MediaObjectsShow,

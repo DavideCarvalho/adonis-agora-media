@@ -541,3 +541,121 @@ describe('account console review fixes', () => {
     expect((await send('hello', '5')).status).toBe(201);
   });
 });
+
+describe("the account console's upload tickets: one secret for every instance", () => {
+  const APP_KEY = 'a-shared-app-key-0123456789abcdef';
+
+  /** One instance of the app: its provider booted, its registered page and its upload route. */
+  async function instance(
+    media: MediaManager,
+    options: { appKey?: string; inProduction?: boolean; uploadsSecret?: string } = {},
+  ) {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const registry = { contract: 1, register: vi.fn() };
+    const routes = new Map<string, (ctx: unknown) => Promise<unknown>>();
+    const chain = { as: () => chain };
+    const on = (method: string) => (path: string, h: (ctx: unknown) => Promise<unknown>) => {
+      routes.set(`${method} ${path}`, h);
+      return chain;
+    };
+    const router = { get: on('GET'), post: on('POST'), route: () => chain };
+    const booted: Array<() => Promise<void>> = [];
+    const warnings: string[] = [];
+    const config: Record<string, unknown> = {
+      media: {
+        accountConsole: { collections: ['documents'] },
+        ...(options.uploadsSecret ? { uploads: { secret: options.uploadsSecret } } : {}),
+      },
+      'app.appKey': options.appKey,
+    };
+    const provider = new MediaProvider({
+      config: { get: (key: string, def: unknown) => config[key] ?? def },
+      inProduction: options.inProduction ?? true,
+      container: {
+        hasBinding: (key: string) => key === 'authkit.accountExtensions',
+        make: async (key: unknown) => {
+          if (key === 'authkit.accountExtensions') return registry;
+          if (key === 'router') return router;
+          if (key === 'logger') return { warn: (l: string) => warnings.push(l) };
+          if (key === MediaManager) return media;
+          return {};
+        },
+        singleton: vi.fn(),
+      },
+      booted: async (hook: () => Promise<void>) => void booted.push(hook),
+    } as never);
+    const start = async () => {
+      await provider.boot();
+      for (const hook of booted) await hook();
+    };
+    const extension = () => registry.register.mock.calls[0]?.[0] as AccountExtension;
+    const upload = async (ticket: string) => {
+      let status = 0;
+      let body: unknown;
+      await routes.get('POST /media/account/uploads')!({
+        request: {
+          header: (name: string) =>
+            ({
+              'x-media-upload-ticket': ticket,
+              'x-file-name': 'a.txt',
+              'content-type': 'text/plain',
+              'content-length': '5',
+            })[name.toLowerCase()],
+          request: Readable.from([Buffer.from('hello')]),
+        },
+        response: {
+          header: () => undefined,
+          status(code: number) {
+            status = code;
+            return { json: (payload: unknown) => (body = payload) };
+          },
+        },
+      });
+      return { status, body };
+    };
+    return { start, extension, upload, warnings };
+  }
+
+  const ticketFrom = async (extension: AccountExtension) => {
+    const view = await page(extension).load(ctx());
+    const block = view.blocks.find((b) => b.kind === 'component') as { props: { ticket: string } };
+    return block.props.ticket;
+  };
+
+  it('fails at boot in production without APP_KEY or uploads.secret, naming both', async () => {
+    const { media } = setup();
+    const app = await instance(media);
+    await expect(app.start()).rejects.toThrow(
+      /accountConsole's upload tickets are signed with APP_KEY or uploads\.secret.*Set APP_KEY.*uploads\.secret/,
+    );
+  });
+
+  it("two instances with the same APP_KEY accept each other's tickets", async () => {
+    const { media } = setup();
+    const one = await instance(media, { appKey: APP_KEY });
+    const two = await instance(media, { appKey: APP_KEY });
+    await one.start();
+    await two.start();
+    const ticket = await ticketFrom(one.extension());
+    expect((await two.upload(ticket)).status).toBe(201);
+    // Another APP_KEY does not.
+    const other = await instance(media, { appKey: `${APP_KEY}-other` });
+    await other.start();
+    expect((await other.upload(ticket)).status).toBe(401);
+  });
+
+  it('uploads.secret signs them when set; outside production a per-process key warns', async () => {
+    const { media } = setup();
+    const secret = 'an-upload-secret-0123456789';
+    const one = await instance(media, { uploadsSecret: secret });
+    const two = await instance(media, { uploadsSecret: secret });
+    await one.start();
+    await two.start();
+    expect((await two.upload(await ticketFrom(one.extension()))).status).toBe(201);
+
+    const dev = await instance(media, { inProduction: false });
+    await dev.start();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(dev.warnings.join('\n')).toMatch(/per-process key/);
+  });
+});

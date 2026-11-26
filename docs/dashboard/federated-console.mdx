@@ -26,6 +26,7 @@ buttons show disabled, saying why.
 List the other apps in `config/media_dashboard.ts`:
 
 ```ts title="config/media_dashboard.ts"
+import env from '#start/env'
 import { stores, uploadSessions } from '@adonis-agora/media'
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
@@ -37,7 +38,12 @@ export default defineConfig({
       label: 'Entre Textos',
       store: stores.lucid({ connection: 'pg', schema: 'entretextos' }),
       uploadSessions: uploadSessions.lucid({ connection: 'pg', schema: 'entretextos' }),
+      // A connection in THIS app's config/redis.ts and the app's consoleCommands.prefix. With
+      // @adonis-agora/crypto in the Hub, nothing else: see "Authenticating the console".
+      // Without it: secret: env.get('ENTRETEXTOS_MEDIA_CONSOLE_SECRET'),
       controlPlane: { connection: 'main', prefix: 'entretextos' },
+      // That app's name in @adonis-agora/crypto (its crypto partition). Default: the key above.
+      partition: 'entre-textos',
       origin: 'https://entretextos.example.com',
     },
   },
@@ -49,18 +55,21 @@ export default defineConfig({
 | `label` | The name in the selector. Defaults to the key. |
 | `store` | Where that app's `media` table is. Only read: the console never creates or alters a table there. |
 | `uploadSessions` | Where that app's upload sessions are. Omit it and the Uploads page is empty for that app. |
-| `controlPlane` | The `@adonisjs/redis` connection to publish on (`connection`, default connection when omitted) and that app's `prefix`. |
+| `controlPlane` | The `@adonisjs/redis` connection to publish on (`connection`, default connection when omitted), that app's `prefix`, and how this console authenticates to it: nothing with `@adonis-agora/crypto` in this app, else `crypto`, `token` + `publicKey`, or `secret` (see [Authenticating the console](#authenticating-the-console)). |
+| `partition` | That app's name in `@adonis-agora/crypto` (its crypto partition), where the automatic mode keeps the key `console-media`, and the app this console's authkit app-call token is for. Default: the entry's key. |
 | `origin` | That app's public origin. Needed when that app serves its objects through itself (`objectUrls: 'proxy'`); see below. |
 | `proxyObjects` | Serve that app's objects from this console instead of sending the browser to the app. `true`, or `{ headers, timeoutMs }`; see below. |
 | `proxyActions` | Send this console's actions on that app's media to the app's console API over HTTP. `true`, or `{ apiPath, headers, timeoutMs }`; see [Actions over HTTP](#actions-over-http). |
-| `actions` | Whether this console runs actions on that app's media. Default: on with `proxyActions`, otherwise the console's own `actions`. |
+| `actions` | Whether this console runs actions on that app's media. Default `true` (the app still decides with its own `consoleCommands.actions`, off by default). `false`: browse only. |
 | `timeoutMs` | How long a request waits for that app to answer. Default `15000`. |
 | `appLabel` | The name of the console's own app in the selector. Defaults to `This app`. |
 
 Keys are 1–64 characters of `A-Z a-z 0-9 _ . -`. The console needs `@adonisjs/redis`. Each entry is
 checked at boot: an empty `controlPlane.prefix`, a `connection` that is not in `config/redis.ts`, a
-`timeoutMs` that is not a positive number, an `origin` that is not an `http(s)` origin, or
-`proxyActions` without `origin` fails the boot.
+`controlPlane.token` without `crypto`, a valid `publicKey` or authkit's key directory, a `timeoutMs` that is not a positive number, an `origin` that is not an `http(s)` origin, or
+`proxyActions` without `origin` fails the boot. So does an entry this console cannot authenticate
+to (nothing automatic, nothing explicit) while it may run actions there; with `actions: false` it
+only warns, and browsing its disks or opening its objects answers `503` saying why.
 
 The console's own app does not need media storage of its own. An app with no `config/drive.ts`
 and no `disk`/`disks` in `config/media.ts` (one that only hosts the console) shows a notice
@@ -85,12 +94,24 @@ Each app shown in the console answers it from its own `config/media.ts`:
 ```ts title="config/media.ts"
 export default defineConfig({
   // …
-  consoleCommands: { connection: 'main', prefix: 'entretextos' },
+  consoleCommands: {
+    connection: 'main',
+    prefix: 'entretextos',
+    // With @adonis-agora/crypto in this app, nothing else (see below).
+    // Without it: secret: env.get('ENTRETEXTOS_MEDIA_CONSOLE_SECRET'),
+  },
 })
 ```
 
 `prefix` is the same one the console names in `controlPlane`. It is not the Redis connection's
-`keyPrefix`. Every web process of the app listens; one of them runs each request.
+`keyPrefix`. Every web process of the app listens; one of them runs each request. When no way to
+authenticate the console resolves (nothing automatic, no `crypto`, `verifyTenant` or `secret`), the
+app **fails to boot** (web processes only; `ace` commands are not affected) with a message naming
+the options. At boot it logs how it answers:
+
+```
+[@adonis-agora/media] console commands: crypto (auto, key console-media); actions off (set consoleCommands.actions to let the console act)
+```
 
 By default the other console may browse this app's media but not change it. To let it delete,
 copy, move or abort uploads, turn actions on here too:
@@ -104,8 +125,237 @@ and `actions: true` in this app's `consoleCommands`. This app's log names each a
 it:
 
 ```
-[media] federated console: deleteMediaRecord 01J… by ana@example.com
+[@adonis-agora/media] federated console: deleteMediaRecord 01J… by ana@example.com (console token hub-media)
 ```
+
+The viewer (`by …`) is what the console says; in token mode the part in parentheses is the
+console's authkit client, which the app verified.
+
+## Authenticating the console
+
+Requests to the other app travel over Redis, and Redis is not a trust boundary: whoever can publish
+on it (another app on a shared instance, a leaked password, an SSRF) must not be able to list the
+app's disks, get signed URLs for any of its keys, run an action, claim to be any viewer, or forge an
+answer (and send the console's viewers to URLs of their choosing). So every request is
+authenticated, reads included, and so is every answer. None of authkit, authz or crypto is
+required: the shared secret below needs nothing but this package.
+
+In every mode a request over a minute old is refused, a replay inside that minute runs once (the
+request's id is claimed for two minutes), and the answer is authenticated, so a forged answer is
+ignored. Every request carries the viewer's capabilities (from the console's `authorize`, or all of
+them when it does not say); the app refuses a request without them. The app's `actions` switch
+still applies on top: without `actions: true`, no mode runs an action.
+
+### Together with `@adonis-agora/crypto`: nothing to configure
+
+When `@adonis-agora/crypto` runs in both apps, there is no auth line in either media config. Each
+request is encrypted with the crypto key **`console-media`** (`aes256-gcm`) in the **owning app's
+crypto partition**; nothing in it (verb, disk, key, viewer) is readable on Redis, and the answer
+carries a MAC under a one-off secret that travelled inside the encrypted request.
+
+| Setup | Lines in the media configs | Grants |
+| --- | --- | --- |
+| Together: the Agora Hub runs crypto embedded, the apps are its crypto tenants | none | none |
+| Crypto in a separate app (the console is a crypto tenant too) | none | the console's crypto client: `crypto:seal:console-*` |
+| authkit (calls between apps) without crypto | none (app-call token + key directory) | console app: `media:console:*` on the owning app, in authkit (or narrower; the token is mandatory and caps every command) |
+| Neither | the same `secret` on both sides | — |
+
+- **Together:** the Hub creates the key in the app's partition at boot and encrypts with nothing
+  but `crypto:encrypt:console-media` there. The app decrypts with its own crypto client: an app
+  always opens its own `console-*` keys, no grant needed (a `crypto:decrypt:console-*` grant is
+  harmless if present).
+- **Crypto in a separate app:** the console asks the crypto server, over its own configured crypto
+  channel, to seal for the app's partition (`crypto:seal:console-*`, the one grant: it is what stops
+  one app forging commands to another). The crypto server creates the key on the console's first
+  seal; until then the app logs one info line saying so.
+- **Crypto embedded in the owning app:** the app creates the key in its own partition at boot.
+
+**The partition rule:** the console uses the entry's `partition` (default: its key in `apps`) as the
+app's crypto partition. It must equal the app's name in crypto (its `config/crypto.ts` name, or its
+tenant partition on the Hub); set `partition` on the entry when the key in `apps` differs.
+
+Each side logs at boot what it resolved (`[@adonis-agora/media] console commands to "entre-textos":
+crypto (auto, key console-media, partition entre-textos)`). `crypto: false` (in `consoleCommands` or
+in `controlPlane`) turns the automatic mode off.
+
+### Together with authkit (calls between apps): nothing to configure either
+
+When `@adonis-agora/authkit-client` has calls between apps (`service` in
+`config/authkit_client.ts`) on both apps, the console sends its **app-call token** for the app with
+each request, and the app verifies it (its audience binds it to this app). The capabilities authkit
+granted the console app on this app cap what the request may do, narrowed by the viewer's. Grant
+them once in authkit: the console app gets `media:console:*` (or `media:console:read` to browse
+only) on each app it manages.
+
+With crypto too, the request is encrypted **and** carries the token: the strongest setup, still with
+no media config. Without crypto the token must still travel sealed, to a key derived from the app's
+`APP_KEY`: the app publishes its public half in **authkit's key directory** at boot (purpose
+`console:media`), and the console fetches it from there (over authkit's authenticated API, never
+Redis). Nothing to copy. An explicit `controlPlane.publicKey` still wins (`node ace
+media:console-key` on the app prints it; the boot log shows only its short id).
+
+`token: false` (console) and `verifyTenant: false` (app) turn this detection off.
+
+### A Hub with both: some apps with crypto, some without
+
+A Hub that has crypto and authkit picks the way to each app by itself, on the first command, and
+remembers it (decided again after 5 minutes, or when the app did not take a command):
+
+- the app published its key in authkit's key directory: it runs token mode (an app publishes only
+  then, when crypto is not its way in), so the console sends the app-call token sealed to that key;
+- otherwise, crypto.
+
+The boot log says so: `console commands to "<app>": auto (authkit key directory if the app publishes
+one, else crypto (auto, key console-media, partition <P>))`. In crypto mode the app-call token is
+optional: when it cannot be minted (no grant yet, authkit unreachable) the command goes crypto-only,
+one warning says what to grant, and minting is tried again in 5 minutes. In token mode it is
+required, and the error carries the same grant hint.
+
+An app reads its `APP_KEY` from `config/app.ts` (`appKey`), else from the default entry of
+`config/encryption.ts`, else from the `APP_KEY` environment variable.
+
+### Explicit `@adonis-agora/crypto`
+
+On a console whose crypto is a tenant of a server too old to seal for another partition, or with a
+key of your own, pass the cipher yourself (explicit options always win, and nothing automatic is
+added to them):
+
+```ts title="config/media_dashboard.ts (the console)"
+import { createCryptoClient } from '@adonis-agora/crypto-core'
+
+const entreTextosCrypto = createCryptoClient({
+  url: env.get('CRYPTO_URL'),
+  partition: 'entre-textos',
+  // A client whose token holds crypto:encrypt:console-media for entre-textos (and nothing else).
+  token: env.get('CONSOLE_CRYPTO_TOKEN'),
+})
+
+// apps['entre-textos'].controlPlane
+crypto: { cipher: entreTextosCrypto },
+```
+
+```ts title="config/media.ts (the owning app)"
+import crypto from '@adonis-agora/crypto/services/main'
+
+consoleCommands: { prefix: 'entretextos', crypto: { cipher: () => crypto.client! } },
+```
+
+`crypto.cipher` is anything with crypto's `encrypt` / `decrypt`; pass a function when the config is
+read before crypto is ready. `crypto.key` names another key. With an explicit `verifyTenant` too,
+each crypto request must also carry a valid token.
+
+### With authkit service-tenant tokens (token mode)
+
+1. In authkit, create a **service-tenant client** for the console, for the resource
+   `urn:agora:media`, with `partition` set to the owning app (`entre-textos`) and the capabilities
+   the console may use there: `media:objects:read` (or `media:console:read`) to browse disks, open
+   objects and get the URLs of conversions, and `media:objects:write` (or `media:console:write`)
+   for actions.
+2. On the app, set `consoleCommands.verifyTenant` to `authkitTenantVerifier({ issuer,
+   resource: 'urn:agora:media' })`, and `consoleCommands.partition` to that partition when it
+   differs from the app's crypto partition (or, without crypto, its `prefix`). A media control
+   plane with its own `verifyTenant` uses it when `consoleCommands.verifyTenant` is not set. The app
+   needs its `APP_KEY`.
+3. On the app, run `node ace media:console-key` and copy the
+   key it prints.
+4. On the console, set `controlPlane.token` to `authkitTenantToken({ issuer, clientId,
+   clientSecret, resource: 'urn:agora:media' })` with that client, and `controlPlane.publicKey` to
+   that key.
+
+The console seals the whole request, its token included, to that key: a Redis reader sees an id and
+ciphertext. The app opens it, refuses it if it is over a minute old, and verifies the token: its
+`partition` must be this app's, its capabilities cap the request. A refused token answers `401`
+(the console drops its cached token); another partition or a missing capability is a `403`.
+
+### Without authkit or crypto (shared secret)
+
+Generate one random secret per pair of apps (16 characters at least; `openssl rand -base64 32`
+prints a good one) and set the same value on both sides:
+
+```ts title="config/media_dashboard.ts (the console app)"
+// apps['entre-textos']
+controlPlane: {
+  connection: 'main',
+  prefix: 'entretextos',
+  secret: env.get('ENTRETEXTOS_MEDIA_CONSOLE_SECRET'),
+},
+```
+
+```ts title="config/media.ts (the owning app)"
+consoleCommands: {
+  connection: 'main',
+  prefix: 'entretextos',
+  secret: env.get('ENTRETEXTOS_MEDIA_CONSOLE_SECRET'),
+  actions: true,
+},
+```
+
+Every request and every answer carries an HMAC under that secret, bound to the app's `prefix`.
+Requests are readable on Redis (disk and key names, the viewer), and the console is trusted to say
+who the viewer is: treat the secret like an admin credential, and rotate it on both sides when
+someone who had it leaves.
+
+### Bring your own
+
+Every automatic piece can be replaced with plain functions:
+
+```ts title="Your own token and verifier (any IdP, a JWT library, API keys)"
+// console: controlPlane
+token: async () => myIdp.tokenFor('entre-textos'),
+publicKey: env.get('ENTRETEXTOS_MEDIA_CONSOLE_KEY'),
+
+// app: consoleCommands
+verifyTenant: async ({ token }) => {
+  const claims = await myJwt.verify(token)
+  return claims ? { partition: claims.app, capabilities: claims.scopes, clientId: claims.sub } : null
+},
+```
+
+```ts title="Your own KMS / HSM / Vault transit"
+const kms = {
+  encrypt: ({ key, plaintext, aad }) => vault.encrypt(key, plaintext, aad), // → { ciphertext }
+  decrypt: ({ key, ciphertext, aad }) => vault.decrypt(key, ciphertext, aad), // → { plaintext }
+}
+// both sides: `owns` tells its ciphertext apart (default: crypto's `agora:ct1:<key>:`)
+crypto: { cipher: kms, key: 'transit-media', owns: (c) => c.startsWith('vault:v1:') },
+```
+
+```ts title="Your own authorization: map your roles to the console capabilities"
+authorize: (ctx) => {
+  const user = ctx.auth.user
+  if (!user?.isStaff) return false
+  return {
+    allowed: true,
+    capabilities: user.isAdmin ? ['media:console:*'] : ['media:console:read'],
+  }
+},
+```
+
+The viewer's capabilities (or `access: 'read'`) restrict this console's own app the same way: see
+[What a viewer may do](/docs/media/dashboard/authentication#what-a-viewer-may-do).
+
+### Boot errors and the doctor
+
+A misconfiguration fails at boot, in web processes, with the line to add: an app with
+`consoleCommands` and no way to authenticate, and a console entry that may run actions (the
+default) with none (`actions: false` makes it browse-only, with a warning). `node ace agora:doctor`
+reports exactly that in **Console commands authenticated** (`media.console-commands`): the mode
+each side resolved, an error where boot fails, a warning for a browse-only entry. The deep check
+`media.console-commands-key` verifies, in crypto mode, that the key exists and can be used: on the
+app, a probe (or, on a crypto tenant, the decrypt-only check); on the console, for each app, that
+the key in its partition exists (the Hub creates it at boot) and the console can encrypt with it.
+A message on the channel that is garbage or refused is logged once per reason and dropped.
+
+### Moving from one to the other
+
+An app accepts every mode it resolves at once (crypto, tokens, `secret`), so it can take both the
+old and the new while its consoles move over; remove the old one once every console has switched.
+
+<Callout type="warn">
+  Upgrading from an earlier version: an app with `consoleCommands` and no way to authenticate fails
+  to boot, the crypto key is now `console-media` (was `media-console`), and an app refuses a request
+  without the viewer's capabilities, so upgrade the console and the apps together.
+</Callout>
 
 ## Opening objects
 
@@ -385,7 +635,7 @@ No `INSERT`, `UPDATE` or `DELETE`: every change goes through the other app.
 | Answer | When |
 | --- | --- |
 | `404` | `?app=` names an app that is not configured, or that `authorize` does not grant. |
-| `503` | The app does not answer: it is down, `consoleCommands` is off, or (with `proxyActions`) the request failed or timed out. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
+| `503` | The app does not answer: it is down, `consoleCommands` is off or has no authentication, the console's `controlPlane` has none, or (with `proxyActions`) the request failed or timed out. The message names the app. Records and collections still load, from its tables. Also when the console cannot set up that app (its store or Redis connection fails); the cause is in the console app's log, and the next request tries again. |
 | `502` | The app answered with an error of its own, or (with `proxyObjects` / `proxyActions`) refused to hand over an object or run an action, e.g. a `401`/`403` from its `authorize`, or answered with a redirect. The detail is in the console app's log. |
 | `501` | The app does not run that request (an older version), or the console cannot do it for another app (uploading). |
 

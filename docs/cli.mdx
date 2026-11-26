@@ -92,6 +92,17 @@ node ace media:uploads:show <id>                         # with its recorded par
 node ace media:uploads:abort <id> --force
 ```
 
+## Federated console key
+
+```sh
+node ace media:console-key                 # this app's console-command public key
+node ace media:console-key --prefix=other  # for another consoleCommands.prefix
+```
+
+Prints the key another app's [federated console](/docs/media/dashboard/federated-console#with-authkit-token-mode)
+sets as `controlPlane.publicKey` to send this app requests in token mode. It is derived from
+`APP_KEY` and `consoleCommands.prefix`, and is not secret.
+
 ## In scripts
 
 ```sh

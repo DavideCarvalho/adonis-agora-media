@@ -70,7 +70,7 @@ function Uploader() {
 - `mode`: `'tus'` (resumable, default) · `'direct'` (presigned S3 multipart) · `'proxy'`.
 - State: `status` (`'idle' | 'uploading' | 'paused' | 'success' | 'error'`), `progress` (`0..1`), `result`, `location` (TUS session), `error`, `resumable` (see [below](#resuming-a-direct-upload-across-a-reload)).
 - Actions: `upload(file, meta)`, `pause()`, `resume()`, `abort()` (terminates the session server-side), `reset()`.
-- Only **`proxy`** takes a `key` in the upload `meta`. TUS and direct both derive the key server-side, and `meta.key` is ignored on those paths — a client-chosen key would be a hole you'd have to close anyway.
+- No strategy takes a key from the client: TUS, direct and proxy all derive it server-side (proxy from `meta.filename`, answering the key it chose). `meta.key` is ignored — a client-chosen key would be a hole you'd have to close anyway.
 
 The hook accepts every `MediaUploadClientOptions` field (below) plus an optional pre-built `client` for tests or a shared instance, and a `storageKey` for cross-reload resume.
 
@@ -159,7 +159,7 @@ import { MediaUploader } from '@adonis-agora/media-react'
 |------|------|------|
 | `mode` | `'tus' \| 'direct' \| 'proxy'` | Strategy (default `tus`). |
 | `accept` | `string` | `accept` attribute for the file input. |
-| `meta` | `Partial<UploadMeta>` | Extra metadata merged into every upload (`key` / `disk` for proxy, `metadata` / `tusPath` for TUS). |
+| `meta` | `Partial<UploadMeta>` | Extra metadata merged into every upload (`disk` for proxy, `metadata` / `tusPath` for TUS). |
 | `unstyled` | `boolean` | Skip the default stylesheet. |
 | `className` | `string` | Class on the wrapper element. |
 | `onUploaded` / `onError` | callbacks | Fire on success / failure. |
@@ -184,7 +184,7 @@ const client = createMediaUploadClient({
 
 await client.uploadTus(file, { filename: 'a.png', contentType: 'image/png' })
 await client.uploadDirect(file, { filename: 'a.png', contentType: 'image/png' }) // key: server-side
-await client.uploadProxy(file, { filename: 'a.png', key: 'u/1/a.png' })          // key: required
+await client.uploadProxy(file, { filename: 'a.png' })                             // key: server-side
 ```
 
 Those are the three upload entry points; the client also exposes the session primitives underneath them (`createTusSession`, `tusOffset`, `abortTus`, `directSessionStatus`, `abortDirectSession`) and an injectable part transport. See [Upload client](/docs/media/react/client) for the full surface.
@@ -207,11 +207,11 @@ Those are the three upload entry points; the client also exposes the session pri
 
 | Field | Applies to | What |
 |---|---|---|
-| `filename` | all | Required. Sent as the TUS `filename` metadata / the direct `fileName`. |
+| `filename` | all | Required. Sent as the TUS `filename` metadata / the direct and proxy `fileName`. |
 | `contentType` | all | MIME type. TUS sends it as `filetype`; direct declares it at initiate, where a collection gate may reject it. |
 | `size` | all | Total byte length. Defaults to the blob's `.size`. |
-| `key` | **proxy only** | The object key. **Ignored by TUS and direct**, which derive the key server-side. |
-| `disk` | **proxy only** | Disk override. A direct upload's disk is assigned by the server at initiate. |
+| `key` | — | Deprecated and ignored: every strategy's key is derived server-side. |
+| `disk` | **proxy only** | A disk the server allows in `uploads.routes.disks`. A direct upload's disk is assigned by the server at initiate. |
 | `metadata` | **TUS only** | Extra `Upload-Metadata` pairs carried through to your server. See [Upload client](/docs/media/react/client#custom-tus-metadata). |
 | `tusPath` | **TUS only** | Per-upload override of the create path, for a TUS route that embeds a resource id. |
 

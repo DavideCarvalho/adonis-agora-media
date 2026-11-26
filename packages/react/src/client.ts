@@ -175,16 +175,16 @@ export interface UploadMeta {
   filename: string;
   contentType?: string;
   /**
-   * Object key for the **proxy** strategy. The server route reads this key from the request, so in
-   * a real app resolve it server-side (per user/tenant) rather than trusting a client value. Ignored
-   * by the TUS and direct strategies (both derive their own key server-side).
+   * @deprecated Ignored: every strategy's key is derived server-side (the proxy route takes the
+   * `filename` and answers the key it chose).
    */
   key?: string;
   /** Total byte length (defaults to the blob's `.size`). */
   size?: number;
   /**
-   * Disk override forwarded to the **proxy** route. For direct uploads the disk is assigned by the
-   * server at initiate time, so this value is not sent on the direct path.
+   * Disk for the **proxy** route: one the server lists in `uploads.routes.disks` (any other is
+   * refused). For direct uploads the disk is assigned by the server at initiate time, so this value
+   * is not sent on the direct path.
    */
   disk?: string;
   /**
@@ -390,7 +390,7 @@ export interface MediaUploadClient {
     meta: UploadMeta,
     options?: DirectUploadOptions,
   ): Promise<MediaUploadResult>;
-  /** Single-shot proxy upload (streams through the app). Requires `meta.key`. */
+  /** Single-shot proxy upload (streams through the app). The server picks the key from `meta.filename`. */
   uploadProxy(data: Blob, meta: UploadMeta, options?: PerUploadOptions): Promise<MediaUploadResult>;
   /** Open a TUS session and return its `Location` (for manual resume flows). */
   createTusSession(meta: UploadMeta): Promise<{ location: string }>;
@@ -625,10 +625,9 @@ export function createMediaUploadClient(
     meta: UploadMeta,
     options: PerUploadOptions = {},
   ): Promise<MediaUploadResult> {
-    const key = meta.key;
-    if (!key) throw new Error('media upload: proxy mode requires meta.key');
     const total = meta.size ?? data.size;
-    const query = new URLSearchParams({ key });
+    // The server derives the key from the file name (a client never picks where bytes land).
+    const query = new URLSearchParams({ fileName: meta.filename });
     if (meta.disk) query.set('disk', meta.disk);
 
     options.onProgress?.(0, total);
@@ -644,7 +643,8 @@ export function createMediaUploadClient(
     assertOk(res, 'media upload: proxy PUT failed');
     options.onProgress?.(total, total);
     const body = (await safeJson(res)) as { key?: string; disk?: string } | undefined;
-    return { mode: 'proxy', key: body?.key ?? key, disk: body?.disk ?? meta.disk ?? 'default' };
+    if (!body?.key) throw new Error('media upload: the proxy route did not answer the key');
+    return { mode: 'proxy', key: body.key, disk: body.disk ?? meta.disk ?? 'default' };
   }
 
   async function directSessionStatus(uploadId: string): Promise<DirectUploadSessionStatus> {

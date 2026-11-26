@@ -278,6 +278,42 @@ describe('MediaDashboardProvider registers its dev tools', () => {
 describe('anyAuthorize', () => {
   const ctx = (header?: string) => ({ request: { header: () => header } }) as never;
 
+  it("keeps the deciding authorizer's capabilities, apps and tenants (a narrowed viewer stays narrowed)", async () => {
+    const authorize = anyAuthorize(
+      () => false,
+      () => ({ allowed: true, capabilities: ['media:objects:read'], apps: ['et'], tenants: '*' }),
+    );
+    expect(await authorize(ctx())).toEqual({
+      allowed: true,
+      capabilities: ['media:objects:read'],
+      apps: ['et'],
+      tenants: '*',
+    });
+  });
+
+  it("access: 'read' drops the write capability; malformed capabilities allow nothing", async () => {
+    const { normalizeConsoleAuthorizeResult } = await import(
+      '../../src/dashboard/console_authorize.js'
+    );
+    const { viewerConsoleCapabilities } = await import('../../src/dashboard/console_apps.js');
+    const caps = (result: unknown) => {
+      const decision = normalizeConsoleAuthorizeResult(result);
+      return viewerConsoleCapabilities(decision.allowed ? decision : undefined);
+    };
+    expect(caps(true)).toEqual(['media:objects:read', 'media:objects:write']);
+    expect(caps({ allowed: true, access: 'read' })).toEqual(['media:objects:read']);
+    expect(caps({ allowed: true, access: 'read', capabilities: ['flags:*'] })).toEqual([]);
+    expect(caps({ allowed: true, capabilities: ['media:console:*'] })).toEqual([
+      'media:objects:read',
+      'media:objects:write',
+    ]);
+    expect(normalizeConsoleAuthorizeResult({ allowed: true, capabilities: 'media:*' })).toEqual({
+      allowed: true,
+      capabilities: [],
+    });
+    expect(() => anyAuthorize()).toThrow(/^\[@adonis-agora\/media\] anyAuthorize/);
+  });
+
   it('allows when any authorizer allows, tried in order', async () => {
     const authorize = anyAuthorize(authorizeByToken({ token: 't' }), () => false);
     expect(await authorize(ctx('Bearer t'))).toEqual({ allowed: true });
@@ -299,10 +335,8 @@ describe('anyAuthorize', () => {
     const throwing = () => {
       throw new Error('boom');
     };
-    expect(await anyAuthorize(throwing, () => false)(ctx())).toEqual({
-      allowed: false,
-      reason: 'forbidden',
-    });
+    // Refused by all after one threw: the error is rethrown, so the console logs it (a 403).
+    await expect(anyAuthorize(throwing, () => false)(ctx())).rejects.toThrow('boom');
   });
 
   it('needs at least one authorizer', () => {

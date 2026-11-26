@@ -58,6 +58,7 @@ export type {
   MediaDirectUploadConfig,
   MediaResumableConfig,
   MediaTenantConfig,
+  MediaUploadRoutesGuard,
   MediaUploadsConfig,
   S3Credentials,
   S3DiskConfig,

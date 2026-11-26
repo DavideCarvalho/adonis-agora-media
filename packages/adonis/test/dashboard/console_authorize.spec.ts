@@ -38,7 +38,11 @@ describe('normalizeConsoleAuthorizeResult', () => {
       { allowed: false, reason: 'unauthenticated' },
       UNAUTHENTICATED,
     ],
-    ['{ redirectTo }', { redirectTo: '/login' }, { ...UNAUTHENTICATED, redirectTo: '/login' }],
+    [
+      '{ redirectTo }',
+      { redirectTo: '/login' },
+      { allowed: false, status: 302, redirectTo: '/login' },
+    ],
     ['{ redirectTo: "" }', { redirectTo: '' }, FORBIDDEN],
     ['undefined', undefined, FORBIDDEN],
     ['null', null, FORBIDDEN],
@@ -90,7 +94,11 @@ describe('resolveConsoleAuthorize', () => {
       }
     }
     const decide = resolveConsoleAuthorize(Access as never);
-    expect(await decide({} as never)).toEqual({ ...UNAUTHENTICATED, redirectTo: '/login' });
+    expect(await decide({} as never)).toEqual({
+      allowed: false,
+      status: 302,
+      redirectTo: '/login',
+    });
   });
 
   it('loads a lazy import once, then builds the class through the container per request', async () => {
@@ -165,7 +173,8 @@ describe('resolveConsoleAuthorize', () => {
       label === 'a container that cannot build the class'
         ? { containerResolver: { make: async () => Promise.reject(new Error('unresolvable')) } }
         : {};
-    expect(await decide(ctx as never)).toEqual(FORBIDDEN);
+    // The error rides along, so the console can log it.
+    expect(await decide(ctx as never)).toEqual({ ...FORBIDDEN, error: expect.any(Error) });
   });
 
   it('retries a lazy import that failed instead of caching the failure', async () => {
@@ -179,7 +188,7 @@ describe('resolveConsoleAuthorize', () => {
       .mockRejectedValueOnce(new Error('transient'))
       .mockResolvedValue({ default: Access });
     const decide = resolveConsoleAuthorize(load);
-    expect(await decide(ctxWith().ctx)).toEqual(FORBIDDEN);
+    expect(await decide(ctxWith().ctx)).toEqual({ ...FORBIDDEN, error: expect.any(Error) });
     expect(await decide(ctxWith().ctx)).toEqual({ allowed: true });
   });
 });

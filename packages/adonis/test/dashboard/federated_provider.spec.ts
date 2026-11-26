@@ -5,7 +5,7 @@ import type { MediaRecord } from '../../src/media_record.js';
 import { FakeImageProcessor } from '../../src/testing/fake_image_processor.js';
 import { InMemoryDisk } from '../../src/testing/in_memory_disk.js';
 import { InMemoryMediaStore } from '../../src/testing/in_memory_media_store.js';
-import { RedisBus } from '../support/redis_bus.js';
+import { RedisBus, TEST_CONSOLE_SECRET } from '../support/redis_bus.js';
 
 /** The provider's routes as registered, called with a plain `ctx` double. */
 function makeFakeRouter() {
@@ -176,18 +176,24 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     const bus = new RedisBus();
     const store = new InMemoryMediaStore();
     await store.save(record('et-1'));
-    await new RedisConsoleChannel({ client: bus.connection(), prefix: 'et' }).answer(
-      async (command) => {
-        if (command.verb === 'objectUrls') return ['/media/api/object/raw?disk=fs&key=a.png'];
-        throw Object.assign(new Error('nope'), { status: 404 });
-      },
-    );
+    await new RedisConsoleChannel({
+      client: bus.connection(),
+      prefix: 'et',
+      secret: TEST_CONSOLE_SECRET,
+    }).answer(async (command) => {
+      if (command.verb === 'objectUrls') return ['/media/api/object/raw?disk=fs&key=a.png'];
+      throw Object.assign(new Error('nope'), { status: 404 });
+    });
     return {
       store,
       entry: {
         label: 'Entre Textos',
         store,
-        controlPlane: new RedisConsoleChannel({ client: bus.connection(), prefix: 'et' }),
+        controlPlane: new RedisConsoleChannel({
+          client: bus.connection(),
+          prefix: 'et',
+          secret: TEST_CONSOLE_SECRET,
+        }),
         origin: 'https://et.example',
       },
     };
@@ -199,7 +205,8 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
 
     expect((await call('GET /apps')).body).toEqual({
       local: { label: 'Hub' },
-      apps: [{ id: 'entre-textos', label: 'Entre Textos', mode: 'federated', actions: 'none' }],
+      // Entries run actions by default (the app's own consoleCommands.actions still decides).
+      apps: [{ id: 'entre-textos', label: 'Entre Textos', mode: 'federated', actions: 'app' }],
       selected: null,
     });
     const own = await call('GET /collections', {});
@@ -220,12 +227,17 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
       body: undefined,
       location: 'https://et.example/media/api/object/raw?disk=fs&key=a.png',
     });
-    // Actions stay off until this console turns them on.
-    expect(await call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' })).toEqual({
-      status: 403,
-      body: { error: 'actions are disabled on this console' },
-    });
+    // Entries run actions by default: the action reaches the app, whose own answer stands.
+    expect(
+      (await call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' })).status,
+    ).toBe(404);
     await provider.shutdown();
+    // `actions: false` on the entry: browse only, refused here.
+    const readOnly = await boot({ apps: { 'entre-textos': { ...et.entry, actions: false } } });
+    expect(
+      await readOnly.call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' }),
+    ).toEqual({ status: 403, body: { error: 'actions are disabled on this console' } });
+    await readOnly.provider.shutdown();
   });
 
   it('streams the app bytes itself with `proxyObjects`, downloading active content', async () => {
@@ -261,6 +273,38 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     }
   });
 
+  it("the viewer's capabilities restrict this app's own actions too, and the UI is told", async () => {
+    const et = await owningApp();
+    const reader = await boot({
+      authorize: () => ({ allowed: true, access: 'read' }),
+      actions: true,
+      apps: { 'entre-textos': et.entry },
+    });
+    expect(await reader.call('POST /media-record/delete', { id: 'hub-1' })).toEqual({
+      status: 403,
+      body: { error: 'the viewer lacks media:objects:write' },
+    });
+    expect((await reader.call('POST /delete', { disk: 'fs', keys: ['a.png'] })).status).toBe(403);
+    expect((await reader.call('GET /topology')).body).toMatchObject({ actions: false });
+    expect((await reader.call('GET /apps')).body).toMatchObject({
+      apps: [{ id: 'entre-textos', actions: 'none' }],
+    });
+    // The other apps' actions are refused the same way (here before any request leaves).
+    expect(
+      (await reader.call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' })).body,
+    ).toEqual({ error: 'the viewer lacks media:objects:write' });
+    await reader.provider.shutdown();
+
+    // An authorize that says nothing: full access, as before.
+    const admin = await boot({
+      authorize: () => true,
+      actions: true,
+      apps: { 'entre-textos': et.entry },
+    });
+    expect((await admin.call('GET /topology')).body).toMatchObject({ actions: true });
+    await admin.provider.shutdown();
+  });
+
   it('says who runs actions per app, and forwards them with `proxyActions`', async () => {
     const et = await owningApp();
     const seen: Array<{ url: string; method: string | undefined; body: unknown }> = [];
@@ -280,7 +324,7 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
         apps: [
           { id: 'entre-textos', mode: 'federated', actions: 'app' },
           { id: 'muted', mode: 'federated', actions: 'none' },
-          { id: 'redis', mode: 'federated', actions: 'none' },
+          { id: 'redis', mode: 'federated', actions: 'app' },
         ],
       });
       expect(await call('POST /media-record/delete', { app: 'entre-textos', id: 'et-1' })).toEqual({
@@ -317,9 +361,7 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
   });
 
   it('runs an action an app caller sends, and logs the app and the viewer it names', async () => {
-    const { authorizeAppCaller, permitAll } = await import(
-      '../../src/dashboard/console_authorize.js'
-    );
+    const { authorizeAppCaller, permitAll } = await import('../../src/dashboard/console_apps.js');
     const infos: string[] = [];
     const { call } = await boot(
       {
@@ -408,8 +450,12 @@ describe('MediaDashboardProvider — federated console (`apps`, `?app=`)', () =>
     await expect(
       boot({ apps: { et: { ...et.entry, origin: 'https://et.example/media' } } }),
     ).rejects.toThrow(/`origin` must be an http\(s\) origin/);
+    // An entry that may act (the default) and cannot authenticate fails the boot; browse-only warns.
+    await expect(boot(plane({ prefix: 'et' }), redis)).rejects.toThrow(
+      /media_dashboard\.apps\["et"\]: commands to this app need authentication/,
+    );
     // Valid: the default connection, and an origin with a trailing slash.
-    await boot(plane({ prefix: 'et' }), redis);
+    await boot(plane({ prefix: 'et', secret: TEST_CONSOLE_SECRET }), redis);
     await boot({ apps: { et: { ...et.entry, origin: 'https://et.example/' } } });
   });
 

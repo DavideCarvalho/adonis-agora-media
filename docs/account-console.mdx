@@ -74,6 +74,10 @@ page issues for that account and collection. The page loads its picker from
 `/media/account/upload.js` (same origin, with the page's CSP nonce). Without JavaScript the page
 says so and the rest still works.
 
+Tickets are signed with `APP_KEY` (or `uploads.secret` in `config/media.ts` when set), so a ticket
+one instance issued is accepted by every other. Without either, the app fails to boot in
+production, naming both; outside production it uses a per-process key, with a warning.
+
 | Option | Default | |
 | --- | --- | --- |
 | `collections` | — | The collections the page covers. |

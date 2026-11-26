@@ -10,6 +10,10 @@ import {
 } from '../src/dashboard/access_denied_page.js';
 import {
   appCallerOf,
+  MEDIA_OBJECTS_WRITE,
+  viewerConsoleCapabilities,
+} from '../src/dashboard/console_apps.js';
+import {
   type ConsoleAuthorizeDecision,
   resolveConsoleAuthorize,
 } from '../src/dashboard/console_authorize.js';
@@ -53,11 +57,22 @@ import {
   FEDERATED_APP_KEY,
   type FederatedApp,
   FederatedAppError,
+  type FederatedConsoleApp,
   FederatedConsoleService,
   federatedAppActions,
   sanitizeActor,
   validateFederatedConsoleApp,
 } from '../src/federation/console.js';
+import {
+  authkitClientOf,
+  consoleSiblingsOf,
+  consoleSideAuthMessage,
+  ensureConsoleKey,
+  hasKeyDirectory,
+  resolveConsoleSideAuth,
+} from '../src/federation/console_auth.js';
+import { CONSOLE_CRYPTO_KEY } from '../src/federation/redis_channel.js';
+import { safeContentType } from '../src/http_safety.js';
 import { MediaManager } from '../src/media_manager.js';
 import { PARTITION_PATTERN } from '../src/topology/protocol.js';
 
@@ -141,7 +156,9 @@ export default class MediaDashboardProvider {
         }
         continue;
       }
-      validateFederatedConsoleApp(key, entry, redisConnections);
+      validateFederatedConsoleApp(key, entry, redisConnections, {
+        keyDirectory: hasKeyDirectory(await authkitClientOf(this.app.container as never)),
+      });
     }
     const controlPlaneApps = Object.values(config.apps ?? {}).some(isControlPlaneConsoleApp);
     if (
@@ -173,11 +190,59 @@ export default class MediaDashboardProvider {
     await this.#registerConsole(config, gate);
 
     await this.app.booted(async () => {
+      // How this console signs its commands to each other app; a misconfigured one fails the boot.
+      await this.#checkFederatedAuth(config);
       // Said once per process, when the routes mount.
       if (!config.authorize) this.#warn(NO_AUTHORIZE_WARNING);
       const router = await this.app.container.make('router');
       this.#registerRoutes(router, config, decide);
     });
+  }
+
+  /**
+   * Resolve, once at boot, how this console authenticates its commands to each other app, and log
+   * it. An app it cannot authenticate to fails the boot when this console may run actions there;
+   * a browse-only entry (`actions: false`) only warns. Web processes only (ace commands never start
+   * a channel).
+   */
+  async #checkFederatedAuth(config: MediaDashboardConfig): Promise<void> {
+    const entries = Object.entries(config.apps ?? {}).filter(
+      (entry): entry is [string, FederatedConsoleApp] => !isControlPlaneConsoleApp(entry[1]),
+    );
+    if (entries.length === 0) return;
+    const environment = (this.app as { getEnvironment?: () => string }).getEnvironment?.();
+    if (environment !== undefined && environment !== 'web') return;
+    const siblings = await consoleSiblingsOf(this.app.container as never);
+    for (const [key, entry] of entries) {
+      const { mode, autoPartition } = resolveConsoleSideAuth({
+        plane: entry.controlPlane,
+        partition: entry.partition ?? key,
+        siblings,
+      });
+      if (mode) {
+        this.#info(`[@adonis-agora/media] console commands to "${key}": ${mode}`);
+        // Crypto embedded here: the app's key is created now, not on the first command (the app
+        // would warn that it is missing until someone opens this console).
+        const runtime = siblings.crypto;
+        if (autoPartition !== undefined && runtime?.service) {
+          await ensureConsoleKey(runtime, autoPartition).then(
+            (result) => {
+              if (result === 'created') {
+                this.#info(
+                  `[@adonis-agora/media] console commands: created the crypto key "${CONSOLE_CRYPTO_KEY}" in partition ${autoPartition}`,
+                );
+              }
+            },
+            (error: unknown) => this.#warn(error instanceof Error ? error.message : String(error)),
+          );
+        }
+        continue;
+      }
+      const message = consoleSideAuthMessage(key, siblings, entry.controlPlane);
+      // Entries may act by default (`actions: false` = browse only), as the doctor reports.
+      if (federatedAppActions(entry)) throw new Error(message);
+      this.#warn(message);
+    }
   }
 
   /**
@@ -220,9 +285,14 @@ export default class MediaDashboardProvider {
       }
       const app = await this.#federatedApp(config, picked);
       const viewer = await resolveViewer(ctx, config.viewer).catch(() => null);
+      const decision = this.#decisions.get(ctx);
+      // Narrowed to media's console set; `access: 'read'` keeps no write. All of it when unsaid.
+      const capabilities = viewerConsoleCapabilities(decision?.allowed ? decision : undefined);
       return new FederatedConsoleService(app, {
-        actions: spec ? federatedAppActions(spec, config.actions ?? false) : false,
+        actions: spec ? federatedAppActions(spec) : false,
         actor: viewer?.email ?? viewer?.label ?? 'anonymous',
+        // What `authorize` says this viewer may do (every console capability when it does not say).
+        ...(capabilities !== undefined ? { capabilities } : {}),
         rawUrl: (disk, key) =>
           `${apiBase}/object/raw?${new URLSearchParams({ app: picked, disk, key }).toString()}`,
       });
@@ -243,6 +313,24 @@ export default class MediaDashboardProvider {
     return granted === undefined || granted.includes(picked) ? picked : null;
   }
 
+  /**
+   * Whether this request's viewer may change media, on this app as on the others: what its
+   * `authorize` answered (`capabilities`, `access: 'read'`), or yes when it said nothing.
+   */
+  #viewerMayWrite(ctx: HttpContext): boolean {
+    const decision = this.#decisions.get(ctx);
+    return viewerConsoleCapabilities(decision?.allowed ? decision : undefined).includes(
+      MEDIA_OBJECTS_WRITE,
+    );
+  }
+
+  /** Refuse a change this viewer may not make (`403`, the same words as the federated apps). */
+  #assertViewerMayWrite(ctx: HttpContext): void {
+    if (!this.#viewerMayWrite(ctx)) {
+      throw new DashboardError(`the viewer lacks ${MEDIA_OBJECTS_WRITE}`, 403);
+    }
+  }
+
   /** The apps `authorize` granted this request (`undefined`: all of them). */
   #grantedApps(ctx: HttpContext): string[] | undefined {
     const decision = this.#decisions.get(ctx);
@@ -253,6 +341,7 @@ export default class MediaDashboardProvider {
   /** The app selector: this app, then the configured apps this viewer may see. */
   #appPicker(config: MediaDashboardConfig, ctx: HttpContext): AppPickerResponse {
     const granted = this.#grantedApps(ctx);
+    const mayWrite = this.#viewerMayWrite(ctx);
     const apps = Object.entries(config.apps ?? {})
       .filter(([id]) => granted === undefined || granted.includes(id))
       .map(([id, app]) =>
@@ -263,16 +352,16 @@ export default class MediaDashboardProvider {
               // Its data lives here, and this server runs the actions.
               mode: 'control-plane' as const,
               actions:
-                (app.actions ?? config.actions ?? false) ? ('here' as const) : ('none' as const),
+                mayWrite && (app.actions ?? config.actions ?? false)
+                  ? ('here' as const)
+                  : ('none' as const),
             }
           : {
               id,
               label: app.label ?? id,
               mode: 'federated' as const,
               // Who runs actions on that app's media from here: the app itself, or nobody.
-              actions: federatedAppActions(app, config.actions ?? false)
-                ? ('app' as const)
-                : ('none' as const),
+              actions: mayWrite && federatedAppActions(app) ? ('app' as const) : ('none' as const),
             },
       );
     return {
@@ -408,7 +497,15 @@ export default class MediaDashboardProvider {
     // An auxiliary feature: a hub that throws must not take the app's boot down with it.
     try {
       await registerMediaDevTools(this.app.container, {
-        authorize: decide,
+        // The dev tools' decision shape: a redirect is an unauthenticated refusal there.
+        authorize: async (ctx) => {
+          const decision = await decide(ctx);
+          if (decision.allowed) return { allowed: true };
+          if (decision.status === 302) {
+            return { allowed: false, reason: 'unauthenticated', redirectTo: decision.redirectTo };
+          }
+          return { allowed: false, reason: decision.reason };
+        },
         service: (ctx) => service(ctx),
         actions: config.actions ?? false,
       });
@@ -492,15 +589,19 @@ export default class MediaDashboardProvider {
               // An answer the check wrote stands on its own — the handler must NOT run after it
               // (it would queue a JSON body onto a 302).
               if (responseAnswered(ctx)) return;
-              if (mode === 'api') {
-                ctx.response.status(decision.status).send({
-                  error: decision.reason,
-                  ...('redirectTo' in decision ? { redirectTo: decision.redirectTo } : {}),
-                });
+              if (decision.status === 302) {
+                // A sign-in redirect: followed by a page navigation, a `401` naming it for the API.
+                if (mode === 'api') {
+                  ctx.response
+                    .status(401)
+                    .send({ error: 'unauthenticated', redirectTo: decision.redirectTo });
+                } else {
+                  ctx.response.redirect(decision.redirectTo);
+                }
                 return;
               }
-              if ('redirectTo' in decision) {
-                ctx.response.redirect(decision.redirectTo);
+              if (mode === 'api') {
+                ctx.response.status(decision.status).send({ error: decision.reason });
                 return;
               }
               await denyPage(ctx, {
@@ -605,6 +706,8 @@ export default class MediaDashboardProvider {
     // An action: logged when another app's console sent it (an app caller, `proxyActions`).
     const action = (handler: (svc: ConsoleService, ctx: HttpContext) => Promise<void>) =>
       json(async (svc, ctx) => {
+        // The viewer's capabilities apply here too, on this app as on the others.
+        this.#assertViewerMayWrite(ctx);
         this.#logCallerAction(ctx);
         await handler(svc, ctx);
       });
@@ -613,7 +716,11 @@ export default class MediaDashboardProvider {
       router
         .get(
           '/topology',
-          json(async (svc) => svc.topology()),
+          json(async (svc, ctx) => {
+            const topology = await svc.topology();
+            // The UI disables what this viewer may not do.
+            return { ...topology, actions: topology.actions && this.#viewerMayWrite(ctx) };
+          }),
         )
         .as('media.dashboard.topology');
       // Organizations (tenancy): the picker's data, and the audited switch.
@@ -704,6 +811,7 @@ export default class MediaDashboardProvider {
             const type = str(ctx, 'type');
             if (!disk) throw new DashboardError('disk is required', 400);
             if (!key) throw new DashboardError('key is required', 400);
+            this.#assertViewerMayWrite(ctx);
             await (await service(ctx)).putObject(disk, key, ctx.request.request, type);
             return ctx.response.status(204).send('');
           } catch (error) {
@@ -723,7 +831,10 @@ export default class MediaDashboardProvider {
             if (svc instanceof FederatedConsoleService && !svc.servesBytes) {
               return ctx.response.redirect(await svc.objectRedirect(disk, key ?? ''));
             }
-            const { stream, contentType, size } = await svc.objectStream(disk, key ?? '');
+            const streamed = await svc.objectStream(disk, key ?? '');
+            const { stream, size } = streamed;
+            // A disk's or another app's type may be anything: never a header Node refuses.
+            const contentType = safeContentType(streamed.contentType);
             ctx.response.header('content-type', contentType);
             ctx.response.header('x-content-type-options', 'nosniff');
             // Uploaded HTML/SVG/XML/script must never run as a page of this origin: downloaded,

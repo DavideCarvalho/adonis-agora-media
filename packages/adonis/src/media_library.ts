@@ -47,6 +47,7 @@ import {
 } from './errors.js';
 import { isExtendedDisk } from './extended_disk.js';
 import { sanitizeFileName } from './file_name.js';
+import { safeContentType } from './http_safety.js';
 import {
   type ConversionPreset,
   type FocalPoint,
@@ -1863,6 +1864,7 @@ function deliveredMimeType(
   conversion: string | undefined,
 ): string {
   const base = (fromDisk ?? '').split(';')[0]!.trim().toLowerCase();
-  if (!GENERIC_CONTENT_TYPES.has(base)) return fromDisk!;
-  return conversion === undefined ? fromRecord : fromDisk || 'application/octet-stream';
+  // Whatever a disk or a record says, the result is sent as a header: never one Node refuses.
+  if (!GENERIC_CONTENT_TYPES.has(base)) return safeContentType(fromDisk);
+  return safeContentType(conversion === undefined ? fromRecord : fromDisk);
 }

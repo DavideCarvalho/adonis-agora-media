@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import {
+  capabilitiesAllow,
+  MEDIA_OBJECTS_READ,
+  MEDIA_OBJECTS_WRITE,
+} from '../dashboard/console_apps.js';
+import {
   DashboardError,
   DashboardService,
   type MediaManagerLike,
@@ -27,9 +32,17 @@ import type { MediaConversion } from '../media_record.js';
 import type { MediaStore } from '../media_store.js';
 import type { UploadSessionStore } from '../resumable_upload.js';
 import type { StoreFactory } from '../stores/factory.js';
+import type { TenantTokenSource } from '../topology/auth.js';
 import type { UploadSessionStoreFactory } from '../upload_sessions/factory.js';
 import {
+  consoleSiblingsOf,
+  type ExplicitConsoleCrypto,
+  resolveConsoleSideAuth,
+} from './console_auth.js';
+import {
   APP_UNREACHABLE,
+  type ChannelSecret,
+  isConsolePublicKey,
   type MediaConsoleCommand,
   RedisConsoleChannel,
   resolveRedisConnection,
@@ -58,9 +71,10 @@ export interface FederatedConsoleApp {
   uploadSessions?: UploadSessionStoreFactory | UploadSessionStore | undefined;
   /**
    * Where that app answers (its `consoleCommands` in `config/media.ts`): the `@adonisjs/redis`
-   * connection to publish on and the app's `prefix`.
+   * connection to publish on, the app's `prefix`, and how this console proves itself to the app
+   * (one of `crypto`, `token` + `publicKey`, or `secret`; the app answers nothing otherwise).
    */
-  controlPlane: { connection?: string | undefined; prefix: string } | RedisConsoleChannel;
+  controlPlane: FederatedControlPlane | RedisConsoleChannel;
   /**
    * That app's public origin (`https://app.example.com`). An app whose console serves its objects
    * through itself (`objectUrls: 'proxy'`) hands back paths, and they are opened on this origin
@@ -106,12 +120,58 @@ export interface FederatedConsoleApp {
    */
   proxyActions?: boolean | FederatedActionProxy | undefined;
   /**
-   * Whether this console runs actions on that app's media. Default: on with `proxyActions`,
-   * otherwise this console's own `actions`.
+   * Whether this console runs actions on that app's media. Default `true`, like every Agora
+   * console's entries: the app still decides (`consoleCommands.actions`, off by default), and an
+   * entry this console cannot authenticate to fails the boot. `false`: browse only.
    */
   actions?: boolean | undefined;
   /** How long a command waits for the app to answer, in ms. Default 15 000. */
   timeoutMs?: number | undefined;
+  /**
+   * That app's name in `@adonis-agora/crypto` (its crypto partition): where automatic crypto mode
+   * keeps the `console-media` key. Default: the entry's key in `apps`. It must equal the app's crypto
+   * partition (its `config/crypto.ts` name, or its tenant partition on the Hub).
+   */
+  partition?: string | undefined;
+}
+
+/** {@link FederatedConsoleApp.controlPlane}: where the app answers, and how this console signs. */
+export interface FederatedControlPlane {
+  /** The `@adonisjs/redis` connection. Defaults to its default connection. */
+  connection?: string | undefined;
+  /** The app's `consoleCommands.prefix`. */
+  prefix: string;
+  /**
+   * Shared-secret mode: the secret shared with that app (its `consoleCommands.secret`), 16+
+   * characters. Use it when there is neither authkit nor `@adonis-agora/crypto`.
+   */
+  secret?: ChannelSecret | undefined;
+  /**
+   * Token mode: this console's token for that app, e.g. `authkitTenantToken({ issuer, clientId,
+   * clientSecret, resource: 'urn:agora:media' })` of a service-tenant client whose `partition` is
+   * that app and whose capabilities say what this console may do there (`media:objects:read` to
+   * browse, `media:objects:write` for actions). The app checks it with its
+   * `consoleCommands.verifyTenant`. Without `crypto`, set {@link publicKey} too. Or a function of
+   * your own (`() => Promise<string>`, any IdP). Nothing to set with authkit's calls between apps
+   * (`service` in config/authkit_client.ts): this console's app-call token for that app is sent
+   * automatically. `false` turns that off.
+   */
+  token?: TenantTokenSource | false | undefined;
+  /**
+   * Token mode without `crypto`: the app's console-command public key, which `node ace
+   * media:console-key` prints on that app (it also logs it at boot). Commands and the token are
+   * sealed to it. It is not secret, but take it from your own config: never from Redis.
+   */
+  publicKey?: string | (() => string | Promise<string>) | undefined;
+  /**
+   * Sealed with `@adonis-agora/crypto`. Nothing to set where crypto is embedded in this app (the
+   * Hub): commands are then encrypted with the key `console-media` in the app's
+   * {@link FederatedConsoleApp.partition} automatically. Set it explicitly on a console whose crypto
+   * is a tenant: a cipher for a key of that app (`console-media` by default) it may `encrypt` with
+   * and the app may `decrypt`. Combine with `token` when the app also checks one
+   * (`consoleCommands.verifyTenant`). `false` turns automatic mode off.
+   */
+  crypto?: ExplicitConsoleCrypto | false | undefined;
 }
 
 /** {@link FederatedConsoleApp.proxyActions} as an object. */
@@ -127,11 +187,16 @@ export interface FederatedActionProxy {
   timeoutMs?: number | undefined;
 }
 
-/** Whether a console runs actions on the app `entry` (its `actions`, else on with `proxyActions`). */
-export function federatedAppActions(entry: FederatedConsoleApp, consoleActions: boolean): boolean {
-  if (typeof entry.actions === 'boolean') return entry.actions;
-  if (entry.proxyActions) return true;
-  return consoleActions;
+/**
+ * Whether a console runs actions on the app `entry`: its `actions`, default `true` (the app's own
+ * `consoleCommands.actions` still gates them). `_consoleActions` (the console's own switch, for its
+ * own app) no longer applies to entries.
+ */
+export function federatedAppActions(
+  entry: FederatedConsoleApp,
+  _consoleActions?: boolean,
+): boolean {
+  return entry.actions !== false;
 }
 
 /** {@link FederatedConsoleApp.proxyObjects} as an object. */
@@ -154,6 +219,8 @@ export function validateFederatedConsoleApp(
   key: string,
   entry: FederatedConsoleApp,
   redisConnections: { names: string[]; default: string | undefined } | undefined,
+  /** Whether authkit's key directory can hand this console the app's command key. */
+  options: { keyDirectory?: boolean } = {},
 ): void {
   const fail = (message: string): never => {
     throw new Error(`[@adonis-agora/media] media_dashboard.apps["${key}"]: ${message}`);
@@ -173,6 +240,37 @@ export function validateFederatedConsoleApp(
       (typeof plane.connection !== 'string' || plane.connection === '')
     ) {
       fail('`controlPlane.connection` must be a connection name of config/redis.ts');
+    }
+    // Without `crypto`, `token` or `secret` the entry boots, but every command fails with a 503
+    // that says so (the app answers nothing unauthenticated). A half-set mode fails the boot.
+    if (plane.token && !plane.crypto) {
+      if (plane.publicKey === undefined && !options.keyDirectory) {
+        fail(
+          "`controlPlane.token` needs `crypto` or the app's `publicKey` (`node ace media:console-key` on that app prints it; with authkit's `service` configured on both apps it comes from authkit's key directory instead)",
+        );
+      }
+      if (typeof plane.publicKey === 'string' && !isConsolePublicKey(plane.publicKey)) {
+        fail(
+          '`controlPlane.publicKey` is not a console-command key (`node ace media:console-key` on that app prints it)',
+        );
+      }
+    }
+    if (
+      plane.crypto !== undefined &&
+      plane.crypto !== false &&
+      (!plane.crypto || plane.crypto.cipher === undefined)
+    ) {
+      fail(
+        '`controlPlane.crypto` needs a `cipher` (e.g. `() => crypto.client!`), or remove it to use the crypto embedded in this app automatically',
+      );
+    }
+    if (
+      entry.partition !== undefined &&
+      (typeof entry.partition !== 'string' || !FEDERATED_APP_KEY.test(entry.partition))
+    ) {
+      fail(
+        "`partition` must be the app's crypto partition (1–64 characters of A-Z, a-z, 0-9, _ . -)",
+      );
     }
     if (!redisConnections) {
       fail('the federated console needs @adonisjs/redis (no config/redis.ts found)');
@@ -350,13 +448,43 @@ const ACTIONS: ReadonlySet<string> = new Set(ACTION_VERBS);
 export const UNSUPPORTED = 'unsupported-request';
 
 /**
+ * What a console's token must hold, in token mode, to read this app's storage (list disks and
+ * objects, sign URLs) over the console channel. The same capability `authorizeAgoraCaller` asks for
+ * object bytes.
+ */
+export const CONSOLE_READ_CAPABILITY = MEDIA_OBJECTS_READ;
+/** What a console's token must hold, in token mode, to run actions (with `actions: true` here). */
+export const CONSOLE_WRITE_CAPABILITY = MEDIA_OBJECTS_WRITE;
+
+/**
+ * Every console capability: what the console sends for a viewer when its `authorize` does not say
+ * (`capabilities` in its answer narrows it). `media:console:read`/`write`, `media:console:*`,
+ * `media:*` and `*` grant the same.
+ */
+export const CONSOLE_CAPABILITIES: readonly string[] = Object.freeze([
+  CONSOLE_READ_CAPABILITY,
+  CONSOLE_WRITE_CAPABILITY,
+]);
+
+/** A command that came without the viewer's capabilities (an older or a forged console). */
+export const MISSING_CAPABILITIES = 'capabilities-required';
+
+/**
  * Run the commands another app's federated console sends this app, against this app's own console
  * service (`service()` builds it with every tenant in view). Mutating verbs run only with
  * `actions`; mutating commands are logged with who sent them.
+ *
+ * Every command carries the viewer's capabilities (the console always sends them); one without is
+ * refused (`403`), never taken as "everything". Reads need `media:objects:read`, actions
+ * `media:objects:write` (and `actions` here). In token mode (the channel verified the console's
+ * token and set `verified`) the token is the ceiling: its `partition` must be `partition` (this
+ * app), and what it grants is intersected with the viewer's capabilities.
  */
 export function mediaConsoleCommandHandler(options: {
   service: () => Promise<DashboardService>;
   actions: boolean;
+  /** This app's name as a console's token must name it (token mode). Required for token mode. */
+  partition?: string | undefined;
   log?: ((line: string) => void) | undefined;
 }): (command: MediaConsoleCommand) => Promise<unknown> {
   return async (command) => {
@@ -366,6 +494,38 @@ export function mediaConsoleCommandHandler(options: {
         code: UNSUPPORTED,
       });
     }
+    const verified = command.verified;
+    if (!Array.isArray(command.capabilities)) {
+      throw Object.assign(
+        new DashboardError(
+          'this app refuses a media console command without the viewer capabilities (update @adonis-agora/media on the console)',
+          403,
+        ),
+        { code: MISSING_CAPABILITIES },
+      );
+    }
+    const viewer = command.capabilities;
+    // The order every Agora lib checks in (§10.18): verb, capabilities present, then the token,
+    // the viewer, the partition, and last this app's `actions` switch.
+    const needed = ACTIONS.has(verb) ? CONSOLE_WRITE_CAPABILITY : CONSOLE_READ_CAPABILITY;
+    // The console's token is the ceiling...
+    if (verified && !capabilitiesAllow(verified.capabilities, needed)) {
+      throw new DashboardError(`the console's token lacks ${needed}`, 403);
+    }
+    // ...and the viewer's capabilities narrow it.
+    if (!capabilitiesAllow(viewer, needed)) {
+      throw new DashboardError(`the viewer lacks ${needed}`, 403);
+    }
+    // Never "any app": a classic token is for one partition, and it must be this one. An authkit
+    // app-call token is bound to this app by its audience; its partition is the console's app.
+    if (verified && !verified.appCall) {
+      if (options.partition === undefined || verified.partition !== options.partition) {
+        throw new DashboardError(
+          `[@adonis-agora/media] the console's token is for "${verified.partition}", not "${options.partition ?? '(no partition set)'}"`,
+          403,
+        );
+      }
+    }
     if (ACTIONS.has(verb)) {
       if (!options.actions) {
         throw new DashboardError(
@@ -374,8 +534,14 @@ export function mediaConsoleCommandHandler(options: {
         );
       }
       const target = sanitizeActor(args[0]);
+      // The actor is what the console says; the token (when there is one) is who said it.
+      const via = verified
+        ? verified.appCall
+          ? ` via app ${sanitizeActor(verified.partition) ?? 'unknown'}`
+          : ` (console token ${sanitizeActor(verified.clientId ?? verified.partition) ?? 'unknown'})`
+        : '';
       options.log?.(
-        `[media] federated console: ${verb}${target ? ` ${target}` : ''} by ${sanitizeActor(command.actor) ?? 'unknown'}`,
+        `[@adonis-agora/media] federated console: ${verb}${target ? ` ${target}` : ''} by ${sanitizeActor(command.actor) ?? 'unknown'}${via}`,
       );
     }
     const svc = await options.service();
@@ -455,12 +621,24 @@ export class FederatedApp {
   }
 
   /** Send `verb` to the app and return its answer; errors become the console's HTTP answers. */
-  async send(verb: MediaConsoleVerb, args: unknown[], actor?: string): Promise<unknown> {
+  async send(
+    verb: MediaConsoleVerb,
+    args: unknown[],
+    actor?: string,
+    capabilities: readonly string[] = CONSOLE_CAPABILITIES,
+  ): Promise<unknown> {
     while (args.length > 0 && args[args.length - 1] === undefined) args.pop();
     let reply: Awaited<ReturnType<RedisConsoleChannel['send']>>;
     try {
       reply = await this.channel.send(
-        { id: randomUUID(), verb, args, ...(actor !== undefined ? { actor } : {}) },
+        {
+          id: randomUUID(),
+          verb,
+          args,
+          ...(actor !== undefined ? { actor } : {}),
+          // Always sent: the app refuses a command without them.
+          capabilities: [...capabilities],
+        },
         this.timeoutMs !== undefined ? { timeoutMs: this.timeoutMs } : {},
       );
     } catch (error) {
@@ -626,11 +804,15 @@ export class FederatedAppError extends DashboardError {
   }
 }
 
-/** Build one configured app: its stores (read-only) and its command channel. */
+/**
+ * Build one configured app: its stores (read-only) and its command channel. The channel signs the
+ * way the entry says, or, with nothing said and `@adonis-agora/crypto` embedded in this app, with
+ * the key `console-media` in the app's partition (automatic crypto mode).
+ */
 export async function buildFederatedMediaApp(
   id: string,
   config: FederatedConsoleApp,
-  app: { container: { make(binding: string): Promise<unknown> } },
+  app: { container: { make(binding: string): Promise<unknown>; hasBinding?(b: string): boolean } },
 ): Promise<FederatedApp> {
   const ctx = { app: app as never, readOnly: true };
   const store = typeof config.store === 'function' ? await config.store(ctx) : config.store;
@@ -646,6 +828,17 @@ export async function buildFederatedMediaApp(
       : new RedisConsoleChannel({
           client: await resolveRedisConnection(app.container, config.controlPlane.connection),
           prefix: config.controlPlane.prefix,
+          ...resolveConsoleSideAuth({
+            plane: config.controlPlane,
+            partition: config.partition ?? id,
+            app: id,
+            siblings: await consoleSiblingsOf(app.container),
+            log: (level, line) =>
+              void app.container
+                .make('logger')
+                .then((logger) => (logger as Record<string, (l: string) => void>)[level]!(line))
+                .catch(() => console.warn(line)),
+          }).channel,
         });
   return new FederatedApp({
     id,
@@ -677,6 +870,7 @@ export class FederatedConsoleService {
   readonly #app: FederatedApp;
   readonly #actions: boolean;
   readonly #actor: string | undefined;
+  readonly #capabilities: readonly string[];
   readonly #rawUrl: ((disk: string, key: string) => string) | undefined;
   /** Reads that need nothing but the tables, done the way the app's own console does them. */
   readonly #local: DashboardService;
@@ -687,6 +881,11 @@ export class FederatedConsoleService {
       actions: boolean;
       actor?: string | undefined;
       /**
+       * What the viewer may do on that app (its `authorize`'s `capabilities`), sent with every
+       * command. Default: every console capability ({@link CONSOLE_CAPABILITIES}).
+       */
+      capabilities?: readonly string[] | undefined;
+      /**
        * This console's own byte route for the app's object (`<apiBase>/object/raw?app=…`). With it
        * and the app's `proxyObjects`, the URLs handed to the browser point here.
        */
@@ -696,6 +895,11 @@ export class FederatedConsoleService {
     this.#app = app;
     this.#actions = options.actions;
     this.#actor = options.actor;
+    // Narrowed to this lib's console set (`media:console:*` → both, `flags:*` → nothing).
+    const given = options.capabilities;
+    this.#capabilities = given
+      ? CONSOLE_CAPABILITIES.filter((capability) => capabilitiesAllow(given, capability))
+      : CONSOLE_CAPABILITIES;
     this.#rawUrl = app.proxy ? options.rawUrl : undefined;
     const sessions = app.sessions;
     const store = app.store;
@@ -722,7 +926,7 @@ export class FederatedConsoleService {
   }
 
   #send(verb: MediaConsoleVerb, ...args: unknown[]): Promise<unknown> {
-    return this.#app.send(verb, args, this.#actor);
+    return this.#app.send(verb, args, this.#actor, this.#capabilities);
   }
 
   async #act(verb: ActionVerb, ...args: unknown[]): Promise<void> {

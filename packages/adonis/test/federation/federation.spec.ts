@@ -12,7 +12,7 @@ import { RedisConsoleChannel } from '../../src/federation/redis_channel.js';
 import type { MediaRecord } from '../../src/media_record.js';
 import { InMemoryMediaStore } from '../../src/testing/in_memory_media_store.js';
 import { InMemoryUploadSessionStore } from '../../src/testing/in_memory_upload_session_store.js';
-import { RedisBus } from '../support/redis_bus.js';
+import { RedisBus, TEST_CONSOLE_SECRET } from '../support/redis_bus.js';
 
 function record(over: Partial<MediaRecord>): MediaRecord {
   return {
@@ -109,12 +109,14 @@ async function owningApp(
       actions: options.actions,
       log: (line) => log.push(line),
     });
-    await new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }).answer(
-      async (command) => {
-        runs.push(`${i}:${command.verb}`);
-        return handler(command);
-      },
-    );
+    await new RedisConsoleChannel({
+      client: bus.connection(),
+      prefix: 'entretextos',
+      secret: TEST_CONSOLE_SECRET,
+    }).answer(async (command) => {
+      runs.push(`${i}:${command.verb}`);
+      return handler(command);
+    });
   }
   return { store, disk, runs, log };
 }
@@ -137,7 +139,11 @@ function hubConsole(
     label: 'Entre Textos',
     store,
     sessions,
-    channel: new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }),
+    channel: new RedisConsoleChannel({
+      client: bus.connection(),
+      prefix: 'entretextos',
+      secret: TEST_CONSOLE_SECRET,
+    }),
     ...(options.origin !== undefined ? { origin: options.origin } : {}),
     timeoutMs: options.timeoutMs ?? 2_000,
     ...(options.proxyObjects !== undefined ? { proxyObjects: options.proxyObjects } : {}),
@@ -539,7 +545,11 @@ describe('federated media console', () => {
       const app = new FederatedApp({
         id: 'et',
         store: owner.store,
-        channel: new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }),
+        channel: new RedisConsoleChannel({
+          client: bus.connection(),
+          prefix: 'entretextos',
+          secret: TEST_CONSOLE_SECRET,
+        }),
         origin: 'https://et.example',
         proxyActions: true,
         fetch: http.fetch,
@@ -594,7 +604,9 @@ describe('federated media console', () => {
     expect(owner.disk.files.has('x/1.png')).toBe(false);
     expect(owner.runs.filter((r) => r.endsWith(':deleteMediaRecord'))).toHaveLength(1);
     expect(owner.runs.filter((r) => r.endsWith(':remove'))).toHaveLength(1);
-    expect(owner.log).toContain('[media] federated console: deleteMediaRecord gone by ana@hub');
+    expect(owner.log).toContain(
+      '[@adonis-agora/media] federated console: deleteMediaRecord gone by ana@hub',
+    );
   });
 
   it("relays the app's own refusals, and never sends an action this console has off", async () => {
@@ -670,9 +682,11 @@ describe('federated media console', () => {
 
   it('retries the reply subscription on the next send after a first one fails', async () => {
     const bus = new RedisBus();
-    await new RedisConsoleChannel({ client: bus.connection(), prefix: 'entretextos' }).answer(
-      async () => ({ ok: true }),
-    );
+    await new RedisConsoleChannel({
+      client: bus.connection(),
+      prefix: 'entretextos',
+      secret: TEST_CONSOLE_SECRET,
+    }).answer(async () => ({ ok: true }));
     const hub = bus.connection();
     let failures = 1;
     const subscribe = hub.subscribe;
@@ -680,7 +694,11 @@ describe('federated media console', () => {
       if (failures-- > 0) throw new Error('connection reset');
       return subscribe(channel, handler);
     };
-    const channel = new RedisConsoleChannel({ client: hub, prefix: 'entretextos' });
+    const channel = new RedisConsoleChannel({
+      client: hub,
+      prefix: 'entretextos',
+      secret: TEST_CONSOLE_SECRET,
+    });
     await expect(channel.send({ id: 'a', verb: 'disks', args: [] })).rejects.toMatchObject({
       code: 'federated-app-unreachable',
       message: expect.stringContaining('connection reset'),
@@ -693,7 +711,11 @@ describe('federated media console', () => {
   it('refuses to answer commands on a connection that cannot claim them', async () => {
     const bus = new RedisBus();
     const { set: _set, ...noSet } = bus.connection();
-    const channel = new RedisConsoleChannel({ client: noSet, prefix: 'entretextos' });
+    const channel = new RedisConsoleChannel({
+      client: noSet,
+      prefix: 'entretextos',
+      secret: TEST_CONSOLE_SECRET,
+    });
     await expect(channel.answer(async () => null)).rejects.toThrow(/SET key value PX ms NX/);
   });
 });
