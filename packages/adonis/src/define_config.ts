@@ -39,6 +39,25 @@ export type DirectUploadPolicyModule =
  * `routes.enabled`, the HTTP endpoints the provider mounts to drive them (idiomatic AdonisJS routes,
  * NOT controllers).
  */
+/**
+ * How a group of built-in upload routes is guarded. The same two options on every group
+ * (`uploads.routes`, `uploads.direct.routes`, `uploads.resumable.routes`): without `middleware`
+ * the group does not mount in production (the boot says what to add) and warns elsewhere.
+ */
+export interface MediaUploadRoutesGuard {
+  /**
+   * Middleware applied to every route of the group (e.g. `[middleware.auth()]`), passed to the
+   * AdonisJS route group. Typed as `unknown[]` so this config never imports AdonisJS. Required in
+   * production unless {@link allowUnguarded}.
+   */
+  middleware?: readonly unknown[];
+  /**
+   * Mount the routes without `middleware` in production too: only when something else guards them
+   * (a global middleware). Default false.
+   */
+  allowUnguarded?: boolean;
+}
+
 export interface MediaUploadsConfig {
   /**
    * Default upload mode. `direct` presigns multipart parts for the client to upload straight to S3;
@@ -53,13 +72,32 @@ export interface MediaUploadsConfig {
   /**
    * Mount the built-in upload HTTP routes. Opt-in — omit or set `enabled: false` to expose the
    * upload API only through the `MediaManager` methods and wire your own routes.
+   *
+   * The client sends a `fileName`, never a key or a free disk: the key is derived here
+   * ({@link keyFor}) and the disk is {@link disk} (or one of {@link disks}). Guard them with
+   * {@link middleware}; without it they do not mount in production (the boot says so).
    */
-  routes?: {
+  routes?: MediaUploadRoutesGuard & {
     /** Register the routes. Default false. */
     enabled?: boolean;
     /** Path prefix for the routes. Default `/media/uploads`. */
     prefix?: string;
+    /** Disk uploads land on. Default: the media default disk. */
+    disk?: string;
+    /** Other disks a client may name with `disk` (an allow-list). Default: none. */
+    disks?: string[];
+    /**
+     * The object key for an upload, from the client's (sanitized) `fileName`, a fresh random `token`
+     * and the request (`HttpContext`): resolve it per user/tenant here. Default
+     * `uploads/<token>/<fileName>`.
+     */
+    keyFor?: (fileName: string, token: string, ctx: unknown) => string;
   };
+  /**
+   * The secret the multipart `uploadToken`s of `routes` are signed with (16+ characters). Default:
+   * the app's `APP_KEY`. Without either, the routes do not mount in production.
+   */
+  secret?: string | { release(): string };
   /**
    * Resumable (TUS) upload settings. Present ⇒ `media.resumable` is available; when
    * `routes.enabled`, the provider mounts the TUS protocol endpoints. Absent ⇒ resumable uploads are
@@ -104,8 +142,8 @@ export interface MediaDirectUploadConfig {
   presignTtlSeconds?: number;
   /** Session lifetime in seconds. Omit for sessions that never expire. */
   sessionTtlSeconds?: number;
-  /** Mount the built-in direct-session HTTP routes. Opt-in. */
-  routes?: {
+  /** Mount the built-in direct-session HTTP routes. Opt-in. Guarded like every upload route group. */
+  routes?: MediaUploadRoutesGuard & {
     /** Register the routes. Default false. */
     enabled?: boolean;
     /** Path prefix for the routes. Default `/media/uploads/direct/sessions`. */
@@ -121,13 +159,6 @@ export interface MediaDirectUploadConfig {
      * here. Omit to accept any type (size limits still apply).
      */
     collection?: string;
-    /**
-     * Middleware applied to every built-in direct-session route (the provider passes them straight
-     * to the AdonisJS route group). Typed framework-neutrally as `unknown[]` so this config never
-     * imports AdonisJS — guard the routes here (e.g. `middleware.auth()`), since the handler itself
-     * performs NO authorization.
-     */
-    middleware?: readonly unknown[];
     /**
      * Lazily load a {@link DirectUploadPolicy} that owns the app-specific decisions (key resolution,
      * what the upload becomes on completion, error→HTTP mapping). A thunk so the policy module — and
@@ -157,8 +188,8 @@ export interface MediaResumableConfig {
   tmpPrefix?: string;
   /** Session lifetime in seconds (TUS `expiration`). Omit for sessions that never expire. */
   sessionTtlSeconds?: number;
-  /** Mount the built-in TUS HTTP routes. Opt-in. */
-  routes?: {
+  /** Mount the built-in TUS HTTP routes. Opt-in. Guarded like every upload route group. */
+  routes?: MediaUploadRoutesGuard & {
     /** Register the routes. Default false. */
     enabled?: boolean;
     /** Path prefix for the TUS routes. Default `/media/uploads/tus`. */

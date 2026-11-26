@@ -19,6 +19,7 @@ import {
   NotAnImageError,
   TransformNotReadyError,
 } from './errors.js';
+import { isHeaderSafe, safeContentType } from './http_safety.js';
 import { deliverRecord, imageOfRecord, streamOfRecord } from './internal_symbols.js';
 import type { DeliverOptions, MediaLibrary } from './media_library.js';
 import type { MediaRecord } from './media_record.js';
@@ -263,7 +264,7 @@ export class MediaAccess {
         return response.redirect(result.url);
       }
       response.header('cache-control', options.segmentCacheControl ?? 'private, max-age=86400');
-      response.header('content-type', result.mimeType);
+      response.header('content-type', safeContentType(result.mimeType));
       if (result.size !== undefined) response.header('content-length', String(result.size));
       return response.stream(result.stream);
     } catch (error) {
@@ -367,10 +368,10 @@ export class MediaAccess {
           : await this.#library.deliver(id, deliverOptions);
 
       response.header('cache-control', cacheControl);
-      if (result.vary) response.header('vary', result.vary);
+      if (result.vary && isHeaderSafe(result.vary)) response.header('vary', result.vary);
       if (result.kind === 'redirect') return response.redirect(result.url);
 
-      response.header('content-type', result.mimeType);
+      response.header('content-type', safeContentType(result.mimeType));
       if (result.size !== undefined) response.header('content-length', String(result.size));
       if (result.fileName) {
         response.header('content-disposition', inlineDisposition(result.fileName));

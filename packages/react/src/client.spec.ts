@@ -476,7 +476,12 @@ describe('uploadDirect (session-backed)', () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       calls.push(`${init.method} ${url}`);
-      return { ok: true, status: 204, headers: new Headers() } as Response;
+      return {
+        ok: true,
+        status: init.method === 'PUT' ? 201 : 204,
+        headers: new Headers(),
+        json: async () => ({ key: 'uploads/x/a.txt', disk: 'local' }),
+      } as unknown as Response;
     });
     const client = createMediaUploadClient({
       uploadsPath: '/media/uploads',
@@ -485,10 +490,10 @@ describe('uploadDirect (session-backed)', () => {
     });
 
     await client.abortDirectSession('up-1');
-    await client.uploadProxy(new Blob(['x']), { filename: 'a.txt', key: 'k' });
+    await client.uploadProxy(new Blob(['x']), { filename: 'a.txt' });
 
     expect(calls[0]).toBe('DELETE /internal/sessions/up-1');
-    expect(calls[1]).toContain('/media/uploads/proxy?key=k');
+    expect(calls[1]).toContain('/media/uploads/proxy?fileName=a.txt');
   });
 
   it('falls back to an explicit uploadsPath when directPath is not given', async () => {
@@ -742,7 +747,7 @@ describe('uploadDirect — parallel parts', () => {
 });
 
 describe('uploadProxy (target proxy PUT endpoint)', () => {
-  it('PUTs the whole body to /proxy with the key query param and returns key/disk', async () => {
+  it('PUTs the whole body to /proxy with the file name, and returns the key the server chose', async () => {
     let putUrl = '';
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       putUrl = url;
@@ -758,12 +763,13 @@ describe('uploadProxy (target proxy PUT endpoint)', () => {
     const onProgress = vi.fn();
     const result = await client.uploadProxy(
       blobOf(12),
-      { filename: 'a', key: 'k', contentType: 'text/plain' },
+      { filename: 'a', contentType: 'text/plain' },
       { onProgress },
     );
 
     expect(result).toEqual({ mode: 'proxy', key: 'k', disk: 'local' });
-    expect(putUrl).toContain('/media/uploads/proxy?key=k');
+    expect(putUrl).toContain('/media/uploads/proxy?fileName=a');
+    expect(putUrl).not.toContain('key=');
     expect(onProgress).toHaveBeenLastCalledWith(12, 12);
   });
 });

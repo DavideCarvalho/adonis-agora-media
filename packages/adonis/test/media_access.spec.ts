@@ -373,6 +373,32 @@ describe('media.access.deliveryRoute()', () => {
     expect(sent.headers['content-type']).toBe('application/pdf');
   });
 
+  it('never sends a Content-Type a header cannot carry (a stored or disk type falls back)', async () => {
+    const { resolve, disks } = inMemoryDiskResolver(['fs']);
+    const library = new MediaLibrary({
+      storage: new StorageManager({ default: 'fs', resolve }),
+      store: new InMemoryMediaStore(),
+      collections: [{ name: 'exams', access: { read: 'public' } }],
+      idGenerator: () => 'id-1',
+      emitDiagnostics: false,
+      deliveryMode: 'proxy',
+    });
+    const record = await library.attach({
+      ownerType: 'User',
+      ownerId: '7',
+      collection: 'exams',
+      fileName: 'laudo.pdf',
+      mimeType: 'application/pdf',
+      contents: Buffer.from('%PDF-1.7 laudo'),
+    });
+    for (const unsafe of ['text/plain\r\nx-injected: 1', 'image/pngç', 'not a mime type']) {
+      await disks.fs.put(record.path, Buffer.from('%PDF-1.7 laudo'), { contentType: unsafe });
+      const { ctx, sent } = fakeHttp({ params: { id: record.id } });
+      await new MediaAccess({ library, identity }).deliveryRoute()(ctx);
+      expect(sent.headers['content-type']).toBe('application/octet-stream');
+    }
+  });
+
   it('rethrows what it does not know how to answer', async () => {
     const { library, access } = setup();
     const avatar = await attach(library, 'avatar');
