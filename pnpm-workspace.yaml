@@ -16,5 +16,5 @@ allowBuilds:
   node-av: false
   sharp: true
 minimumReleaseAgeExclude:
-  - '@adonis-agora/filter@1.0.0-rc.5'
-  - '@adonis-agora/filter-client@1.0.0-rc.1'
+  - '@adonis-agora/filter@1.0.0-rc.5 || 1.0.0'
+  - '@adonis-agora/filter-client@1.0.0-rc.1 || 1.0.0'

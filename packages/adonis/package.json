@@ -1,6 +1,6 @@
 {
   "name": "@adonis-agora/media",
-  "version": "1.0.0-rc.33",
+  "version": "1.0.0",
   "description": "Media-library for AdonisJS — owner collections (MIME whitelist, single-file replace, ordering), image conversions (eager/lazy), pluggable content transformers (HLS video via mediabunny, metadata probe, image blur-up placeholder), and column attachments, all on top of @adonisjs/drive. Pluggable MediaStore (in-memory + Lucid) and ImageProcessor (sharp). Part of the Agora ecosystem.",
   "license": "MIT",
   "repository": {
@@ -149,10 +149,10 @@
     "check:agora-doctor": "node ../../scripts/check-agora-doctor.mjs ."
   },
   "peerDependencies": {
-    "@adonis-agora/authkit-client": ">=0.18.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0",
-    "@adonis-agora/authkit-server": ">=0.60.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0",
-    "@adonis-agora/authz": ">=0.16.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0",
-    "@adonis-agora/telescope": ">=0.4.0 <2.0.0 || >=1.0.0-rc.0 <2.0.0",
+    "@adonis-agora/authkit-client": ">=0.18.0 <2.0.0",
+    "@adonis-agora/authkit-server": ">=0.60.0 <2.0.0",
+    "@adonis-agora/authz": ">=0.16.0 <2.0.0",
+    "@adonis-agora/telescope": ">=0.4.0 <2.0.0",
     "@adonisjs/core": "^7.3.0",
     "@adonisjs/drive": "^3.0.0 || ^4.0.0",
     "@adonisjs/lucid": "^22.4.0",
@@ -219,6 +219,6 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@adonis-agora/filter": ">=1.0.0-rc.5 <2.0.0"
+    "@adonis-agora/filter": "^1.0.0"
   }
 }
