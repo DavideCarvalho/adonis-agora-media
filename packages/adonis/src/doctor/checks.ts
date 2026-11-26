@@ -2,6 +2,20 @@ import type { ApplicationService } from '@adonisjs/core/types';
 import { accountCollections } from '../account_console/extension.js';
 import { resolveMediaTenancy } from '../agora/tenancy.js';
 import { assertMediaTopology, type MediaConfig } from '../define_config.js';
+import {
+  ConsoleAuthConfigError,
+  type ConsoleSiblings,
+  checkTenantConsoleKey,
+  classifyConsoleKeyError,
+  consoleSiblingsOf,
+  consoleSideAuthMessage,
+  consoleSideCipher,
+  createKeyCommand,
+  ensureConsoleKey,
+  resolveAppConsoleAuth,
+  resolveConsoleSideAuth,
+} from '../federation/console_auth.js';
+import { appKeyOf, CONSOLE_CRYPTO_KEY } from '../federation/redis_channel.js';
 import { DEFAULT_CONTROL_PLANE_PREFIX, MEDIA_SCOPES } from '../topology/protocol.js';
 import { type MediaTenantClient, tenantClientOf } from '../topology/tenant_client.js';
 import type { AgoraDoctorCheck, AgoraDoctorResult } from './agora_doctor.js';
@@ -475,6 +489,282 @@ export async function checkControlPlane(
   };
 }
 
+const CONSOLE_DOCS = `${DOCS}/dashboard/federated-console#authenticating-the-console`;
+
+type DoctorApp = Pick<ApplicationService, 'config'> & { container: unknown };
+
+/** The federated console's config of this app: its `consoleCommands` and its `apps` entries. */
+function federationOf(app: DoctorApp) {
+  const media = app.config.get<MediaConfig | undefined>('media', undefined);
+  const dashboard = app.config.get<AnyConfig | undefined>('media_dashboard', undefined);
+  const apps = Object.entries((dashboard?.apps ?? {}) as Record<string, AnyConfig>).filter(
+    ([, entry]) => entry && typeof entry === 'object' && 'controlPlane' in entry,
+  );
+  return { media, consoleCommands: media?.consoleCommands, apps };
+}
+
+async function siblingsFor(app: DoctorApp, given?: ConsoleSiblings): Promise<ConsoleSiblings> {
+  return (
+    given ?? (await consoleSiblingsOf(app.container as never).catch((): ConsoleSiblings => ({})))
+  );
+}
+
+async function appSideAuth(app: DoctorApp, siblings: ConsoleSiblings) {
+  const { media, consoleCommands } = federationOf(app);
+  return resolveAppConsoleAuth({
+    options: consoleCommands!,
+    controlPlaneVerifyTenant: media?.topology === 'control-plane' ? media.verifyTenant : undefined,
+    appKey: await appKeyOf(app),
+    siblings,
+  });
+}
+
+/**
+ * `media.console-commands`: how each side of the federated console authenticates, exactly as boot
+ * resolves it. The owning app (`consoleCommands`): the modes it accepts, an error when none (it
+ * fails to boot). The console (`media_dashboard.apps`): how it signs to each app; one it cannot
+ * authenticate to is an error when the entry may run actions (the default, a boot error) and a
+ * warning when it is browse-only (`actions: false`).
+ */
+export async function checkConsoleCommands(
+  app: DoctorApp,
+  options: { siblings?: ConsoleSiblings } = {},
+): Promise<AgoraDoctorResult[]> {
+  const { consoleCommands, apps } = federationOf(app);
+  if (!consoleCommands && apps.length === 0) {
+    return [{ status: 'skip', message: 'No federated media console (consoleCommands, apps).' }];
+  }
+  const siblings = await siblingsFor(app, options.siblings);
+  const results: AgoraDoctorResult[] = [];
+  if (consoleCommands) {
+    try {
+      const auth = await appSideAuth(app, siblings);
+      results.push({
+        status: 'ok',
+        // The boot log's sentence.
+        message: `console commands: ${auth.modes.join(' + ')}; ${
+          consoleCommands.actions === true
+            ? 'actions on'
+            : 'actions off (set consoleCommands.actions to let the console act)'
+        }`,
+        docs: CONSOLE_DOCS,
+      });
+      // §13e: with crypto the token key is not published, and that is fine.
+      if (auth.keys && auth.crypto && auth.channel.cryptoRequiresToken !== true) {
+        results.push({
+          status: 'ok',
+          message:
+            "console commands: this app's token key is not published: crypto is enough to reach it.",
+        });
+      }
+    } catch (error) {
+      results.push({
+        status: 'error',
+        message:
+          error instanceof ConsoleAuthConfigError
+            ? 'consoleCommands has no authentication: the app fails to boot.'
+            : `consoleCommands: ${error instanceof Error ? error.message : String(error)}`,
+        fix: 'Install @adonis-agora/crypto (automatic), or set `secret` or `verifyTenant` in consoleCommands.',
+        docs: CONSOLE_DOCS,
+      });
+    }
+  }
+  for (const [key, entry] of apps) {
+    const { mode } = resolveConsoleSideAuth({
+      plane: entry.controlPlane as never,
+      partition: typeof entry.partition === 'string' ? entry.partition : key,
+      siblings,
+    });
+    if (mode) {
+      results.push({
+        status: 'ok',
+        message: `console commands to "${key}": ${mode}`,
+        docs: CONSOLE_DOCS,
+      });
+      continue;
+    }
+    const acts = entry.actions !== false;
+    results.push({
+      status: acts ? 'error' : 'warn',
+      message: acts
+        ? `The console cannot authenticate its commands to "${key}": the app fails to boot.`
+        : `The console cannot authenticate its commands to "${key}" (browse-only: its disks and file URLs answer 503).`,
+      fix: consoleSideAuthMessage(key, siblings, entry.controlPlane as never).replace(
+        /^\[@adonis-agora\/media\] /,
+        '',
+      ),
+      docs: CONSOLE_DOCS,
+    });
+  }
+  return results;
+}
+
+/**
+ * `media.console-commands-key` (deep), each side. The owning app (`consoleCommands`), in crypto
+ * mode: the key exists and this process can use it (a probe; a crypto tenant is checked the way its
+ * decrypt-only grant allows). The console (`media_dashboard.apps`), in automatic crypto mode: for
+ * each app, the key in that app's partition exists (created here when crypto is embedded) and this
+ * console can encrypt with it.
+ */
+export async function checkConsoleCommandsKey(
+  app: DoctorApp,
+  options: { siblings?: ConsoleSiblings } = {},
+): Promise<AgoraDoctorResult[]> {
+  const { consoleCommands, apps } = federationOf(app);
+  if (!consoleCommands && apps.length === 0) {
+    return [{ status: 'skip', message: 'No federated media console (consoleCommands, apps).' }];
+  }
+  const siblings = await siblingsFor(app, options.siblings);
+  const results: AgoraDoctorResult[] = [];
+  if (consoleCommands) results.push(await appSideKeyCheck(app, siblings));
+  for (const [key, entry] of apps) {
+    const partition = typeof entry.partition === 'string' ? entry.partition : key;
+    const side = resolveConsoleSideAuth({
+      plane: entry.controlPlane as never,
+      partition,
+      siblings,
+    });
+    const runtime = siblings.crypto;
+    if (side.autoPartition === undefined || !runtime) {
+      results.push({
+        status: 'skip',
+        message: `Commands to "${key}" are not sealed with the automatic crypto key.`,
+      });
+      continue;
+    }
+    const who = `The console, for "${key}"`;
+    try {
+      if (runtime.service) await ensureConsoleKey(runtime, partition);
+      const cipher = consoleSideCipher(runtime, partition);
+      const aad = 'agora:doctor:console-media';
+      const { ciphertext } = await cipher.encrypt({
+        key: CONSOLE_CRYPTO_KEY,
+        plaintext: 'probe',
+        aad,
+      });
+      let decrypted = false;
+      if (runtime.service) {
+        const { plaintext } = await runtime.service.decrypt(
+          {
+            partition,
+            capabilities: [`crypto:decrypt:${CONSOLE_CRYPTO_KEY}`],
+            actor: 'media:doctor',
+          },
+          { key: CONSOLE_CRYPTO_KEY, ciphertext, aad },
+        );
+        if (plaintext !== 'probe')
+          throw new Error('the probe did not decrypt to what was encrypted');
+        decrypted = true;
+      }
+      results.push({
+        status: 'ok',
+        message: `${who}: "${CONSOLE_CRYPTO_KEY}" ${decrypted ? 'encrypts and decrypts' : 'encrypts'} in partition ${partition}.`,
+        docs: CONSOLE_DOCS,
+      });
+    } catch (error) {
+      results.push({
+        status: 'error',
+        message: `${who}: the key "${CONSOLE_CRYPTO_KEY}" does not work in partition ${partition}: ${errorMessage(error).replace(/^\[@adonis-agora\/media\] /, '')}`,
+        fix: `Run \`${createKeyCommand(partition)}\` on the crypto server${runtime.service ? '' : ", grant this app's crypto client crypto:seal:console-*"}, and check media_dashboard.apps["${key}"].partition equals that app's crypto partition.`,
+        docs: CONSOLE_DOCS,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * `media.console-commands-key` (deep): in crypto mode, that the key exists and this process can
+ * use it: a probe encrypted and decrypted (where crypto is embedded, the key is created first). A
+ * crypto tenant may only decrypt its own console keys (no grant needed): checked that way.
+ */
+async function appSideKeyCheck(
+  app: DoctorApp,
+  siblings: ConsoleSiblings,
+): Promise<AgoraDoctorResult> {
+  let crypto: Awaited<ReturnType<typeof appSideAuth>>['crypto'];
+  try {
+    crypto = (await appSideAuth(app, siblings)).crypto;
+  } catch {
+    return {
+      status: 'skip',
+      message: 'consoleCommands has no authentication (see media.console-commands).',
+    };
+  }
+  if (!crypto) return { status: 'skip', message: 'Console commands are not sealed with crypto.' };
+  const runtime = siblings.crypto;
+  // A crypto tenant: checked with a dummy decrypt (an app opens its own console keys; never `getKey`).
+  if (crypto.auto && runtime && !runtime.service) {
+    const report = await checkTenantConsoleKey(runtime);
+    if (report?.level === 'warn') {
+      return {
+        status: 'error',
+        message: report.line.replace(/^\[@adonis-agora\/media\] /, ''),
+        docs: CONSOLE_DOCS,
+      };
+    }
+    // Missing on a tenant is fine: the crypto server provisions it on the console's first seal.
+    return {
+      status: 'ok',
+      message: report
+        ? report.line.replace(/^\[@adonis-agora\/media\] /, '')
+        : `The key ${crypto.key} exists in partition ${runtime.partition}.`,
+      docs: CONSOLE_DOCS,
+    };
+  }
+  try {
+    if (crypto.auto && runtime) await ensureConsoleKey(runtime);
+  } catch (error) {
+    return {
+      status: 'error',
+      message: errorMessage(error).replace(/^\[@adonis-agora\/media\] /, ''),
+      ...(runtime
+        ? {
+            fix: `Run \`${createKeyCommand(runtime.partition, crypto.key)}\` on the crypto server.`,
+          }
+        : {}),
+      docs: CONSOLE_DOCS,
+    };
+  }
+  try {
+    const cipher = typeof crypto.cipher === 'function' ? await crypto.cipher() : crypto.cipher;
+    const probe = `agora:doctor:${Date.now()}`;
+    const aad = 'agora:doctor:console-media';
+    const { ciphertext } = await cipher.encrypt({ key: crypto.key, plaintext: probe, aad });
+    const { plaintext } = await cipher.decrypt({
+      key: crypto.key,
+      ciphertext,
+      aad,
+      context: 'doctor',
+    });
+    if (plaintext !== probe) throw new Error('the probe did not round-trip');
+    return {
+      status: 'ok',
+      message: `The key ${crypto.key} encrypts and decrypts here.`,
+      docs: CONSOLE_DOCS,
+    };
+  } catch (error) {
+    // A crypto tenant opens its own console keys but cannot encrypt a probe: that is the setup.
+    if (classifyConsoleKeyError(error) === 'refused' && runtime && !runtime.service) {
+      return {
+        status: 'ok',
+        message: `This app decrypts with "${crypto.key}" (no grant needed); the probe cannot encrypt with it.`,
+        docs: CONSOLE_DOCS,
+      };
+    }
+    return {
+      status: 'warn',
+      message: `A probe with the key ${crypto.key} did not round-trip (${errorMessage(error)}).`,
+      fix: "Check this app's crypto client: an app opens its own console-* keys with no grant (a crypto:decrypt:console-* grant is harmless if present).",
+      docs: CONSOLE_DOCS,
+    };
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export const mediaDoctorChecks: AgoraDoctorCheck[] = [
   {
     id: 'media.disks',
@@ -528,5 +818,18 @@ export const mediaDoctorChecks: AgoraDoctorCheck[] = [
     title: 'Control plane reachable and token accepted',
     cost: 'deep',
     run: (app) => checkControlPlane(app.config.get<MediaConfig | undefined>('media', undefined)),
+  },
+  {
+    id: 'media.console-commands',
+    lib: 'media',
+    title: 'Console commands authenticated',
+    run: (app) => checkConsoleCommands(app),
+  },
+  {
+    id: 'media.console-commands-key',
+    lib: 'media',
+    title: 'Console commands crypto key usable',
+    cost: 'deep',
+    run: (app) => checkConsoleCommandsKey(app),
   },
 ];

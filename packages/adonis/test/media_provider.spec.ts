@@ -34,6 +34,11 @@ function makeFakeRouter() {
     delete: vi.fn(() => chain),
     put: vi.fn(() => chain),
     route: vi.fn(() => chain),
+    group: vi.fn((cb: () => void) => {
+      cb();
+      const group = { prefix: vi.fn(() => group), middleware: vi.fn(() => group) };
+      return group;
+    }),
   };
 }
 

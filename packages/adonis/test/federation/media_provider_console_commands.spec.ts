@@ -4,7 +4,7 @@ import MediaProvider from '../../providers/media_provider.js';
 import { RedisConsoleChannel } from '../../src/federation/redis_channel.js';
 import { MediaManager } from '../../src/media_manager.js';
 import { InMemoryMediaStore } from '../../src/testing/in_memory_media_store.js';
-import { RedisBus } from '../support/redis_bus.js';
+import { RedisBus, TEST_CONSOLE_SECRET } from '../support/redis_bus.js';
 
 /** `MediaProvider.ready()` with `consoleCommands`: the owning side of the federated console. */
 async function start(environment: string, consoleCommands: Record<string, unknown>) {
@@ -33,15 +33,28 @@ async function start(environment: string, consoleCommands: Record<string, unknow
   };
   const provider = new MediaProvider(app as never);
   await provider.ready();
-  const console = new RedisConsoleChannel({ client: bus.connection(), prefix: 'et' });
+  const console = new RedisConsoleChannel({
+    client: bus.connection(),
+    prefix: 'et',
+    secret: TEST_CONSOLE_SECRET,
+  });
   const send = (verb: string, ...args: unknown[]) =>
-    console.send({ id: randomUUID(), verb, args, actor: 'ana@hub' }, { timeoutMs: 1_000 });
+    console.send(
+      {
+        id: randomUUID(),
+        verb,
+        args,
+        actor: 'ana@hub',
+        capabilities: ['media:objects:read', 'media:objects:write'],
+      },
+      { timeoutMs: 1_000 },
+    );
   return { provider, store, lines, send };
 }
 
 describe('MediaProvider — consoleCommands', () => {
   it('answers on the app prefix, and runs actions only with actions: true', async () => {
-    const readOnly = await start('web', { prefix: 'et' });
+    const readOnly = await start('web', { prefix: 'et', secret: TEST_CONSOLE_SECRET });
     expect(await readOnly.send('disks')).toMatchObject({
       ok: true,
       data: { data: [{ name: 'fs', default: true }] },
@@ -53,7 +66,7 @@ describe('MediaProvider — consoleCommands', () => {
     });
     await readOnly.provider.shutdown();
 
-    const acting = await start('web', { prefix: 'et', actions: true });
+    const acting = await start('web', { prefix: 'et', secret: TEST_CONSOLE_SECRET, actions: true });
     await acting.store.save({ id: 'r1', conversions: {} } as never);
     expect(await acting.send('deleteMediaRecord', 'r1')).toEqual({
       id: expect.any(String),
@@ -61,12 +74,14 @@ describe('MediaProvider — consoleCommands', () => {
       data: null,
     });
     expect(await acting.store.find('r1')).toBeNull();
-    expect(acting.lines).toContain('[media] federated console: deleteMediaRecord r1 by ana@hub');
+    expect(acting.lines).toContain(
+      '[@adonis-agora/media] federated console: deleteMediaRecord r1 by ana@hub',
+    );
     await acting.provider.shutdown();
   });
 
   it('does not listen outside web processes', async () => {
-    const worker = await start('console', { prefix: 'et' });
+    const worker = await start('console', { prefix: 'et', secret: TEST_CONSOLE_SECRET });
     await expect(worker.send('disks')).rejects.toThrow(/listens for media console commands/);
   });
 });

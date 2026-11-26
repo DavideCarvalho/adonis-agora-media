@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { HttpContext } from '@adonisjs/core/http';
 import type { ApplicationService, HttpRouterService } from '@adonisjs/core/types';
 import type { MiddlewareFn, ParsedNamedMiddleware } from '@adonisjs/core/types/http';
@@ -33,7 +33,22 @@ import {
   mediaDoctorChecks,
 } from '../src/doctor/checks.js';
 import { mediaConsoleCommandHandler } from '../src/federation/console.js';
-import { RedisConsoleChannel, resolveRedisConnection } from '../src/federation/redis_channel.js';
+import {
+  CONSOLE_KEY_PURPOSE,
+  type ConsoleSiblings,
+  commandKeyJwk,
+  consoleKeyReport,
+  consoleSiblingsOf,
+  resolveAppConsoleAuth,
+} from '../src/federation/console_auth.js';
+import {
+  appKeyOf,
+  ConsoleCommandRefused,
+  RedisConsoleChannel,
+  resolveRedisConnection,
+} from '../src/federation/redis_channel.js';
+import { sanitizeFileName } from '../src/file_name.js';
+import { isMimeType } from '../src/http_safety.js';
 import type { ImageProcessor } from '../src/image_processor.js';
 import { MediaManager } from '../src/media_manager.js';
 import type { UploadSessionStore } from '../src/resumable_upload.js';
@@ -63,7 +78,6 @@ import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
  * ```
  */
 export default class MediaProvider {
-  #secret: string | undefined;
   /** The channel this app answers other apps' federated consoles on (`consoleCommands`). */
   #consoleChannel: RedisConsoleChannel | undefined;
 
@@ -219,6 +233,12 @@ export default class MediaProvider {
    * neither the TUS resumable routes nor the direct-upload routes are enabled in config.
    */
   async boot() {
+    this.#resolvedAppKey = await appKeyOf(this.app);
+    // A federated console this app cannot authenticate fails the boot here, in web processes (where
+    // the channel starts), saying what to add. Never in `ready()`: the HTTP server is listening then.
+    const consoleCommands = this.app.config.get<MediaConfig>('media', {}).consoleCommands;
+    if (consoleCommands && this.app.getEnvironment?.() === 'web') await this.#consoleAuth();
+
     // Route registration can't happen synchronously in `boot()`: at this point in the AdonisJS
     // lifecycle the HTTP server/router binding may not be resolvable yet (bindings from other
     // providers' `boot()` methods can still be pending), and — critically — the *documented*
@@ -267,9 +287,10 @@ export default class MediaProvider {
    * answers. A connection that cannot claim a command (no `SET NX`) answers nothing, and says so.
    */
   async ready() {
-    const options = this.app.config.get<MediaConfig>('media', {}).consoleCommands;
+    const config = this.app.config.get<MediaConfig>('media', {});
+    const options = config.consoleCommands;
     if (!options || this.app.getEnvironment() !== 'web') return;
-    const log = async (level: 'info' | 'error', line: string) => {
+    const log = async (level: 'info' | 'warn' | 'error', line: string) => {
       try {
         const logger = await this.app.container.make('logger');
         logger[level](line);
@@ -277,13 +298,53 @@ export default class MediaProvider {
         /* logging must never break boot */
       }
     };
+    // Resolved (and checked) in `boot()`; resolved here when only `ready()` runs.
+    const { auth, siblings } = await this.#consoleAuth();
+    // The token mode's key shows as a short id in the mode; `node ace media:console-key` prints it.
+    await log(
+      'info',
+      `[@adonis-agora/media] console commands: ${auth.modes.join(' + ')}; ${
+        options.actions === true
+          ? 'actions on'
+          : 'actions off (set consoleCommands.actions to let the console act)'
+      }`,
+    );
+    // Automatic crypto mode: the key must exist in this app's partition. Created where crypto may;
+    // otherwise ONE line says what to run (never a boot failure: commands fail until then).
+    // Token mode as this app's only way in: publish the command public key in authkit's key
+    // directory, so consoles fetch it (no `publicKey` to copy) and know to use a token (§13a).
+    // With crypto active, nothing is published and nothing said: crypto is enough (§13e), unless
+    // crypto commands must carry a token too (explicit crypto + verifyTenant, migrating).
+    const authkit = siblings.authkit;
+    if (auth.keys && (!auth.crypto || auth.channel.cryptoRequiresToken === true)) {
+      if (typeof authkit?.publishAppKey === 'function') {
+        void authkit
+          .publishAppKey({ purpose: CONSOLE_KEY_PURPOSE, jwk: commandKeyJwk(auth.keys) })
+          .catch(() => undefined);
+      } else if (options.secret === undefined) {
+        // Token mode is this app's only way to be reached, and no console can find its key.
+        await log(
+          'warn',
+          "[@adonis-agora/media] console commands: token mode is this app's only way to be reached, but authkit-client's `service` is not configured, so its key is not in authkit's key directory: configure it, or give each console controlPlane.publicKey (`node ace media:console-key` prints it)",
+        );
+      }
+    }
+    if (auth.checkKey) {
+      // A crypto tenant: one line per outcome change; the next command's decrypt is the retry.
+      await auth.checkKey();
+    } else if (auth.crypto?.auto && siblings.crypto) {
+      const report = await consoleKeyReport(siblings.crypto);
+      if (report) await log(report.level, report.line);
+    }
     try {
       const channel = new RedisConsoleChannel({
         client: await resolveRedisConnection(this.app.container, options.connection),
         prefix: options.prefix,
+        ...auth.channel,
       });
       const settings = readConsoleServiceConfig(this.app.config);
       const handler = mediaConsoleCommandHandler({
+        partition: auth.partition,
         actions: options.actions === true,
         service: async () =>
           buildConsoleService(await this.app.container.make(MediaManager), {
@@ -292,21 +353,52 @@ export default class MediaProvider {
           }),
         log: (line) => void log('info', line),
       });
+      // A refused or garbage message is logged once per reason and dropped: never a crash.
+      const said = new Set<string>();
       await channel.answer(handler, {
-        onError: (error) =>
-          void log(
-            'error',
-            `[media] federated console command failed: ${error instanceof Error ? error.message : String(error)}`,
-          ),
+        onError: (error) => {
+          const line =
+            error instanceof ConsoleCommandRefused
+              ? `[@adonis-agora/media] console commands: refused a command (${error.reason})`
+              : `[@adonis-agora/media] console commands: ${error instanceof Error ? error.message : String(error)}`;
+          if (said.has(line)) return;
+          if (said.size < 100) said.add(line);
+          void log('warn', line);
+        },
       });
       this.#consoleChannel = channel;
     } catch (error) {
       await log(
         'error',
-        `[media] consoleCommands is on, but ${error instanceof Error ? error.message : String(error)}`,
+        `[@adonis-agora/media] consoleCommands is on, but ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
+
+  /** How this app answers the federated console, resolved once (it throws when nothing resolves). */
+  #consoleAuth(): Promise<{
+    auth: ReturnType<typeof resolveAppConsoleAuth>;
+    siblings: ConsoleSiblings;
+  }> {
+    this.#consoleAuthOnce ??= (async () => {
+      const config = this.app.config.get<MediaConfig>('media', {});
+      const siblings = await consoleSiblingsOf(this.app.container as never);
+      const auth = resolveAppConsoleAuth({
+        options: config.consoleCommands!,
+        controlPlaneVerifyTenant:
+          config.topology === 'control-plane' ? config.verifyTenant : undefined,
+        appKey: await appKeyOf(this.app),
+        siblings,
+        logKey: (note) => void this.#log(note.level === 'info' ? 'info' : 'warn', note.line),
+      });
+      return { auth, siblings };
+    })();
+    return this.#consoleAuthOnce;
+  }
+
+  #consoleAuthOnce:
+    | Promise<{ auth: ReturnType<typeof resolveAppConsoleAuth>; siblings: ConsoleSiblings }>
+    | undefined;
 
   async shutdown() {
     await this.#consoleChannel?.close();
@@ -320,23 +412,19 @@ export default class MediaProvider {
     return options;
   }
 
-  /** The HMAC secret of the account console's upload tickets: the app key, else a process key. */
-  #accountSecret(): string {
-    if (this.#secret !== undefined) return this.#secret;
-    const key = this.app.config.get<unknown>('app.appKey', undefined);
-    const released =
-      typeof key === 'string'
-        ? key
-        : typeof (key as { release?: unknown } | undefined)?.release === 'function'
-          ? String((key as { release(): unknown }).release())
-          : '';
-    this.#secret = released !== '' ? released : randomBytes(32).toString('hex');
-    return this.#secret;
+  /** The app's `APP_KEY` (`app.appKey`, a string or a Secret), or `undefined` without one. */
+  #appKey(): string | undefined {
+    return this.#resolvedAppKey;
   }
+
+  /** The app's APP_KEY, read in `boot()` (§13c: `appKeyOf` resolves config providers, async). */
+  #resolvedAppKey: string | undefined;
 
   async #registerAccountPages(): Promise<void> {
     const options = this.#accountConsole();
     if (!options) return;
+    // Outside the `try`: a production app with no secret must fail its boot, not just warn.
+    const secret = this.#uploadSecret("accountConsole's upload tickets");
     const container = this.app.container as unknown as {
       hasBinding(key: string): boolean;
       make(key: string): Promise<unknown>;
@@ -352,7 +440,7 @@ export default class MediaProvider {
         mediaAccountExtension({
           media: () => this.app.container.make(MediaManager),
           options,
-          secret: this.#accountSecret(),
+          secret,
         }),
       );
     } catch (error) {
@@ -376,6 +464,7 @@ export default class MediaProvider {
     const options = this.#accountConsole();
     if (!options || !accountCollections(options).some((c) => c.upload !== false)) return;
     const base = accountPath(options);
+    const secret = this.#uploadSecret("accountConsole's upload tickets");
     const remote = options.publicUrl !== undefined;
     const cors = (ctx: HttpContext) => {
       if (!remote) return;
@@ -411,7 +500,7 @@ export default class MediaProvider {
           {
             media: () => this.app.container.make(MediaManager),
             options,
-            secret: this.#accountSecret(),
+            secret,
           },
         );
         return ctx.response.status(result.status).json(result.body);
@@ -454,7 +543,7 @@ export default class MediaProvider {
     });
   }
 
-  async #log(level: 'warn' | 'error', line: string): Promise<void> {
+  async #log(level: 'info' | 'warn' | 'error', line: string): Promise<void> {
     try {
       const logger = await this.app.container.make('logger');
       logger[level](line);
@@ -466,9 +555,14 @@ export default class MediaProvider {
   /**
    * Mount the optional direct-S3 upload routes when `uploads.routes.enabled` is set. These are plain
    * AdonisJS routes (NOT controllers): each resolves the {@link MediaManager} singleton lazily and
-   * delegates to its upload methods. The object key is taken from the request body/query — resolve
-   * it server-side (per user/tenant) in a real app so a client can't point an upload at another
-   * object.
+   * delegates to its upload methods.
+   *
+   * The client never picks where bytes land: it sends a `fileName`, the key is derived here
+   * (`routes.keyFor`, default `uploads/<uuid>/<fileName>`), and the disk is `routes.disk` (or one of
+   * `routes.disks` it names). The later multipart calls carry the `uploadToken` the initiate
+   * answered, an HMAC (APP_KEY) over the disk, key and upload id, so nobody can complete or abort
+   * someone else's upload. The routes are guarded by `routes.middleware`; without it they do not
+   * mount in production (a boot error says what to add) and warn elsewhere.
    *
    * Routes (relative to `uploads.routes.prefix`, default `/media/uploads`):
    * - `POST   /direct/initiate`                    → presign multipart parts
@@ -486,9 +580,64 @@ export default class MediaProvider {
 
     const routes = config.uploads?.routes;
     if (!routes?.enabled) return;
+    const middleware = this.#guardUploadRoutes('uploads.routes', routes);
 
     const prefix = (routes.prefix ?? '/media/uploads').replace(/\/+$/, '');
     const manager = () => this.app.container.make(MediaManager);
+    const uploadSecret = this.#uploadSecret("uploads.routes' upload tokens");
+    const secret = () => uploadSecret;
+    const keyFor =
+      routes.keyFor ?? ((fileName: string, token: string) => `uploads/${token}/${fileName}`);
+
+    /** The disk this request writes to: the route's, or one of `routes.disks` the client names. */
+    const diskOf = (media: MediaManager, ctx: HttpContext): string => {
+      const fallback = routes.disk ?? media.storage.defaultDisk;
+      const asked = ctx.request.input('disk');
+      if (asked === undefined || asked === null || asked === '' || asked === fallback) {
+        return fallback;
+      }
+      if (typeof asked === 'string' && (routes.disks ?? []).includes(asked)) return asked;
+      throw refusal(
+        400,
+        `disk "${String(asked)}" is not one these routes write to (uploads.routes.disk${routes.disks ? ' or uploads.routes.disks' : ''})`,
+      );
+    };
+    /** The server-side key for the file the client names; a client-sent `key` is refused. */
+    const keyOf = (ctx: HttpContext): string => {
+      if (ctx.request.input('key') !== undefined) {
+        throw refusal(
+          400,
+          'the upload key is chosen by the server: send `fileName` instead of `key`',
+        );
+      }
+      const fileName = ctx.request.input('fileName');
+      if (typeof fileName !== 'string' || fileName === '')
+        throw refusal(400, 'fileName is required');
+      return keyFor(sanitizeFileName(fileName), randomUUID(), ctx);
+    };
+    const contentTypeOf = (value: unknown): string | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const base = typeof value === 'string' ? value.split(';')[0]!.trim() : '';
+      if (!isMimeType(base)) throw refusal(400, 'contentType must be a type/subtype MIME type');
+      return base;
+    };
+    /** The `uploadToken` of a later multipart call, checked against its disk, key and upload id. */
+    const ticketed = (ctx: HttpContext): { key: string; disk: string; uploadId: string } => {
+      const key = ctx.request.input('key');
+      const disk = ctx.request.input('disk');
+      const token = ctx.request.input('uploadToken');
+      const uploadId = String(ctx.params.uploadId);
+      if (typeof key !== 'string' || typeof disk !== 'string' || typeof token !== 'string') {
+        throw refusal(
+          400,
+          'key, disk and uploadToken (as the initiate answered them) are required',
+        );
+      }
+      if (!sameToken(uploadTokenFor(secret(), disk, key, uploadId), token)) {
+        throw refusal(403, 'this upload token is not for this upload');
+      }
+      return { key, disk, uploadId };
+    };
 
     const json = (
       handler: (media: MediaManager, ctx: HttpContext) => Promise<unknown>,
@@ -500,102 +649,107 @@ export default class MediaProvider {
           return ctx.response.status(okStatus).json(result ?? { ok: true });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'upload error';
-          const code = (error as { code?: string }).code;
+          const { code, status } = error as { code?: string; status?: unknown };
+          const answer =
+            typeof status === 'number'
+              ? status
+              : code === 'E_MEDIA_UPLOAD_NOT_SUPPORTED' || code === 'E_MEDIA_UNSAFE_FILE_NAME'
+                ? 400
+                : 500;
           return ctx.response
-            .status(code === 'E_MEDIA_UPLOAD_NOT_SUPPORTED' ? 400 : 500)
+            .status(answer)
             .json({ error: message, ...(code !== undefined ? { code } : {}) });
         }
       };
     };
 
-    router
-      .post(
-        `${prefix}/direct/initiate`,
-        json(async (media, ctx) => {
-          const body = ctx.request.body() as {
-            key: string;
-            contentType?: string;
-            visibility?: 'public' | 'private';
-            size?: number;
-            partSize?: number;
-            disk?: string;
-          };
-          return media.initiateDirectUpload({
-            key: body.key,
-            ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
-            ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
-            ...(body.size !== undefined ? { size: body.size } : {}),
-            ...(body.partSize !== undefined ? { partSize: body.partSize } : {}),
-            ...(body.disk !== undefined ? { disk: body.disk } : {}),
-          });
-        }),
-      )
-      .as('media.uploads.direct.initiate');
+    const group = router.group(() => {
+      router
+        .post(
+          `${prefix}/direct/initiate`,
+          json(async (media, ctx) => {
+            const body = ctx.request.body() as { size?: unknown; partSize?: unknown };
+            const disk = diskOf(media, ctx);
+            const key = keyOf(ctx);
+            const contentType = contentTypeOf(ctx.request.input('contentType'));
+            const created = await media.initiateDirectUpload({
+              key,
+              disk,
+              ...(contentType !== undefined ? { contentType } : {}),
+              ...(typeof body.size === 'number' ? { size: body.size } : {}),
+              ...(typeof body.partSize === 'number' ? { partSize: body.partSize } : {}),
+            });
+            return {
+              ...created,
+              uploadToken: uploadTokenFor(secret(), created.disk, created.key, created.uploadId),
+            };
+          }),
+        )
+        .as('media.uploads.direct.initiate');
 
-    router
-      .post(
-        `${prefix}/direct/:uploadId/parts/:partNumber`,
-        json(async (media, ctx) => {
-          const key = requireKey(ctx);
-          const disk = readDisk(ctx);
-          return media.uploads.presignPart({
-            key,
-            uploadId: String(ctx.params.uploadId),
-            partNumber: Number(ctx.params.partNumber),
-            ...(disk !== undefined ? { disk } : {}),
-          });
-        }),
-      )
-      .as('media.uploads.direct.presignPart');
+      router
+        .post(
+          `${prefix}/direct/:uploadId/parts/:partNumber`,
+          json(async (media, ctx) => {
+            const { key, disk, uploadId } = ticketed(ctx);
+            return media.uploads.presignPart({
+              key,
+              disk,
+              uploadId,
+              partNumber: Number(ctx.params.partNumber),
+            });
+          }),
+        )
+        .as('media.uploads.direct.presignPart');
 
-    router
-      .post(
-        `${prefix}/direct/:uploadId/complete`,
-        json(async (media, ctx) => {
-          const body = ctx.request.body() as { key: string; parts: MultipartPart[]; disk?: string };
-          return media.completeDirectUpload({
-            key: body.key,
-            uploadId: String(ctx.params.uploadId),
-            parts: body.parts,
-            ...(body.disk !== undefined ? { disk: body.disk } : {}),
-          });
-        }),
-      )
-      .as('media.uploads.direct.complete');
+      router
+        .post(
+          `${prefix}/direct/:uploadId/complete`,
+          json(async (media, ctx) => {
+            const { key, disk, uploadId } = ticketed(ctx);
+            const body = ctx.request.body() as { parts?: MultipartPart[] };
+            return media.completeDirectUpload({
+              key,
+              disk,
+              uploadId,
+              parts: Array.isArray(body.parts) ? body.parts : [],
+            });
+          }),
+        )
+        .as('media.uploads.direct.complete');
 
-    router
-      .delete(
-        `${prefix}/direct/:uploadId`,
-        json(async (media, ctx) => {
-          const key = requireKey(ctx);
-          const disk = readDisk(ctx);
-          await media.abortDirectUpload({
-            key,
-            uploadId: String(ctx.params.uploadId),
-            ...(disk !== undefined ? { disk } : {}),
-          });
-          return { ok: true };
-        }),
-      )
-      .as('media.uploads.direct.abort');
+      router
+        .delete(
+          `${prefix}/direct/:uploadId`,
+          json(async (media, ctx) => {
+            const { key, disk, uploadId } = ticketed(ctx);
+            await media.abortDirectUpload({ key, disk, uploadId });
+            return { ok: true };
+          }),
+        )
+        .as('media.uploads.direct.abort');
 
-    router
-      .put(
-        `${prefix}/proxy`,
-        json(async (media, ctx) => {
-          const key = requireKey(ctx);
-          const disk = readDisk(ctx);
-          const contentType = ctx.request.header('content-type');
-          return media.proxyUpload({
-            key,
-            // The raw Node request is a Readable — stream it straight to the disk without buffering.
-            contents: ctx.request.request,
-            ...(contentType !== undefined ? { contentType } : {}),
-            ...(disk !== undefined ? { disk } : {}),
-          });
-        }, 201),
-      )
-      .as('media.uploads.proxy');
+      router
+        .put(
+          `${prefix}/proxy`,
+          json(async (media, ctx) => {
+            const disk = diskOf(media, ctx);
+            const key = keyOf(ctx);
+            const contentType = contentTypeOf(ctx.request.header('content-type'));
+            return media.proxyUpload({
+              key,
+              disk,
+              // The raw Node request is a Readable — stream it straight to the disk without buffering.
+              contents: ctx.request.request,
+              ...(contentType !== undefined ? { contentType } : {}),
+            });
+          }, 201),
+        )
+        .as('media.uploads.proxy');
+    });
+    if (middleware.length > 0) {
+      group.middleware(middleware as (MiddlewareFn | ParsedNamedMiddleware)[]);
+    }
   }
 
   /**
@@ -617,6 +771,7 @@ export default class MediaProvider {
   #mountTusRoutes(router: HttpRouterService, config: MediaConfig) {
     const resumable = config.uploads?.resumable;
     if (!resumable?.routes?.enabled) return;
+    const middleware = this.#guardUploadRoutes('uploads.resumable.routes', resumable.routes);
 
     const prefix = (resumable.routes.prefix ?? '/media/uploads/tus').replace(/\/+$/, '');
     const routeDisk = resumable.routes.disk;
@@ -662,12 +817,74 @@ export default class MediaProvider {
       };
     };
 
-    router.route(prefix, ['OPTIONS'], run('OPTIONS')).as('media.uploads.tus.options');
-    router.post(prefix, run('POST')).as('media.uploads.tus.create');
-    router.route(`${prefix}/:id`, ['HEAD'], run('HEAD')).as('media.uploads.tus.head');
-    router.patch(`${prefix}/:id`, run('PATCH', true)).as('media.uploads.tus.patch');
-    router.delete(`${prefix}/:id`, run('DELETE')).as('media.uploads.tus.delete');
+    const group = router.group(() => {
+      router.route(prefix, ['OPTIONS'], run('OPTIONS')).as('media.uploads.tus.options');
+      router.post(prefix, run('POST')).as('media.uploads.tus.create');
+      router.route(`${prefix}/:id`, ['HEAD'], run('HEAD')).as('media.uploads.tus.head');
+      router.patch(`${prefix}/:id`, run('PATCH', true)).as('media.uploads.tus.patch');
+      router.delete(`${prefix}/:id`, run('DELETE')).as('media.uploads.tus.delete');
+    });
+    if (middleware.length > 0) {
+      group.middleware(middleware as (MiddlewareFn | ParsedNamedMiddleware)[]);
+    }
   }
+
+  /**
+   * The middleware of one upload route group. Without any (and without `allowUnguarded`), the
+   * group does not mount in production (throws at boot, naming the option) and warns elsewhere.
+   */
+  #guardUploadRoutes(
+    option: string,
+    routes: { middleware?: readonly unknown[]; allowUnguarded?: boolean },
+  ): readonly unknown[] {
+    const middleware = routes.middleware ?? [];
+    if (middleware.length > 0 || routes.allowUnguarded === true) return middleware;
+    const what = `${option} has no \`middleware\`: anyone could write files to your storage through these routes`;
+    const fix = `Set \`${option}.middleware: [middleware.auth()]\` in config/media.ts (or \`${option}.allowUnguarded: true\` when a global middleware guards them)`;
+    if (this.app.inProduction === true) {
+      throw new Error(
+        `[@adonis-agora/media] ${what}, so they are not mounted in production. ${fix}.`,
+      );
+    }
+    void this.#log(
+      'warn',
+      `[@adonis-agora/media] ${what} (they would not mount in production). ${fix}.`,
+    );
+    return middleware;
+  }
+
+  /**
+   * The one secret every upload credential this package issues is signed with (the multipart
+   * `uploadToken`s of `uploads.routes`, the account console's upload tickets): `uploads.secret`,
+   * else `APP_KEY`, so every instance accepts what another signed. Without either, production fails
+   * at boot naming both; elsewhere a per-process key is used, with a warning (a credential then
+   * fails on another process). `what` names the credential in those messages.
+   */
+  #uploadSecret(what: string): string {
+    const explicit = this.app.config.get<MediaConfig>('media', {}).uploads?.secret;
+    const raw = typeof explicit === 'string' ? explicit : explicit?.release?.();
+    if (typeof raw === 'string' && raw !== '') {
+      if (raw.length < 16) {
+        throw new Error('[@adonis-agora/media] uploads.secret must be at least 16 characters.');
+      }
+      return raw;
+    }
+    const appKey = this.#appKey();
+    if (appKey) return appKey;
+    const message = `${what} are signed with APP_KEY or uploads.secret, and this app has neither`;
+    const fix = 'Set APP_KEY (`appKey` in config/app.ts), or `uploads.secret` in config/media.ts';
+    if (this.app.inProduction === true) {
+      throw new Error(`[@adonis-agora/media] ${message}. ${fix}.`);
+    }
+    void this.#log(
+      'warn',
+      `[@adonis-agora/media] ${message}: using a per-process key (one issued by another process is refused). ${fix}.`,
+    );
+    this.#devUploadSecret ??= randomBytes(32).toString('hex');
+    return this.#devUploadSecret;
+  }
+
+  #devUploadSecret: string | undefined;
 
   /**
    * Mount the optional session-backed direct upload routes when `uploads.direct.routes.enabled`.
@@ -682,8 +899,8 @@ export default class MediaProvider {
    * - `POST   /:id/complete`          → assemble the parts into the final object
    * - `DELETE /:id`                   → abort
    *
-   * Like every built-in route these are UNGUARDED — add your own auth middleware, or leave them off
-   * and mount your own routes over the handler/manager.
+   * Guarded by `routes.middleware`: without it they do not mount in production (see
+   * {@link #guardUploadRoutes}). Or leave them off and mount your own routes over the handler.
    */
   #mountDirectSessionRoutes(router: HttpRouterService, config: MediaConfig) {
     const direct = config.uploads?.direct;
@@ -694,7 +911,7 @@ export default class MediaProvider {
     const maxSize = direct.routes.maxSize;
     const collection = direct.routes.collection;
     const policyThunk = direct.routes.policy;
-    const routeMiddleware = direct.routes.middleware;
+    const routeMiddleware = this.#guardUploadRoutes('uploads.direct.routes', direct.routes);
 
     // Build the handler once, on first request, from the resolved MediaManager singleton. The
     // policy (when configured) is lazy-imported here too, so its module loads only if the routes
@@ -726,8 +943,8 @@ export default class MediaProvider {
     };
 
     // The five session endpoints, grouped so `routes.middleware` (e.g. `middleware.auth()`) guards
-    // them all at once. Paths are relative to the group `prefix`. Empty middleware ⇒ the routes stay
-    // UNGUARDED, exactly as before this seam existed.
+    // them all at once. Paths are relative to the group `prefix`. Without middleware they mount only
+    // outside production (or with `allowUnguarded`).
     router
       .group(() => {
         router
@@ -795,7 +1012,7 @@ export default class MediaProvider {
           .as('media.uploads.direct.sessions.abort');
       })
       .prefix(prefix)
-      .middleware((routeMiddleware ?? []) as (MiddlewareFn | ParsedNamedMiddleware)[]);
+      .middleware(routeMiddleware as (MiddlewareFn | ParsedNamedMiddleware)[]);
   }
 
   /**
@@ -908,18 +1125,22 @@ type DriveConfigValue = { type: 'provider'; resolver: unknown } | PlainDriveConf
  */
 type ResolvedDriveConfig = { config?: { default?: string }; default?: string };
 
-/** Read the object key from the query or JSON body; throw a 400-mappable error when absent. */
-function requireKey(ctx: HttpContext): string {
-  const fromQuery = ctx.request.input('key');
-  const key = typeof fromQuery === 'string' ? fromQuery : undefined;
-  if (key) return key;
-  throw Object.assign(new Error('key is required'), { code: 'E_MEDIA_UPLOAD_NOT_SUPPORTED' });
+/** An upload route's refusal: answered with `status` and `message`. */
+function refusal(status: number, message: string): Error {
+  return Object.assign(new Error(message), { status });
 }
 
-/** Read an optional disk-name override from the query or JSON body. */
-function readDisk(ctx: HttpContext): string | undefined {
-  const value = ctx.request.input('disk');
-  return typeof value === 'string' ? value : undefined;
+/** The `uploadToken` of one direct upload: an HMAC over where it writes and its upload id. */
+function uploadTokenFor(secret: string, disk: string, key: string, uploadId: string): string {
+  return createHmac('sha256', secret)
+    .update(`agora:media-upload:v1\n${disk}\n${key}\n${uploadId}`)
+    .digest('base64url');
+}
+
+function sameToken(expected: string, actual: string): boolean {
+  const left = Buffer.from(expected);
+  const right = Buffer.from(actual);
+  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 /**

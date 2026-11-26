@@ -59,6 +59,8 @@ export default defineConfig({
 | `routes.prefix` | `string` | `/media/uploads/tus` | Path prefix for the TUS routes. |
 | `routes.disk` | `string` | media default disk | Disk resumable uploads land on. |
 | `routes.maxSize` | `number` | — | Reject creations whose `Upload-Length` exceeds this. |
+| `routes.middleware` | `readonly unknown[]` | `[]` | Middleware applied to the whole route group (e.g. `[middleware.auth()]`). Required in production. |
+| `routes.allowUnguarded` | `boolean` | `false` | Mount without `middleware` in production too, when something else (a global middleware) guards the routes. |
 | `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates the upload (see below). Omit to accept any type. |
 
 ### Rejecting the wrong file type early
@@ -124,6 +126,8 @@ Sessions stored before the column was added show no **Updated** time until their
 ---
 
 ## TUS protocol routes
+
+Without `routes.middleware` (and without `routes.allowUnguarded: true`) these routes **do not mount in production**: the boot fails naming the option to set. Outside production they mount, with a warning. Every upload route group (`uploads.routes`, `uploads.direct.routes`, `uploads.resumable.routes`) takes the same two options.
 
 With `routes.enabled`, these routes are mounted under `routes.prefix` (default `/media/uploads/tus`). The server implements the `creation`, `termination` and `expiration` extensions.
 

@@ -18,7 +18,7 @@ import { createMediaTables, rowsOf } from '../../src/stores/lucid-schema.js';
 import { uploadSessions } from '../../src/upload_sessions/factory.js';
 import { LucidUploadSessionStore } from '../../src/upload_sessions/lucid.js';
 import { runMigrationStub } from '../lucid_helpers.js';
-import { RedisBus } from '../support/redis_bus.js';
+import { RedisBus, TEST_CONSOLE_SECRET } from '../support/redis_bus.js';
 
 /**
  * The federated console against real Postgres: the owning app's media tables live in its own
@@ -136,7 +136,11 @@ describe.skipIf(!url)('federated media console on Postgres (two schemas, read-on
           { diskNames: ['fs'], actions: true },
         ),
     });
-    await new RedisConsoleChannel({ client: bus.connection(), prefix: 'et' }).answer(handler);
+    await new RedisConsoleChannel({
+      client: bus.connection(),
+      prefix: 'et',
+      secret: TEST_CONSOLE_SECRET,
+    }).answer(handler);
 
     // The console builds the app from its config, as `apps` in config/media_dashboard.ts does.
     const container = {
@@ -149,7 +153,11 @@ describe.skipIf(!url)('federated media console on Postgres (two schemas, read-on
         // No `autoCreateSchema: false` here: a federated store never creates anything anyway.
         store: stores.lucid({ schema: owning }),
         uploadSessions: uploadSessions.lucid({ schema: owning }),
-        controlPlane: new RedisConsoleChannel({ client: bus.connection(), prefix: 'et' }),
+        controlPlane: new RedisConsoleChannel({
+          client: bus.connection(),
+          prefix: 'et',
+          secret: TEST_CONSOLE_SECRET,
+        }),
       },
       { container },
     );

@@ -269,6 +269,7 @@ describe('media console commands', () => {
         'media:uploads:list',
         'media:uploads:show',
         'media:uploads:abort',
+        'media:console-key',
       ]),
     );
   });

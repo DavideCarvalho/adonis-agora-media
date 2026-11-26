@@ -109,6 +109,24 @@ export default defineConfig({
 })
 ```
 
+### What a viewer may do
+
+An `authorize` that allows a request may also say what that viewer may do: `capabilities`
+(`media:objects:read` / `media:objects:write`, or `media:console:read` / `media:console:write` /
+`media:console:*`), or `access: 'read'` for browse only. They apply to this app's own media and
+to the other apps of a [federated console](/docs/media/dashboard/federated-console) alike: a viewer
+without the write capability gets `403` ("the viewer lacks media:objects:write") on every action,
+and the console's action buttons are disabled. An `authorize` that says nothing allows everything
+`actions` allows. `anyAuthorize` keeps the capabilities of the check that allowed.
+
+```ts title="config/media_dashboard.ts"
+authorize: (ctx) => {
+  const user = ctx.auth.user
+  if (!user?.isStaff) return false
+  return user.isAdmin ? true : { allowed: true, access: 'read' }
+},
+```
+
 ### Sending signed-out visitors to your login
 
 Return `{ redirectTo }` for a request with no signed-in user. A page navigation is redirected there,

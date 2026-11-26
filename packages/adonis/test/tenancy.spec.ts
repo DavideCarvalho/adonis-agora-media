@@ -321,8 +321,9 @@ describe('console tenant scope', () => {
     expect(
       normalizeConsoleAuthorizeResult({ allowed: true, tenants: ['a', 3, '', ' a ', ' b'] }),
     ).toEqual({
+      // The shared contract: names as given (numbers as strings), empty ones dropped.
       allowed: true,
-      tenants: ['a', 'b'],
+      tenants: ['a', '3', ' a ', ' b'],
     });
   });
 

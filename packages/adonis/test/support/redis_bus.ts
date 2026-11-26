@@ -1,5 +1,8 @@
 import type { AdonisRedisLike } from '../../src/federation/redis_channel.js';
 
+/** The shared secret the tests' console channels authenticate with (shared-secret mode). */
+export const TEST_CONSOLE_SECRET = 'media-console-test-secret-0123456789';
+
 /**
  * An in-memory stand-in for one Redis server, handing out `@adonisjs/redis`-shaped connections:
  * `PUBLISH` answers how many subscribers got the message, and `SET … PX … NX` is atomic, so the
@@ -9,6 +12,11 @@ export class RedisBus {
   readonly #subscribers = new Map<string, Set<(message: string) => void>>();
   readonly #keys = new Map<string, string>();
   readonly published: Array<{ channel: string; message: string }> = [];
+
+  /** Everything published so far, as one string (to check what a Redis reader could see). */
+  get wire(): string {
+    return this.published.map((p) => p.message).join('\n');
+  }
 
   connection(): AdonisRedisLike & { subscriptions: Array<[string, (m: string) => void]> } {
     const subscriptions: Array<[string, (m: string) => void]> = [];

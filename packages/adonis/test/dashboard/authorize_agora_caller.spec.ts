@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   authorizeAgoraCaller,
   authorizeAppCaller,
+  capabilitiesAllow,
   capabilityAllows,
   identifyAgoraCaller,
   identifySharedSecret,
@@ -9,8 +10,8 @@ import {
   mediaCallerCsrfExceptions,
   permitAll,
   permitTokenCapabilities,
-  resolveConsoleAuthorize,
-} from '../../src/dashboard/console_authorize.js';
+} from '../../src/dashboard/console_apps.js';
+import { resolveConsoleAuthorize } from '../../src/dashboard/console_authorize.js';
 
 function ctx(options: {
   caller?: { app: string; capabilities: string[] };
@@ -28,19 +29,52 @@ function ctx(options: {
   } as never;
 }
 
-describe('capabilityAllows (the Agora wildcard rule)', () => {
+describe('capabilityAllows / capabilitiesAllow (the shared console matcher)', () => {
+  const R = 'media:objects:read';
+  const W = 'media:objects:write';
   it.each([
-    ['media:objects:read', 'media:objects:read', true],
-    ['media:*', 'media:objects:read', true],
-    ['media:*', 'media', true],
-    ['*', 'media:objects:read', true],
-    ['media:*:read', 'media:objects:read', true],
-    ['media:*:read', 'media:read', false],
-    ['media:objects', 'media:objects:read', false],
-    ['media:objects:read', 'media:objects', false],
-    ['payments:*', 'media:objects:read', false],
-  ])('%s covers %s → %s', (granted, required, expected) => {
+    // Exact names and the literal aliases.
+    [R, R, true],
+    [W, W, true],
+    ['*', R, true],
+    ['*', W, true],
+    ['media:*', R, true],
+    ['media:*', W, true],
+    ['media:console:*', W, true],
+    ['media:console:write', R, true],
+    ['media:console:write', W, true],
+    ['media:console:read', R, true],
+    ['media:console:read', W, false],
+    // A hierarchical grant: its only `*` is the last segment.
+    ['media:objects:*', R, true],
+    ['media:objects:*', W, true],
+    // Look-alikes: a `*` anywhere else grants nothing.
+    ['media:*:read', R, false],
+    ['media:*:write', W, false],
+    ['*:objects:write', W, false],
+    ['*:objects:read', R, false],
+    ['*:console:*', W, false],
+    ['media:console:w*', W, false],
+    ['media:c*', R, false],
+    ['media:o*', R, false],
+    ['other:console:*', R, false],
+    ['payments:*', R, false],
+    ['media:objects', R, false],
+    ['media:objects:read:extra', R, false],
+    [R, W, false],
+    ['', R, false],
+    // Not a media capability: the media aliases do not reach it.
+    ['media:*', 'media', false],
+    ['media:console:*', 'flags:read', false],
+  ])('%s → %s: %s', (granted, required, expected) => {
     expect(capabilityAllows(granted, required)).toBe(expected);
+    expect(capabilitiesAllow([granted], required)).toBe(expected);
+  });
+
+  it('a malformed list allows nothing', () => {
+    expect(capabilitiesAllow('media:*' as never, R)).toBe(false);
+    expect(capabilitiesAllow([42, null, R], R)).toBe(true);
+    expect(capabilitiesAllow([42, null], R)).toBe(false);
   });
 });
 

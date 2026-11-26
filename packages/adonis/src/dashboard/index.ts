@@ -4,6 +4,7 @@
 export type {
   FederatedActionProxy,
   FederatedConsoleApp,
+  FederatedControlPlane,
   FederatedObjectProxy,
   MediaConsoleVerb,
 } from '../federation/console.js';
@@ -11,6 +12,8 @@ export {
   ACTION_VERBS,
   ACTOR_HEADER,
   buildFederatedMediaApp,
+  CONSOLE_READ_CAPABILITY,
+  CONSOLE_WRITE_CAPABILITY,
   FederatedApp,
   FederatedAppError,
   FederatedConsoleService,
@@ -22,12 +25,32 @@ export {
   RELAYED_ACTION_STATUSES,
   sanitizeActor,
 } from '../federation/console.js';
+// The federated console's authentication: the boot error, and the automatic modes' pieces.
+export {
+  CONSOLE_AUTH_DOCS,
+  ConsoleAuthConfigError,
+  checkTenantConsoleKey,
+  classifyConsoleKeyError,
+  consoleKeyNote,
+  watchTenantConsoleKey,
+} from '../federation/console_auth.js';
 export type {
+  ChannelSecret,
+  ConsoleChannelAuthOptions,
+  ConsoleCipher,
+  ConsoleCipherSource,
+  ConsoleCommandKeys,
   MediaConsoleCommand,
   MediaConsoleReply,
   RedisLike,
 } from '../federation/redis_channel.js';
-export { RedisConsoleChannel } from '../federation/redis_channel.js';
+export {
+  CONSOLE_CRYPTO_KEY,
+  consoleCommandKeys,
+  RedisConsoleChannel,
+  UNAUTHORIZED_CONSOLE,
+  UNSIGNED_CHANNEL,
+} from '../federation/redis_channel.js';
 export type {
   AccessDeniedInfo,
   AccessDeniedPageOptions,
@@ -45,35 +68,53 @@ export type {
   AppCaller,
   AuthorizeAgoraCallerOptions,
   AuthorizeAppCallerOptions,
+  IdentifyAppCaller,
+  IdentifySharedSecretOptions,
+  MediaCallerCsrfOptions,
+  PermitAppCaller,
+} from './console_apps.js';
+// Media's additions on top of the shared contract: capabilities and other apps calling this console.
+export {
+  appCallerOf,
+  authorizeAgoraCaller,
+  authorizeAppCaller,
+  capabilitiesAllow,
+  capabilityAllows,
+  identifyAgoraCaller,
+  identifySharedSecret,
+  MEDIA_ACTION_ROUTES,
+  MEDIA_CONSOLE_CAPABILITIES,
+  MEDIA_OBJECTS_READ,
+  MEDIA_OBJECTS_WRITE,
+  mediaCallerCsrfExceptions,
+  permitAll,
+  permitTokenCapabilities,
+  viewerConsoleCapabilities,
+} from './console_apps.js';
+export type {
   AuthorizeByTokenOptions,
+  ConsoleAccess,
   ConsoleAuthorize,
   ConsoleAuthorizeDecision,
   ConsoleAuthorizeResult,
   ConsoleAuthorizer,
   ConsoleAuthorizerClass,
-  IdentifyAppCaller,
-  IdentifySharedSecretOptions,
-  MediaCallerCsrfOptions,
-  PermitAppCaller,
 } from './console_authorize.js';
 export {
   anyAuthorize,
-  appCallerOf,
-  authorizeAgoraCaller,
-  authorizeAppCaller,
   authorizeByToken,
-  capabilityAllows,
-  identifyAgoraCaller,
-  identifySharedSecret,
-  MEDIA_ACTION_ROUTES,
-  MEDIA_OBJECTS_READ,
-  MEDIA_OBJECTS_WRITE,
-  mediaCallerCsrfExceptions,
   normalizeConsoleAuthorizeResult,
-  permitAll,
-  permitTokenCapabilities,
   resolveConsoleAuthorize,
 } from './console_authorize.js';
+// The one matcher for console capabilities, shared by every Agora lib.
+export type { ConsoleCapabilityKind, ConsoleCapabilityTable } from './console_capabilities.js';
+export {
+  CONSOLE_ALL,
+  CONSOLE_READ,
+  CONSOLE_WRITE,
+  consoleCapabilityAllows,
+  consoleCapabilityKind,
+} from './console_capabilities.js';
 // The console shell's data-block fields: who is signed in, and how to sign out.
 export type {
   ConsoleSignOut,

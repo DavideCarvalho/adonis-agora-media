@@ -148,7 +148,30 @@ With `uploads.routes.enabled`, the provider mounts these **plain AdonisJS routes
 | `DELETE` | `/direct/:uploadId` | Abort the upload. |
 | `PUT` | `/proxy` | Stream bytes through the app to the disk. |
 
-The `key` (and optional `disk`) come from the JSON body or query string. The routes are unguarded by design — **add your own auth middleware** and resolve the key per user/tenant server-side so a client can't point an upload at another object.
+The client never chooses where bytes land:
+
+- it sends a **`fileName`** (body or query); the key is derived on the server by `routes.keyFor(fileName, token, ctx)`, default `uploads/<uuid>/<fileName>` (a name with `/`, `..` or control characters is refused). A client `key` is refused with `400`;
+- the disk is `routes.disk` (default: the media default disk); a client `disk` is accepted only when `routes.disks` lists it;
+- `initiate` answers an **`uploadToken`** (an HMAC under `APP_KEY` over the disk, the key and the upload id). The parts, complete and abort calls send `key`, `disk` and `uploadToken` back, and any other combination is refused (`403`), so nobody completes or aborts someone else's upload;
+- a `contentType` must be a bare `type/subtype`.
+
+Guard the routes with `routes.middleware`:
+
+```ts title="config/media.ts"
+import { middleware } from '#start/kernel'
+
+uploads: {
+  routes: {
+    enabled: true,
+    middleware: [middleware.auth()],
+    // Per user: keyFor: (fileName, token, ctx) => `users/${ctx.auth.user!.id}/${token}/${fileName}`,
+  },
+},
+```
+
+Without `middleware` the routes **do not mount in production**: the boot fails with the line to add (outside production they mount, with a warning). When something else guards them (a global middleware), say so with `allowUnguarded: true`. The same two options guard the TUS and direct-session routes.
+
+Upload tokens are signed with `APP_KEY` (or `uploads.secret` when set), so every instance accepts them. Without either, the routes do not mount in production; outside production a per-process key is used, with a warning.
 
 <Callout type="info">
   Forcing `mode: 'direct'` on a disk that can't do native multipart throws `UploadNotSupportedError` (`E_MEDIA_UPLOAD_NOT_SUPPORTED`), which the routes map to `400`.

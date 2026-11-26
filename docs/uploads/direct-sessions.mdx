@@ -73,13 +73,16 @@ export default defineConfig({
 | `routes.disk` | `string` | media default disk | Disk uploads land on (must be multipart-capable). |
 | `routes.maxSize` | `number` | — | Reject initiations whose declared `size` exceeds this. |
 | `routes.collection` | `string` | — | Collection whose `acceptsMimeTypes` gates `initiate`. Omit to accept any type. |
-| `routes.middleware` | `readonly unknown[]` | `[]` | Middleware applied to the whole route group — **the only way to guard these routes**. |
+| `routes.middleware` | `readonly unknown[]` | `[]` | Middleware applied to the whole route group (e.g. `[middleware.auth()]`). Required in production. |
+| `routes.allowUnguarded` | `boolean` | `false` | Mount without `middleware` in production too, when something else (a global middleware) guards the routes. |
 | `routes.policy` | `() => Promise<{ default: … }>` | — | Lazy thunk loading a [`DirectUploadPolicy`](/docs/media/uploads/direct-upload-policy) that owns key resolution, completion and error mapping. |
 
 `routes.middleware` is passed straight through to the AdonisJS route group, so it takes exactly what
 `router.group().middleware()` takes — `[middleware.auth()]`, a named middleware, your own. It is typed
-`readonly unknown[]` only so this config file never has to import AdonisJS. Leave it empty and the
-routes are **open to the internet**: the handler itself performs no authorization whatsoever.
+`readonly unknown[]` only so this config file never has to import AdonisJS. The handler itself
+performs no authorization whatsoever.
+
+Without `routes.middleware` (and without `routes.allowUnguarded: true`) these routes **do not mount in production**: the boot fails naming the option to set. Outside production they mount, with a warning. Every upload route group (`uploads.routes`, `uploads.direct.routes`, `uploads.resumable.routes`) takes the same two options.
 
 `routes.policy` is a thunk, not a value, so the policy module (and everything it imports) loads only
 when the routes first serve a request. The provider reads its default export: a policy **class** is

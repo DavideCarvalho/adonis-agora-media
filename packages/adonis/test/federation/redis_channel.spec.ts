@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { afterAll, describe, expect, it } from 'vitest';
 import { type AdonisRedisLike, RedisConsoleChannel } from '../../src/federation/redis_channel.js';
+import { TEST_CONSOLE_SECRET } from '../support/redis_bus.js';
 
 /**
  * The console channel against a real Redis: every instance of the owning app hears each command,
@@ -21,7 +22,11 @@ describe.skipIf(!url)('RedisConsoleChannel (real Redis)', () => {
     return redis;
   };
   const channel = (redis: Redis | AdonisRedisLike, name = prefix) => {
-    const ch = new RedisConsoleChannel({ client: redis as never, prefix: name });
+    const ch = new RedisConsoleChannel({
+      client: redis as never,
+      prefix: name,
+      secret: TEST_CONSOLE_SECRET,
+    });
     channels.push(ch);
     return ch;
   };
@@ -84,7 +89,9 @@ describe.skipIf(!url)('RedisConsoleChannel (real Redis)', () => {
         { id: randomUUID(), verb: 'disks', args: [] },
         { timeoutMs: 100 },
       ),
-    ).rejects.toThrow(/answered .* within 100ms/);
+    ).rejects.toThrow(
+      /^no instance of "media-fed-[^"]+" answered within 0\.1s — the app may have refused the command/,
+    );
   });
 
   it('works over an @adonisjs/redis-shaped connection too', async () => {
