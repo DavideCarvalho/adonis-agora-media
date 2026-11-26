@@ -3,7 +3,7 @@
 '@adonis-agora/media-react': minor
 ---
 
-Security fixes (reported privately by siao-ai). **Breaking**, see each item.
+Security fixes (found in an internal security audit). **Breaking**, see each item.
 
 **The federated console's Redis channel is authenticated.** Every request (reads included: listing disks and objects and signing URLs for any key used to run for anyone who could publish on Redis) and every answer is authenticated; a request over a minute old is refused, a replay runs once, a forged answer is ignored.
 
