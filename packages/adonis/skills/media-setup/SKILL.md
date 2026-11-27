@@ -135,7 +135,7 @@ Source: `docs/configuration.mdx`.
 Which disk a write targets resolves per-call first, then collection, then top-level, then
 Drive's default:
 
-```ts
+```ts no-check
 defineConfig({
   disk: 'public-s3',                                        // 3rd choice
   collections: [
@@ -322,7 +322,7 @@ Source: `docs/getting-started.mdx` (Prerequisites, Callout on migrations).
 
 Wrong:
 
-```ts
+```ts expect-error=TS2353
 // config/media.ts
 import { defineConfig } from '@adonis-agora/media/dashboard' // wrong file's helper
 export default defineConfig({ collections: [{ name: 'gallery' }] })
@@ -337,8 +337,9 @@ import { defineConfig } from '@adonis-agora/media'
 // import { defineConfig } from '@adonis-agora/media/dashboard'
 ```
 
-Mechanism: both packages export a `defineConfig`; the wrong one types the wrong file and
-silently drops unknown keys instead of failing.
+Mechanism: both entry points export a `defineConfig`; the dashboard one types
+`MediaDashboardConfig`, so media keys like `collections` are rejected (TS2353) and the
+`config/media.ts` shape goes unchecked.
 Source: README.md (subpath exports table), `docs/dashboard/index.mdx`.
 
 See also: `media-library-collections/SKILL.md` — attaching to collections after setup;

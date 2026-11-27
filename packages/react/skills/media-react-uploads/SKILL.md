@@ -75,19 +75,23 @@ Pass `storageKey` to persist session coordinates in `localStorage`; the hook pro
 mount and offers a resume button when pending parts remain:
 
 ```tsx
-const { upload, resume, resumable, status, progress } = useMediaUpload({
-  mode: 'direct',
-  storageKey: `upload:lesson:${lessonId}`,
-})
+import { useMediaUpload } from '@adonis-agora/media-react'
 
-return resumable ? (
-  <button type="button" onClick={() => resume()}>Resume "{resumable.fileName}"</button>
-) : (
-  <input type="file" onChange={(e) => {
-    const file = e.target.files?.[0]
-    if (file) upload(file, { filename: file.name })
-  }} />
-)
+export function LessonVideoUpload({ lessonId }: { lessonId: string }) {
+  const { upload, resume, resumable } = useMediaUpload({
+    mode: 'direct',
+    storageKey: `upload:lesson:${lessonId}`,
+  })
+
+  return resumable ? (
+    <button type="button" onClick={() => resume()}>Resume "{resumable.fileName}"</button>
+  ) : (
+    <input type="file" onChange={(e) => {
+      const file = e.target.files?.[0]
+      if (file) upload(file, { filename: file.name })
+    }} />
+  )
+}
 ```
 
 A persisted session is reused only when fileName AND byte size match; the server is the
@@ -240,14 +244,14 @@ Source: `docs/react/index.mdx` (warn callout under The typed completion body).
 
 Wrong:
 
-```tsx
+```tsx no-check
 <LessonVideo storageKey="upload" />
 <LessonCover storageKey="upload" /> // both write the same localStorage entry
 ```
 
 Correct:
 
-```tsx
+```tsx no-check
 <LessonVideo storageKey="upload:lesson-video" />
 <LessonCover storageKey="upload:cover" />
 ```

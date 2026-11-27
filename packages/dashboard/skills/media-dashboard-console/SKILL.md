@@ -38,7 +38,7 @@ providers: [
 ]
 ```
 
-```ts title="config/media_dashboard.ts"
+```ts no-check title="config/media_dashboard.ts"
 import { defineConfig } from '@adonis-agora/media/dashboard'
 import { middleware } from '#start/kernel'
 
@@ -64,7 +64,7 @@ Source: `docs/dashboard/index.mdx`.
 The console has no login of its own. `authorize` decides, and a signed-out visitor is sent to
 your app's login with `{ redirectTo }`:
 
-```ts title="config/media_dashboard.ts"
+```ts no-check title="config/media_dashboard.ts"
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
 export default defineConfig({
@@ -119,7 +119,7 @@ Source: `docs/dashboard/programmatic.mdx`.
 
 Providers run on every object preview and render structured data in the lightbox:
 
-```ts title="config/media_dashboard.ts"
+```ts no-check title="config/media_dashboard.ts"
 export default defineConfig({
   objectInsights: [
     {
@@ -149,7 +149,7 @@ The console reads each other app's records from its tables and asks the app itse
 to list disks, sign URLs and run actions (that app sets `consoleCommands` in its
 `config/media.ts`, see `media-setup`):
 
-```ts title="config/media_dashboard.ts"
+```ts no-check title="config/media_dashboard.ts"
 import { stores, uploadSessions } from '@adonis-agora/media'
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
@@ -243,7 +243,7 @@ Source: `docs/dashboard/programmatic.mdx` (Actions table).
 
 Wrong:
 
-```ts
+```ts no-check
 async resolve({ key }) {
   const related = await Related.query().where('key', key).preload('everything') // fan-out
   return { facts: related.map(...) }
@@ -252,7 +252,7 @@ async resolve({ key }) {
 
 Correct:
 
-```ts
+```ts no-check
 async resolve({ key }) {
   const doc = await Document.findBy('storageKey', key) // single indexed lookup
   return doc ? { facts: [{ label: 'Owner', value: doc.ownerEmail }] } : null

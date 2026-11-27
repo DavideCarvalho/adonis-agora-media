@@ -171,7 +171,7 @@ Source: `docs/getting-started.mdx` (Idempotent overwrites).
 
 Wrong:
 
-```ts
+```ts no-check
 // 'avatar' declared WITHOUT single: true — each call appends another file
 await media.library.attach({ ownerType: 'User', ownerId: '1', collection: 'avatar', ... }) // v1
 await media.library.attach({ ownerType: 'User', ownerId: '1', collection: 'avatar', ... }) // v2

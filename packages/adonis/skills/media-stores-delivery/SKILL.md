@@ -85,7 +85,7 @@ Source: `docs/dashboard/collections.mdx`, `docs/stores-and-processors.mdx`.
 
 Both seams are tiny interfaces; wire them through a factory thunk so any peer loads lazily:
 
-```ts
+```ts no-check
 import { defineConfig } from '@adonis-agora/media'
 import type { ImageProcessor, MediaStore, StoreFactory } from '@adonis-agora/media'
 
