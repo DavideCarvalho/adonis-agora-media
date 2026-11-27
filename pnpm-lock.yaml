@@ -259,8 +259,8 @@ importers:
         specifier: 3.1176.0
         version: 3.1176.0
       '@mediabunny/server':
-        specifier: 1.66.3
-        version: 1.66.3(mediabunny@1.66.3)
+        specifier: 1.66.4
+        version: 1.66.4(mediabunny@1.66.3)
       '@smithy/util-stream':
         specifier: 4.8.2
         version: 4.8.2
@@ -1449,8 +1449,8 @@ packages:
     peerDependencies:
       mediabunny: ^1.49.0
 
-  '@mediabunny/server@1.66.3':
-    resolution: {integrity: sha512-xtiAXdGRcUKr6b8DOXAAJ1JMvRJoJNBXA0fBGXj+fWxJ0oOJvftUT7u1wDj82Cx/x/RC4qvehEolaNsmu+58oA==}
+  '@mediabunny/server@1.66.4':
+    resolution: {integrity: sha512-JZyooBxhHfzpIoPolb4fURIcMSLVwLmt10BUdm56fH3Wcdkh9n2Fe/PzaSUFzoBVoGjwOX6AMMibbVyeGHWymw==}
     peerDependencies:
       mediabunny: ^1.45.0
 
@@ -5680,7 +5680,7 @@ snapshots:
       mediabunny: 1.66.3
       turbores: 1.2.6
 
-  '@mediabunny/server@1.66.3(mediabunny@1.66.3)':
+  '@mediabunny/server@1.66.4(mediabunny@1.66.3)':
     dependencies:
       '@mediabunny/prores': 1.66.4(mediabunny@1.66.3)
       mediabunny: 1.66.3
