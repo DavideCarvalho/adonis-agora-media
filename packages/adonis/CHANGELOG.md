@@ -1,5 +1,11 @@
 # @adonis-agora/media
 
+## 1.1.1
+
+### Patch Changes
+
+- [#394](https://github.com/DavideCarvalho/adonis-agora-media/pull/394) [`652db90`](https://github.com/DavideCarvalho/adonis-agora-media/commit/652db90ea257b63fd83277ad594d4a9ea6f81442) Thanks [@DavideCarvalho](https://github.com/DavideCarvalho)! - `node ace configure @adonis-agora/media --topology=tenant` publishes `config/media.ts` in the one-line tenant form (`defineConfig({ topology: 'tenant' })`), with a note that url, token and partition come from `@adonis-agora/authkit-client` and the explicit `tenant` fields commented out, and skips the store, upload-session and tenancy migrations a tenant never uses. Without the flag, configure is unchanged.
+
 ## 1.1.0
 
 ### Minor Changes
