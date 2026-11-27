@@ -18,3 +18,14 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@adonis-agora/filter@1.0.0-rc.5 || 1.0.0'
   - '@adonis-agora/filter-client@1.0.0-rc.1 || 1.0.0'
+  - '@adonis-agora/authkit-client@1.1.1'
+  - '@adonis-agora/authkit-core@1.0.1'
+
+# Intent (`intent validate`) typechecks the skill examples from the repo root, so their imports
+# must resolve there: hoist the AdonisJS packages the library already depends on, so the examples
+# load `HttpContext`, `router`, drive and lucid types from the same copies the library uses.
+# Install-time only: no published package changes.
+publicHoistPattern:
+  - "@adonisjs/core"
+  - "@adonisjs/drive"
+  - "@adonisjs/lucid"

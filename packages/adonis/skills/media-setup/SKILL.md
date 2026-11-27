@@ -82,6 +82,8 @@ Reach the singleton manager anywhere:
 ```ts
 import media from '@adonis-agora/media/services/main'
 
+declare const recordId: string // a media record id your app stored
+
 const url = await media.library.url(recordId)
 ```
 
@@ -181,6 +183,8 @@ write: media fills `tenant.url`, `tenant.token` and `tenant.partition` from
 `authkit.client.tenantOf('urn:agora:media')` (partition: `service.partition`, else `service.name`).
 
 ```ts title="config/media.ts (a tenant app)"
+import { defineConfig } from '@adonis-agora/media'
+
 export default defineConfig({
   topology: 'tenant',
   delivery: { path: '/media/:id' },
@@ -192,7 +196,13 @@ Bring your own (another client, another IdP, a shared secret): each field you se
 authkit-client's, one by one, and `tenant: { auto: false }` turns the detection off.
 
 ```ts
+import env from '#start/env'
+import { defineConfig } from '@adonis-agora/media'
 import { authkitTenantToken, controlPlaneUrl } from '@adonis-agora/authkit-client'
+
+const issuer = env.get('AUTHKIT_ISSUER')
+const clientId = env.get('AUTHKIT_CLIENT_ID')
+const clientSecret = env.get('AUTHKIT_CLIENT_SECRET')
 
 defineConfig({
   topology: 'tenant',
@@ -221,6 +231,8 @@ An app shown in another app's media console (its `config/media_dashboard.ts` →
 over Redis (`@adonisjs/redis`) from `config/media.ts`:
 
 ```ts title="config/media.ts"
+import { defineConfig } from '@adonis-agora/media'
+
 export default defineConfig({
   consoleCommands: { connection: 'main', prefix: 'entretextos' }, // browse only
   // consoleCommands: { connection: 'main', prefix: 'entretextos', actions: true }, // allow changes
@@ -275,6 +287,8 @@ Source: `docs/errors.mdx` (Storage and configuration).
 Wrong:
 
 ```ts
+import { defineConfig, stores } from '@adonis-agora/media'
+
 defineConfig({
   store: 'luicd', // typo
   stores: { lucid: stores.lucid() },
@@ -284,6 +298,8 @@ defineConfig({
 Correct:
 
 ```ts
+import { defineConfig, stores } from '@adonis-agora/media'
+
 defineConfig({
   store: 'lucid',
   stores: { lucid: stores.lucid() },
