@@ -142,8 +142,8 @@ export function mediaStackUses(config: MediaConfig, ctx: MediaStackContext = {})
   };
 
   // A tenant uses no disk or table of its own: its media lives on the control plane.
-  if (config.topology === 'tenant' && config.tenant) {
-    const url = typeof config.tenant.url === 'string' ? config.tenant.url : undefined;
+  if (config.topology === 'tenant') {
+    const url = typeof config.tenant?.url === 'string' ? config.tenant.url : undefined;
     const host = endpointHost(url);
     add({
       tech: 'control-plane',

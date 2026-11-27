@@ -165,6 +165,66 @@ describe('MediaProvider — topologies', () => {
     expect(manager.library.constructor.name).toBe('TenantMediaLibrary');
   });
 
+  it('builds a tenant manager from authkit-client alone (`topology: tenant`, no `tenant`)', async () => {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const { MediaManager } = await import('../src/media_manager.js');
+    let factory: (() => Promise<unknown>) | undefined;
+    const resources: string[] = [];
+    const authkit = {
+      tenantOf(resource: string) {
+        resources.push(resource);
+        return {
+          url: async () => 'https://hub.example/_media',
+          token: async () => 'tok',
+          partition: 'shop',
+        };
+      },
+    };
+    const app = {
+      config: {
+        get: (key: string, def: unknown) => (key === 'media' ? { topology: 'tenant' } : def),
+      },
+      container: {
+        singleton: vi.fn((token: unknown, fn: () => Promise<unknown>) => {
+          if (token === MediaManager) factory = fn;
+        }),
+        make: vi.fn(async (key: unknown) => {
+          if (key === 'authkit.client') return authkit;
+          throw new Error('nothing to resolve');
+        }),
+        hasBinding: (key: string) => key === 'authkit.client',
+      },
+      booted: vi.fn(),
+    };
+    new MediaProvider(app as never).register();
+    const manager = (await factory!()) as InstanceType<typeof MediaManager>;
+    expect(manager.topology).toBe('tenant');
+    expect(resources).toEqual(['urn:agora:media']);
+  });
+
+  it('fails a web boot when a tenant has neither the fields nor authkit-client', async () => {
+    const { default: MediaProvider } = await import('../providers/media_provider.js');
+    const app = {
+      config: {
+        get: (key: string, def: unknown) => (key === 'media' ? { topology: 'tenant' } : def),
+      },
+      container: {
+        singleton: vi.fn(),
+        make: vi.fn(async () => {
+          throw new Error('nothing to resolve');
+        }),
+        hasBinding: () => false,
+      },
+      getEnvironment: () => 'web',
+      booted: vi.fn(),
+    };
+    const provider = new MediaProvider(app as never);
+    provider.register();
+    await expect(provider.boot()).rejects.toThrow(
+      /topology 'tenant' needs tenant\.url, tenant\.token, tenant\.partition\. Fix: configure @adonis-agora\/authkit-client's `service/,
+    );
+  });
+
   it('gives a standalone app media.accounts when config/media.ts has `accounts`', async () => {
     const { default: MediaProvider } = await import('../providers/media_provider.js');
     const { MediaManager } = await import('../src/media_manager.js');

@@ -280,15 +280,18 @@ describe('doctor', () => {
     });
   });
 
-  it('media.topology and media.disks on a tenant', () => {
-    expect(checkTopology(tenant('et', 'et'))).toMatchObject({ status: 'ok' });
-    expect(checkTopology({ topology: 'control-plane' })).toMatchObject({ status: 'error' });
+  it('media.topology and media.disks on a tenant', async () => {
+    expect(await checkTopology(tenant('et', 'et'))).toMatchObject({
+      status: 'ok',
+      message: expect.stringContaining('(tenant url/token/partition: explicit)'),
+    });
+    expect(await checkTopology({ topology: 'control-plane' })).toMatchObject({ status: 'error' });
     expect(checkDisks(tenant('et', 'et'), null)).toMatchObject({ status: 'skip' });
   });
 
-  it('media.topology on a standalone app with account files elsewhere', () => {
+  it('media.topology on a standalone app with account files elsewhere', async () => {
     expect(
-      checkTopology({
+      await checkTopology({
         accounts: { url: 'https://hub.example/_media', partition: 'et', token: 's' },
       }),
     ).toMatchObject({

@@ -57,6 +57,7 @@ import { describeMediaConfig } from '../src/stack.js';
 import type { StoreContext } from '../src/stores/factory.js';
 import { resolveStore } from '../src/stores/factory.js';
 import { resolveTenantVerifier } from '../src/topology/auth.js';
+import { resolveMediaTenant } from '../src/topology/authkit_tenant.js';
 import { MediaControlPlane } from '../src/topology/control_plane.js';
 import { partitionStore } from '../src/topology/partition_store.js';
 import { buildTenantManager, standaloneAccountsOf } from '../src/topology/tenant_manager.js';
@@ -80,6 +81,8 @@ import { resolveUploadSessionStore } from '../src/upload_sessions/factory.js';
 export default class MediaProvider {
   /** The channel this app answers other apps' federated consoles on (`consoleCommands`). */
   #consoleChannel: RedisConsoleChannel | undefined;
+  /** See {@link MediaProvider.#resolvedConfig}. */
+  #resolvedConfigPromise: Promise<{ config: MediaConfig }> | undefined;
 
   constructor(protected app: ApplicationService) {}
 
@@ -91,7 +94,8 @@ export default class MediaProvider {
     setBootedApp(this.app);
 
     this.app.container.singleton(MediaManager, async () => {
-      const config = this.app.config.get<MediaConfig>('media', {});
+      // A tenant's url/token/partition: what config/media.ts sets, else authkit-client's.
+      const { config } = await this.#resolvedConfig();
       assertMediaTopology(config);
       // A tenant: records, files and conversions live on the control plane.
       if (config.topology === 'tenant' && config.tenant) return buildTenantManager(config);
@@ -232,8 +236,29 @@ export default class MediaProvider {
    * Mount the media routes once the app has booted (see the comment inside for why). No-ops when
    * neither the TUS resumable routes nor the direct-upload routes are enabled in config.
    */
+  /**
+   * `config/media.ts`, with a tenant's missing `url`/`token`/`partition` filled in from
+   * `@adonis-agora/authkit-client` (`tenantOf`, detected by shape). Resolved once; throws, naming
+   * both fixes, when a field resolves from neither.
+   */
+  #resolvedConfig(): Promise<{ config: MediaConfig }> {
+    this.#resolvedConfigPromise ??= resolveMediaTenant(
+      this.app.config.get<MediaConfig>('media', {}),
+      this.app.container as never,
+    );
+    return this.#resolvedConfigPromise;
+  }
+
   async boot() {
     this.#resolvedAppKey = await appKeyOf(this.app);
+    // A tenant whose url/token/partition resolve from neither config/media.ts nor authkit-client
+    // fails the boot of a web process here, naming both fixes. An ace command never fails for it.
+    if (
+      this.app.config.get<MediaConfig>('media', {}).topology === 'tenant' &&
+      this.app.getEnvironment?.() === 'web'
+    ) {
+      await this.#resolvedConfig();
+    }
     // A federated console this app cannot authenticate fails the boot here, in web processes (where
     // the channel starts), saying what to add. Never in `ready()`: the HTTP server is listening then.
     const consoleCommands = this.app.config.get<MediaConfig>('media', {}).consoleCommands;
