@@ -116,6 +116,9 @@ Source: `docs/stores-and-processors.mdx` (Writing your own store / processor).
 with `isExtendedDisk`) and `MultipartUploadDisk` (`isMultipartCapable`):
 
 ```ts
+import { isExtendedDisk } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
 const s3 = media.disk('s3')
 
 if (isExtendedDisk(s3)) {
@@ -143,7 +146,11 @@ unknown ⇒ signed. `MediaDeliveryHandler` is framework-agnostic: YOU mount the 
 YOUR auth:
 
 ```ts title="start/routes.ts"
+import { authorizeMediaAccess } from '#policies/media_access'
+import { middleware } from '#start/kernel'
 import { MediaDeliveryHandler, MediaManager } from '@adonis-agora/media'
+import app from '@adonisjs/core/services/app'
+import router from '@adonisjs/core/services/router'
 
 const media = await app.container.make(MediaManager)
 const delivery = new MediaDeliveryHandler({ library: media })
@@ -179,7 +186,8 @@ Source: `docs/delivery.mdx`, `docs/streaming.mdx` (The stream route), `docs/tran
 
 Wrong:
 
-```ts
+```ts expect-error=TS2322
+import { createDriveBackedResolver } from '@adonis-agora/media'
 import driveService from '@adonisjs/drive/services/main' // captured default
 const resolve = createDriveBackedResolver({ driveService, configuredDisks: {}, defaultDisk: 's3' })
 ```
@@ -187,6 +195,7 @@ const resolve = createDriveBackedResolver({ driveService, configuredDisks: {}, d
 Correct:
 
 ```ts
+import { createDriveBackedResolver } from '@adonis-agora/media'
 import * as driveService from '@adonisjs/drive/services/main' // the NAMESPACE
 const resolve = createDriveBackedResolver({ driveService, configuredDisks: {}, defaultDisk: 's3' })
 ```
@@ -202,6 +211,12 @@ Source: `docs/stores-and-processors.mdx` (createDriveBackedResolver).
 Wrong:
 
 ```ts
+import { MediaDeliveryHandler } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import router from '@adonisjs/core/services/router'
+
+const delivery = new MediaDeliveryHandler({ library: media })
+
 router.get('/media/:id', async ({ params, response }) => {
   const result = await delivery.handle({ mediaId: params.id })
   if (result.kind === 'redirect') return response.redirect(result.url)
@@ -212,6 +227,14 @@ router.get('/media/:id', async ({ params, response }) => {
 Correct:
 
 ```ts
+import { authorizeMediaAccess } from '#policies/media_access'
+import { middleware } from '#start/kernel'
+import { MediaDeliveryHandler } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import router from '@adonisjs/core/services/router'
+
+const delivery = new MediaDeliveryHandler({ library: media })
+
 router.get('/media/:id', async ({ params, request, response, auth }) => {
   await authorizeMediaAccess(auth.user, params.id)
   const result = await delivery.handle({ mediaId: params.id })
@@ -229,6 +252,8 @@ Source: `docs/delivery.mdx` (error callout: The handler performs NO authorizatio
 Wrong:
 
 ```ts
+import { disks } from '@adonis-agora/media'
+
 disks.s3({ bucket: 'media', endpoint: 'http://minio.internal:9000' }) // internal host
 // delivery auto signs URLs against the INTERNAL host → unresolvable in the browser
 ```
@@ -236,6 +261,8 @@ disks.s3({ bucket: 'media', endpoint: 'http://minio.internal:9000' }) // interna
 Correct:
 
 ```ts
+import { disks } from '@adonis-agora/media'
+
 disks.s3({
   bucket: 'media',
   endpoint: 'http://minio.internal:9000',       // server-side operations
@@ -254,6 +281,8 @@ Source: `docs/delivery.mdx` (auto never picks proxy), `docs/storage/s3-disk.mdx`
 Wrong:
 
 ```ts
+import { stores } from '@adonis-agora/media'
+
 // config/database.ts: media: { client: 'pg', searchPath: ['media'], ... }
 stores.lucid({ connection: 'media' })
 // SET search_path is per session; behind PgBouncer (transaction mode) it leaks to other clients
@@ -262,6 +291,8 @@ stores.lucid({ connection: 'media' })
 Correct:
 
 ```ts
+import { stores, uploadSessions } from '@adonis-agora/media'
+
 stores.lucid({ connection: 'pg', schema: 'media' })
 uploadSessions.lucid({ connection: 'pg', schema: 'media' })
 ```
@@ -302,6 +333,8 @@ Source: `docs/stores-and-processors.mdx` (The MediaStore), `docs/dashboard/colle
 Wrong:
 
 ```ts
+import { disks } from '@adonis-agora/media'
+
 disks.s3({ bucket: 'media', visibility: 'public' }) // expecting objects to become readable
 // → 403s from the bucket: no bucket policy grants anonymous reads
 ```
@@ -309,6 +342,8 @@ disks.s3({ bucket: 'media', visibility: 'public' }) // expecting objects to beco
 Correct:
 
 ```ts
+import { disks } from '@adonis-agora/media'
+
 // make the bucket readable via its policy/CDN, THEN declare it:
 disks.s3({ bucket: 'media', visibility: 'public', publicBaseUrl: 'https://cdn.example.com' })
 ```

@@ -38,15 +38,52 @@ providers: [
 ]
 ```
 
-```ts no-check title="config/media_dashboard.ts"
-import { defineConfig } from '@adonis-agora/media/dashboard'
+`authorize` reads `ctx.auth`, which only exists with `@adonisjs/auth` installed:
+`node ace add @adonisjs/auth` writes `config/auth.ts`, whose `Authenticators` declaration types
+`ctx.auth.user` as your `User` model, and registers the middleware that sets `ctx.auth` on every
+request:
+
+```ts title="config/auth.ts"
+import { defineConfig } from '@adonisjs/auth'
+import { sessionGuard, sessionUserProvider } from '@adonisjs/auth/session'
+import type { InferAuthenticators } from '@adonisjs/auth/types'
+
+const authConfig = defineConfig({
+  default: 'web',
+  guards: {
+    web: sessionGuard({
+      useRememberMeTokens: false,
+      provider: sessionUserProvider({ model: () => import('#models/user') }),
+    }),
+  },
+})
+
+export default authConfig
+
+declare module '@adonisjs/auth/types' {
+  export interface Authenticators extends InferAuthenticators<typeof authConfig> {}
+}
+```
+
+```ts title="start/kernel.ts (excerpt)"
+import router from '@adonisjs/core/services/router'
+
+router.use([() => import('@adonisjs/auth/initialize_auth_middleware')])
+```
+
+```ts title="config/media_dashboard.ts"
+import type User from '#models/user'
 import { middleware } from '#start/kernel'
+import { defineConfig } from '@adonis-agora/media/dashboard'
 
 export default defineConfig({
   basePath: '/media/dashboard',
   actions: true,                 // copy/move/delete — read-only when false (the default)
   disks: ['s3', 'backups'],
-  authorize: (ctx) => ctx.auth.user?.isAdmin === true, // who may open it — SPA + API
+  authorize: (ctx) => {
+    const user: User | undefined = ctx.auth.user // who may open it — SPA + API
+    return user?.isAdmin === true
+  },
   middleware: middleware.auth(), // runs after authorize
 })
 ```
@@ -64,13 +101,15 @@ Source: `docs/dashboard/index.mdx`.
 The console has no login of its own. `authorize` decides, and a signed-out visitor is sent to
 your app's login with `{ redirectTo }`:
 
-```ts no-check title="config/media_dashboard.ts"
+```ts title="config/media_dashboard.ts"
+import type User from '#models/user'
 import { defineConfig } from '@adonis-agora/media/dashboard'
 
 export default defineConfig({
   authorize: async (ctx) => {
     if (!(await ctx.auth.check())) return { redirectTo: '/login' }
-    return ctx.auth.user!.isAdmin === true
+    const user: User = ctx.auth.getUserOrFail()
+    return user.isAdmin === true
   },
 })
 ```
@@ -88,8 +127,11 @@ Source: `docs/dashboard/authentication.mdx`.
 own admin screens get the same paging and transfer engine:
 
 ```ts title="start/routes.ts"
+import { middleware } from '#start/kernel'
 import { MediaManager } from '@adonis-agora/media'
 import { DashboardService, DashboardError, readObjectsQuery } from '@adonis-agora/media/dashboard'
+import app from '@adonisjs/core/services/app'
+import router from '@adonisjs/core/services/router'
 
 const media = await app.container.make(MediaManager)
 const dashboard = new DashboardService(media, { diskNames: ['s3'], actions: true })
@@ -192,15 +234,24 @@ Source: `docs/dashboard/federated-console.mdx`, `packages/adonis/src/federation/
 Wrong:
 
 ```ts
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
 export default defineConfig({ actions: true }) // no authorize, no middleware
 ```
 
 Correct:
 
 ```ts
+import type User from '#models/user'
+import { middleware } from '#start/kernel'
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
 export default defineConfig({
   actions: true,
-  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+  authorize: (ctx) => {
+    const user: User | undefined = ctx.auth.user
+    return user?.isAdmin === true
+  },
   middleware: middleware.auth(),
 })
 ```
@@ -222,12 +273,25 @@ Source: `docs/dashboard/index.mdx` (warn callout, Folder operations warn),
 Wrong:
 
 ```ts
+import type { DashboardService } from '@adonis-agora/media/dashboard'
+
+declare const dashboard: DashboardService // built as in Pattern 2
+declare const id: string // a media record id
+
 await dashboard.deleteMediaRecord(id) // expecting the bucket to lose the file
 ```
 
 Correct:
 
 ```ts
+import type { MediaRecord } from '@adonis-agora/media'
+import type { DashboardService } from '@adonis-agora/media/dashboard'
+import media from '@adonis-agora/media/services/main'
+
+declare const dashboard: DashboardService // built as in Pattern 2
+declare const record: MediaRecord
+const id = record.id
+
 await dashboard.deleteMediaRecord(id)         // removes the MediaStore row only
 await dashboard.remove({ disk: 's3', keys: [record.path] }) // remove objects explicitly
 // or delete through the library, which removes original AND conversions:

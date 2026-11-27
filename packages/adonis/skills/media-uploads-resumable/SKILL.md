@@ -37,6 +37,7 @@ uploads whose state survives a reload.
 ## Setup
 
 ```ts title="config/media.ts"
+import { middleware } from '#start/kernel'
 import { defineConfig, disks, stores, uploadSessions } from '@adonis-agora/media'
 
 export default defineConfig({
@@ -87,6 +88,10 @@ Source: `docs/uploads/upload-modes.mdx`, `docs/uploads/resumable-tus.mdx`, `docs
 ```ts
 import { resolveUploadMode, isMultipartCapable } from '@adonis-agora/media'
 import type { ResolvedUploadMode, UploadModeLevels } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
+
+declare const request: HttpContext['request']
 
 const mode: ResolvedUploadMode = resolveUploadMode(
   { global: 'auto', perCall: request.input('mode') } satisfies UploadModeLevels,
@@ -104,6 +109,10 @@ Programmatically:
 
 ```ts
 import media from '@adonis-agora/media/services/main'
+import type { MultipartFile } from '@adonisjs/core/bodyparser'
+
+declare const file: MultipartFile
+declare const chunk1: Buffer, chunk2: Buffer // the request bodies of the PATCHes
 
 const session = await media.resumable.createUpload({
   disk: 's3', key: `users/1/video.mp4`, size: file.size, contentType: 'video/mp4',
@@ -128,6 +137,15 @@ Do NOT read the bytes back through `attach()` — that buffers and rewrites the 
 Register the object where it already is:
 
 ```ts
+import type Lesson from '#models/lesson'
+import type Patient from '#models/patient'
+import type { DirectUploadCreatedSession, MultipartPart, UploadSession } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const session: UploadSession, patient: Patient
+declare const created: DirectUploadCreatedSession, lesson: Lesson
+declare const partsFromClient: MultipartPart[] // { partNumber, etag }[] the browser reports
+
 // TUS finalize:
 const record = await media.completeUploadToLibrary(session.id, {
   ownerType: 'Patient', ownerId: patient.id, collection: 'exams',
@@ -150,20 +168,38 @@ Source: `docs/uploads/resumable-tus.mdx` (Turning a finished upload into a media
 ### Pattern 4 — a DirectUploadPolicy owns every app decision
 
 The handler owns mechanics; the policy owns decisions. With a policy, `keyFor` is never
-called — the key is computed server-side from authenticated context:
+called — the key is computed server-side from authenticated context. `ctx.bouncer` is typed by
+the middleware `node ace add @adonisjs/bouncer` writes:
+
+```ts title="app/middleware/initialize_bouncer_middleware.ts (excerpt)"
+import * as abilities from '#abilities/main'
+import { policies } from '#generated/policies'
+import type { Bouncer } from '@adonisjs/bouncer'
+import type { HttpContext } from '@adonisjs/core/http'
+
+declare module '@adonisjs/core/http' {
+  export interface HttpContext {
+    bouncer: Bouncer<Exclude<HttpContext['auth']['user'], undefined>, typeof abilities, typeof policies>
+  }
+}
+```
 
 ```ts title="app/media/lesson_video_policy.ts"
-import { cuid } from '@adonisjs/core/helpers'
+import { randomUUID } from 'node:crypto'
+import Lesson from '#models/lesson'
+import LessonUpload from '#models/lesson_upload'
+import type User from '#models/user'
+import { errors } from '@adonisjs/bouncer'
 import type { HttpContext } from '@adonisjs/core/http'
 import type { DirectUploadPolicy, InitiateDecision, CompleteResolution } from '@adonis-agora/media'
 
 export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext, { uploadRowId: string }> {
   async onInitiate(ctx: HttpContext, input): Promise<InitiateDecision<{ uploadRowId: string }>> {
-    const user = ctx.auth.getUserOrFail()
+    const user: User = ctx.auth.getUserOrFail()
     const lesson = await Lesson.findOrFail(ctx.params.lessonId)
     await ctx.bouncer.authorize('uploadLessonVideo', lesson) // ← authorization lives HERE
 
-    const key = `tenants/${user.tenantId}/lessons/${lesson.id}/${cuid()}.mp4`
+    const key = `tenants/${user.tenantId}/lessons/${lesson.id}/${randomUUID()}.mp4`
     const row = await LessonUpload.create({ lessonId: lesson.id, key, status: 'pending' })
 
     return {
@@ -191,7 +227,7 @@ export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext
   }
 
   mapError(_ctx, error) {
-    if (error instanceof AuthorizationException) return { status: 403, body: { error: 'forbidden' } }
+    if (error instanceof errors.E_AUTHORIZATION_FAILURE) return { status: 403, body: { error: 'forbidden' } }
     return undefined // fall through to the handler's mapping
   }
 }
@@ -243,6 +279,12 @@ await media.library.attach({ ..., contents: bytes }) // …and rewrites it to a 
 Correct:
 
 ```ts
+import type Patient from '#models/patient'
+import type { UploadSession } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const session: UploadSession, patient: Patient
+
 const record = await media.completeUploadToLibrary(session.id, {
   ownerType: 'Patient', ownerId: patient.id, collection: 'exams',
   fileName: 'exam.pdf', mimeType: 'application/pdf',
@@ -301,6 +343,10 @@ Source: `docs/uploads/upload-modes.mdx` (Resolving the mode yourself).
 Wrong:
 
 ```ts
+import media from '@adonis-agora/media/services/main'
+
+declare const id: string // the direct upload session id
+
 await media.direct.complete(id) // returns { key, disk, size } — no MediaRecord created
 await media.library.url('???') // nothing to look up
 ```
@@ -308,6 +354,11 @@ await media.library.url('???') // nothing to look up
 Correct:
 
 ```ts
+import type Lesson from '#models/lesson'
+import media from '@adonis-agora/media/services/main'
+
+declare const id: string, lesson: Lesson
+
 const record = await media.completeDirectUploadToLibrary(id, {
   ownerType: 'Lesson', ownerId: lesson.id, collection: 'videos',
   fileName: 'original.mp4', mimeType: 'video/mp4',
@@ -324,6 +375,11 @@ Source: `docs/uploads/direct-upload-policy.mdx` (Without a policy).
 Wrong:
 
 ```ts
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
+
+declare const request: HttpContext['request'], contents: Buffer
+
 // routes take `key` from the request body and use it verbatim
 const key = request.input('key')
 await media.proxyUpload({ key, contents })
@@ -332,9 +388,17 @@ await media.proxyUpload({ key, contents })
 Correct:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import type User from '#models/user'
+import { parseTusMetadata } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+import type { HttpContext } from '@adonisjs/core/http'
+
+declare const auth: HttpContext['auth'], request: HttpContext['request'], contents: Buffer
+
 // resolve the key server-side from authenticated context (or use a policy)
-const user = await auth.getUserOrFail()
-await media.proxyUpload({ key: `users/${user.id}/${cuid()}.mp4`, contents })
+const user: User = auth.getUserOrFail()
+await media.proxyUpload({ key: `users/${user.id}/${randomUUID()}.mp4`, contents })
 // TUS metadata: parse + validate before use
 const meta = parseTusMetadata(request.header('upload-metadata'))
 ```

@@ -32,6 +32,39 @@ files with policy.
 
 ## Setup
 
+The controller reads the signed-in user from `ctx.auth`, which only exists with
+`@adonisjs/auth` installed: `node ace add @adonisjs/auth` writes `config/auth.ts`, whose
+`Authenticators` declaration types `ctx.auth.user` as your `User` model, and registers the
+middleware that sets `ctx.auth` on every request:
+
+```ts title="config/auth.ts"
+import { defineConfig } from '@adonisjs/auth'
+import { sessionGuard, sessionUserProvider } from '@adonisjs/auth/session'
+import type { InferAuthenticators } from '@adonisjs/auth/types'
+
+const authConfig = defineConfig({
+  default: 'web',
+  guards: {
+    web: sessionGuard({
+      useRememberMeTokens: false,
+      provider: sessionUserProvider({ model: () => import('#models/user') }),
+    }),
+  },
+})
+
+export default authConfig
+
+declare module '@adonisjs/auth/types' {
+  export interface Authenticators extends InferAuthenticators<typeof authConfig> {}
+}
+```
+
+```ts title="start/kernel.ts (excerpt)"
+import router from '@adonisjs/core/services/router'
+
+router.use([() => import('@adonisjs/auth/initialize_auth_middleware')])
+```
+
 ```ts title="app/controllers/avatars_controller.ts"
 import { createReadStream } from 'node:fs'
 import User from '#models/user'
@@ -40,7 +73,7 @@ import type { HttpContext } from '@adonisjs/core/http'
 
 export default class AvatarsController {
   async update({ request, response, auth }: HttpContext) {
-    const user = auth.getUserOrFail()
+    const user: User = auth.getUserOrFail()
 
     const avatar = request.file('avatar', { size: '2mb', extnames: ['jpg', 'jpeg', 'png', 'webp'] })
     if (!avatar) return response.badRequest({ error: 'An "avatar" file is required' })
@@ -100,6 +133,12 @@ The value object never touches storage; URL resolution and deletion go through
 `media.attachments`:
 
 ```ts
+import type User from '#models/user'
+import { Attachment } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const user: User
+
 const att = Attachment.fromJSON(user.avatarData)!
 
 await media.attachments.url(att)            // original
@@ -155,6 +194,11 @@ Source: `docs/single-file.mdx`.
 Wrong:
 
 ```ts
+import type { CreateAttachmentInput } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const input: CreateAttachmentInput // { fileName, mimeType, contents }
+
 const att = await media.attachments.createFromFile(input) // no variants option
 await media.attachments.url(att, 'thumb') // throws
 ```
@@ -162,6 +206,11 @@ await media.attachments.url(att, 'thumb') // throws
 Correct:
 
 ```ts
+import type { CreateAttachmentInput } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const input: CreateAttachmentInput // { fileName, mimeType, contents }
+
 const att = await media.attachments.createFromFile(input, {
   variants: [{ name: 'thumb', width: 100 }],
 })
@@ -180,6 +229,11 @@ Source: `docs/attachments.mdx` (Variants are eager callout, Resolving URLs).
 Wrong:
 
 ```ts
+import type { Attachment } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const att: Attachment
+
 await media.attachments.delete(att)
 // column still holds the JSON → every url()/signedUrl() resolves deleted objects
 ```
@@ -187,6 +241,13 @@ await media.attachments.delete(att)
 Correct:
 
 ```ts
+import type User from '#models/user'
+import type { Attachment } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const user: User
+declare const att: Attachment
+
 await media.attachments.delete(att)
 user.avatarData = null
 await user.save()
@@ -211,6 +272,8 @@ Correct:
 
 ```ts
 // config/media.ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [{ name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] }],
 })

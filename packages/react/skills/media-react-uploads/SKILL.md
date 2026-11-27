@@ -123,6 +123,10 @@ import { MediaUploader } from '@adonis-agora/media-react'
 ```ts
 import { createMediaUploadClient } from '@adonis-agora/media-react/client'
 
+declare const file: File // from an <input type="file">
+declare const token: string // your app's access token
+declare function fresh(): Promise<string> // refreshes it
+
 const client = createMediaUploadClient({
   baseUrl: 'https://api.example.com',
   headers: { Authorization: `Bearer ${token}` },            // app requests only
@@ -143,6 +147,11 @@ With a `DirectUploadPolicy`, the complete response body is whatever `onComplete`
 Type it and narrow the discriminated union:
 
 ```tsx
+import { useMediaUpload } from '@adonis-agora/media-react'
+import { router } from '@inertiajs/react'
+
+declare const file: File
+
 type Completion = { mediaId: string; status: 'processing' }
 
 const { upload } = useMediaUpload<Completion>({ mode: 'direct' })
@@ -165,17 +174,27 @@ Source: `docs/react/index.mdx` (The typed completion body).
 Wrong:
 
 ```ts
+import { createMediaUploadClient } from '@adonis-agora/media-react/client'
+
+declare const token: string
+
 // custom PartUploader that forwards app headers everywhere
 const client = createMediaUploadClient({
   headers: { Authorization: `Bearer ${token}` },
-  partUploader: (url, body) =>
-    fetch(url, { method: 'PUT', body, headers: { Authorization: `Bearer ${token}` } }),
+  partUploader: async (url, body) => {
+    const res = await fetch(url, { method: 'PUT', body, headers: { Authorization: `Bearer ${token}` } })
+    return res.headers.get('ETag')!
+  },
 })
 ```
 
 Correct:
 
 ```ts
+import { createMediaUploadClient } from '@adonis-agora/media-react/client'
+
+declare const token: string
+
 const client = createMediaUploadClient({
   headers: { Authorization: `Bearer ${token}` }, // app requests only
 })
@@ -198,16 +217,26 @@ Source: `docs/react/index.mdx` (warn callout), `docs/react/client.mdx` (The part
 Wrong:
 
 ```ts
+import { useMediaUpload } from '@adonis-agora/media-react'
+
+declare const file: File
+
+const { upload } = useMediaUpload({ mode: 'proxy' })
 await upload(file, { filename: 'clip.mp4', key: 'users/1/clip.mp4' })
 ```
 
 Correct:
 
 ```ts
+import { createMediaUploadClient } from '@adonis-agora/media-react/client'
+
+declare const file: File
+
+const client = createMediaUploadClient()
 // every strategy derives the key SERVER-side (proxy from meta.filename; direct optionally
 // via a DirectUploadPolicy) — read the chosen key back from the result
 const result = await client.uploadProxy(file, { filename: 'clip.mp4' })
-result.key
+if (result.mode === 'proxy') result.key
 ```
 
 Mechanism: `meta.key` is deprecated and ignored by every strategy — TUS, direct and proxy
@@ -221,19 +250,35 @@ Source: `docs/react/index.mdx` (UploadMeta table).
 Wrong:
 
 ```tsx
+import { useMediaUpload } from '@adonis-agora/media-react'
+import type { UploadMeta } from '@adonis-agora/media-react/client'
+import { router } from '@inertiajs/react'
+
+declare const file: File, meta: UploadMeta
+
 const { upload } = useMediaUpload<{ mediaId: string }>({ mode: 'direct' })
 const result = await upload(file, meta)
-router.visit(`/videos/${result.body.mediaId}`) // trusts unchecked JSON
+if (result.mode === 'direct') router.visit(`/videos/${result.body.mediaId}`) // trusts unchecked JSON
 ```
 
 Correct:
 
 ```tsx
+import { useMediaUpload } from '@adonis-agora/media-react'
+import type { UploadMeta } from '@adonis-agora/media-react/client'
+import { router } from '@inertiajs/react'
 import { z } from 'zod'
 
+declare const file: File, meta: UploadMeta
+
+const { upload } = useMediaUpload({ mode: 'direct' })
+const result = await upload(file, meta)
+
 const Completion = z.object({ mediaId: z.string(), status: z.enum(['processing']) })
-const parsed = Completion.parse(result.body)
-router.visit(`/videos/${parsed.mediaId}`)
+if (result.mode === 'direct') {
+  const parsed = Completion.parse(result.body)
+  router.visit(`/videos/${parsed.mediaId}`)
+}
 ```
 
 Mechanism: `TComplete` is a compile-time assertion over raw server JSON — nothing at this
@@ -267,13 +312,19 @@ Source: `docs/react/index.mdx` (Resuming a direct upload across a reload).
 Wrong:
 
 ```ts
+import { createMediaUploadClient } from '@adonis-agora/media-react/client'
+
 createMediaUploadClient({ retries: 3 }) // assuming parts go one at a time
 ```
 
 Correct:
 
 ```ts
-createMediaUploadClient({ concurrency: 4 }) // 4 direct-S3 part PUTs at once (the default)
+import { createMediaUploadClient, type UploadMeta } from '@adonis-agora/media-react/client'
+
+declare const file: File, meta: UploadMeta
+
+const client = createMediaUploadClient({ concurrency: 4 }) // 4 direct-S3 part PUTs at once (the default)
 await client.uploadDirect(file, meta, { concurrency: 2 }) // per-upload bound wins
 ```
 

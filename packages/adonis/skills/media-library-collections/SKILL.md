@@ -74,6 +74,8 @@ Collections are opt-in constraints: an undeclared collection is permissive (no w
 not single, no conversions). Declare one to constrain it:
 
 ```ts title="config/media.ts"
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [
     { name: 'avatar', single: true, acceptsMimeTypes: ['image/png', 'image/jpeg'] },
@@ -108,6 +110,11 @@ resize; images are auto-oriented from EXIF before resizing). `eager: true` gener
 the record, so every later call is a pure lookup.
 
 ```ts
+import type { AttachInput } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const input: AttachInput
+
 const m = await media.library.attach({ ...input, collection: 'gallery' })
 
 await media.library.url(m.id, 'og')    // eager → already on disk, pure lookup
@@ -124,10 +131,23 @@ Source: `docs/collections-and-conversions.mdx` (Eager vs lazy).
 ### Pattern 3 — bind an owner once with `for()`, adopt existing objects with `attachExisting`
 
 ```ts
+import { createReadStream } from 'node:fs'
+import type Post from '#models/post'
+import media from '@adonis-agora/media/services/main'
+import type { MultipartFile } from '@adonisjs/core/bodyparser'
+
+declare const post: Post
+declare const images: MultipartFile[] // request.files('images')
+
 const gallery = media.library.for('Post', post.id)
 
 for (const image of images) {
-  await gallery.attach({ collection: 'gallery', fileName: image.clientName, mimeType: image.type!, contents })
+  await gallery.attach({
+    collection: 'gallery',
+    fileName: image.clientName,
+    mimeType: image.type!,
+    contents: createReadStream(image.tmpPath!),
+  })
 }
 
 // zero-copy adoption of an object ALREADY on the disk (finished TUS / direct upload):
@@ -149,6 +169,12 @@ Source: `docs/getting-started.mdx` (Bind an owner once), `docs/uploads/resumable
 ### Pattern 4 — deterministic `id` for retry-safe overwrites
 
 ```ts
+import type Invoice from '#models/invoice'
+import media from '@adonis-agora/media/services/main'
+
+declare const invoice: Invoice
+declare const renderedPdf: Buffer // from your PDF renderer
+
 await media.library.attach({
   ownerType: 'Invoice',
   ownerId: invoice.id,
@@ -182,6 +208,8 @@ Correct:
 
 ```ts
 // config/media.ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({ collections: [{ name: 'avatar', single: true, acceptsMimeTypes: ['image/png'] }] })
 ```
 
@@ -196,6 +224,8 @@ Source: `docs/collections-and-conversions.mdx` (Single-file collections), `docs/
 Wrong:
 
 ```ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [{ name: 'images', acceptsMimeTypes: ['image/*'] }],
 })
@@ -204,6 +234,8 @@ defineConfig({
 Correct:
 
 ```ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [{ name: 'images', acceptsMimeTypes: ['image/png', 'image/jpeg', 'image/webp'] }],
 })
@@ -219,6 +251,8 @@ Source: `docs/collections-and-conversions.mdx` (MIME whitelist).
 Wrong:
 
 ```ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [{ name: 'gallery', conversions: [{ name: 'thumb', width: 200 }] }],
   // no imageProcessor
@@ -246,6 +280,10 @@ Source: `docs/configuration.mdx` (`imageProcessor`), `docs/errors.mdx`.
 Wrong:
 
 ```ts
+import media from '@adonis-agora/media/services/main'
+
+declare const videoId: string
+
 // 'videos' collection declares transformers.video()
 const url = await media.library.url(videoId, 'video') // throws before any transform ran
 ```
@@ -253,6 +291,10 @@ const url = await media.library.url(videoId, 'video') // throws before any trans
 Correct:
 
 ```ts
+import media from '@adonis-agora/media/services/main'
+
+declare const videoId: string
+
 // run the transform explicitly (usually from a job), then read
 await media.library.transform(videoId, 'video') // idempotent — retries skip through
 const record = await media.library.find(videoId)
@@ -269,6 +311,8 @@ Source: `docs/transformers.mdx` (Reads never generate a transform).
 Wrong:
 
 ```ts
+import { defineConfig } from '@adonis-agora/media'
+
 defineConfig({
   collections: [
     { name: 'videos', acceptsMimeTypes: ['video/mp4'], conversions: [{ name: 'thumb', width: 320 }] },
@@ -305,6 +349,10 @@ Source: `docs/collections-and-conversions.mdx` (warn callout), `docs/transformer
 Wrong:
 
 ```ts
+import media from '@adonis-agora/media/services/main'
+
+declare const contents: Buffer // the uploaded bytes
+
 // client renames payload.png → report.pdf and declares 'application/pdf'
 await media.library.attach({
   ownerType: 'Patient', ownerId: '7', collection: 'exams',
@@ -315,6 +363,11 @@ await media.library.attach({
 Correct:
 
 ```ts
+import { ContentTypeMismatchError } from '@adonis-agora/media'
+import media from '@adonis-agora/media/services/main'
+
+declare const contents: Buffer // the uploaded bytes
+
 try {
   await media.library.attach({ ownerType: 'Patient', ownerId: '7', collection: 'exams',
     fileName: 'scan.pdf', mimeType: 'application/pdf', contents })
