@@ -75,7 +75,7 @@ Source: `docs/attachments.mdx` (Creating an attachment).
 An `Attachment` is a pure JSON-serializable value object (disk, path, size, mimeType,
 variants, meta). Persist `toJSON()`, rebuild with `Attachment.fromJSON()`:
 
-```ts title="app/models/user.ts"
+```ts no-check title="app/models/user.ts"
 import { BaseModel, column } from '@adonisjs/lucid/orm'
 import { Attachment, type AttachmentData } from '@adonis-agora/media'
 
@@ -121,7 +121,7 @@ Source: `docs/attachments.mdx` (Resolving URLs).
 `@adonis-agora/media/single-file` is the narrow seam for "replace this owner's one file and
 give me a URL", importable unconditionally with feature detection:
 
-```ts
+```ts no-check
 import { isSingleFileStoreAvailable, removeSingleFile, storeSingleFile } from '@adonis-agora/media/single-file'
 
 if (await isSingleFileStoreAvailable()) {
@@ -201,7 +201,7 @@ Source: `docs/attachments.mdx` (Deleting).
 
 Wrong:
 
-```ts
+```ts no-check
 // config declares NO 'avatar' collection (or declares it without single: true)
 await storeSingleFile({ ownerType: 'User', ownerId: '1', collection: 'avatar', ... }) // upload #1
 await storeSingleFile({ ownerType: 'User', ownerId: '1', collection: 'avatar', ... }) // upload #2

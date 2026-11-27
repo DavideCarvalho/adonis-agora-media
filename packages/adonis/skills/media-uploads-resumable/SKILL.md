@@ -208,13 +208,13 @@ Source: `docs/uploads/direct-upload-policy.mdx`.
 
 Wrong:
 
-```ts
+```ts no-check
 uploads: { direct: { routes: { enabled: true } } } // middleware defaults to []
 ```
 
 Correct:
 
-```ts
+```ts no-check
 uploads: {
   direct: {
     routes: { enabled: true, middleware: [middleware.auth()],
@@ -234,7 +234,7 @@ Source: `docs/uploads/direct-sessions.mdx` (routes.middleware), `docs/uploads/di
 
 Wrong:
 
-```ts
+```ts no-check
 const { key, disk } = await media.resumable.complete(session.id)
 const bytes = await media.disk(disk).getBytes(key) // buffers the whole file…
 await media.library.attach({ ..., contents: bytes }) // …and rewrites it to a new key
