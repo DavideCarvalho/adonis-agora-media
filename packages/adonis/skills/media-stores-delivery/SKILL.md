@@ -48,7 +48,7 @@ export default defineConfig({
 ```
 
 ```sh
-node ace migration:run   # publishes the media table for stores.lucid()
+node ace migration:run   # runs the published media migration for stores.lucid()
 npm i @aws-sdk/client-s3 # optional peer, imported only because s3 is selected
 ```
 
@@ -99,7 +99,7 @@ class PassthroughProcessor implements ImageProcessor {
 defineConfig({
   store: 'redis',
   stores: {
-    redis: (() => async () => new RedisMediaStore()) as unknown as StoreFactory,
+    redis: (async () => new RedisMediaStore()) satisfies StoreFactory,
   },
   imageProcessor: new PassthroughProcessor(), // or a factory thunk
 })
@@ -161,7 +161,7 @@ router.get('/media/:id', async ({ params, request, response, auth }) => {
 }).use(middleware.auth())
 ```
 
-The handler's own `mode` / `signedTtlSeconds` override the configured ones per call. For
+The handler's own `mode` / `signedTtlSeconds` override the configured ones for that handler. For
 transformer-generated HLS/DASH packages use `media.access.streamRoute()` — it serves every
 file of the package under `/media/:id/stream/:conversion/*`, authorizes each request with
 the collection's `access.read` (or `authorize`), validates the file against the persisted

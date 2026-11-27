@@ -24,6 +24,7 @@
     "cli",
     "errors",
     "testing",
+    "agent-skills",
     "migrating-to-1-0"
   ],
   "root": true,
