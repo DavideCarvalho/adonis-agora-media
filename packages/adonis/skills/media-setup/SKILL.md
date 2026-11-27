@@ -47,6 +47,12 @@ and `config/media_dashboard.ts`, and publishes three Lucid migrations (one for t
 column tenancy needs — unused while tenancy is off). Delete the migrations you don't
 need; the in-memory stores need none.
 
+For an app whose media lives on a control plane, `node ace configure @adonis-agora/media
+--topology=tenant` publishes `config/media.ts` in the one-line tenant form
+(`defineConfig({ topology: 'tenant' })`, with `url`, `token` and `partition` coming from
+`@adonis-agora/authkit-client` and the explicit `tenant` fields commented out) and skips
+the store, upload-session and tenancy migrations a tenant never uses.
+
 ```ts title="config/media.ts"
 import { defineConfig, stores, processors } from '@adonis-agora/media'
 
