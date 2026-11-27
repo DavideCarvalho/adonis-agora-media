@@ -13,7 +13,7 @@ license: MIT
 metadata:
   type: core
   library: "@adonis-agora/media-dashboard"
-  library_version: "8.0.0"
+  library_version: "10.0.0"
   framework: adonisjs
 sources:
   - "DavideCarvalho/adonis-media:docs/dashboard/index.mdx"

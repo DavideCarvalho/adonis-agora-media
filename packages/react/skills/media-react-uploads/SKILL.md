@@ -13,7 +13,7 @@ license: MIT
 metadata:
   type: core
   library: "@adonis-agora/media-react"
-  library_version: "0.5.0"
+  library_version: "1.0.0"
   framework: react
 sources:
   - "DavideCarvalho/adonis-media:docs/react/index.mdx"

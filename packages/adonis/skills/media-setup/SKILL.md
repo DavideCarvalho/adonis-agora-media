@@ -14,7 +14,7 @@ license: MIT
 metadata:
   type: core
   library: "@adonis-agora/media"
-  library_version: "0.12.1"
+  library_version: "1.1.1"
   framework: adonisjs
 sources:
   - "DavideCarvalho/adonis-media:README.md"
