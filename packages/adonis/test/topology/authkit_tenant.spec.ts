@@ -126,6 +126,50 @@ describe('a media tenant with @adonis-agora/authkit-client', () => {
     ).rejects.toThrow(/needs tenant\.url, tenant\.token\. Fix:/);
   });
 
+  it('accepts an async tenantOf', async () => {
+    const authkit = fakeAuthkit();
+    const asyncClient = { tenantOf: async (resource: string) => authkit.client.tenantOf(resource) };
+    const { config } = await resolveMediaTenant({ topology: 'tenant' }, containerWith(asyncClient));
+    expect(config.tenant?.partition).toBe('shop');
+  });
+
+  it('authkit-client without `service` (TenantOfConfigError) counts as absent, its message kept', async () => {
+    const error = Object.assign(
+      new Error(
+        'authkit-client has no `service` configured. Add service: { name, clientId, clientSecret }.',
+      ),
+      { code: 'E_AUTHKIT_SERVICE_NOT_CONFIGURED' },
+    );
+    const binding = {
+      tenantOf() {
+        throw error;
+      },
+    };
+    // Explicit fields still work.
+    const explicit = await resolveMediaTenant(
+      { topology: 'tenant', tenant: { url: 'https://x.test', partition: 'a', token: 't' } },
+      containerWith(binding),
+    );
+    expect(explicit.config.tenant?.partition).toBe('a');
+    await expect(
+      resolveMediaTenant({ topology: 'tenant' }, containerWith(binding)),
+    ).rejects.toThrow(
+      'needs tenant.url, tenant.token, tenant.partition. authkit-client could not supply them (authkit-client has no `service` configured. Add service: { name, clientId, clientSecret }.). Fix: configure',
+    );
+  });
+
+  it('a registered binding that fails to build is reported, not hidden', async () => {
+    const container = {
+      hasBinding: () => true,
+      make: async () => {
+        throw new Error('bad issuer');
+      },
+    };
+    await expect(resolveMediaTenant({ topology: 'tenant' }, container)).rejects.toThrow(
+      "authkit-client could not supply them (resolving 'authkit.client' failed: bad issuer).",
+    );
+  });
+
   it('leaves a standalone or control-plane config alone', async () => {
     const config: MediaConfig = { disk: 'local' };
     expect((await resolveMediaTenant(config, containerWith(fakeAuthkit().client))).config).toBe(

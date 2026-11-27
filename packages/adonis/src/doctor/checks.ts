@@ -16,7 +16,11 @@ import {
   resolveConsoleSideAuth,
 } from '../federation/console_auth.js';
 import { appKeyOf, CONSOLE_CRYPTO_KEY } from '../federation/redis_channel.js';
-import { describeTenantSources, resolveMediaTenant } from '../topology/authkit_tenant.js';
+import {
+  describeTenantSources,
+  resolveMediaTenant,
+  splitTenantError,
+} from '../topology/authkit_tenant.js';
 import { DEFAULT_CONTROL_PLANE_PREFIX, MEDIA_SCOPES } from '../topology/protocol.js';
 import { type MediaTenantClient, tenantClientOf } from '../topology/tenant_client.js';
 import type { AgoraDoctorCheck, AgoraDoctorResult } from './agora_doctor.js';
@@ -380,11 +384,11 @@ export async function checkTopology(
     media = resolved.config;
     if (resolved.sources) sources = describeTenantSources(resolved.sources);
   } catch (error) {
-    const message = (error as Error).message;
+    const { message, fix } = splitTenantError((error as Error).message);
     return {
       status: 'error',
-      message: message.slice(0, message.indexOf(' Fix: ')),
-      fix: message.slice(message.indexOf(' Fix: ') + 6),
+      message,
+      ...(fix !== undefined ? { fix } : {}),
       docs: `${DOCS}/topology`,
     };
   }
