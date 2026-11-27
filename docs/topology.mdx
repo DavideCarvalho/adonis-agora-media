@@ -22,6 +22,19 @@ By default every app keeps its own media: its records, its disks, its conversion
 | `control-plane` | Keeps its own media, and other apps' too, through the API under `controlPlane.prefix`. |
 | `tenant` | Keeps no media: every call runs on the control plane. |
 
+## Three ways to run media
+
+- **Standalone** (the default): each app keeps its own media and has its own media console.
+  Nothing to configure.
+- **Federated console**: the apps stay standalone and keep their own media; one app's console
+  shows the others' too. It reads their records from their own tables and asks each app, over
+  authenticated commands, for anything that needs its disks. See
+  [Federated console](/docs/media/dashboard/federated-console).
+- **Hub** (control plane and tenants): one app stores the media of several apps, which run with
+  `topology: 'tenant'`. With `@adonis-agora/authkit-client`'s `service` configured, that line is
+  the whole tenant config ([A tenant app](#a-tenant-app)). The rest of this page covers this
+  mode; the [Agora Hub guide](/docs/agora-hub) shows the Hub across all the libraries.
+
 ## The control plane
 
 The control plane is configured like any app, plus `topology`, `verifyTenant` and `controlPlane`:
