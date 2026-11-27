@@ -202,7 +202,7 @@
     "@smithy/util-stream": "4.8.2",
     "@tanstack/intent": "0.5.6",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "26.6.6",
+    "@types/node": "26.6.7",
     "aws-sdk-client-mock": "4.1.0",
     "better-sqlite3": "13.2.0",
     "ioredis": "6.1.0",
