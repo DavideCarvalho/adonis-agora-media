@@ -119,7 +119,25 @@ verifyTenant: sharedSecretVerifier({
 
 ## A tenant app
 
+With [`@adonis-agora/authkit-client`](/docs/authkit) configured with its `service` (`name`,
+`clientId`, `clientSecret`), the topology is all you write: authkit-client supplies the control
+plane's URL (from the issuer's discovery document), a service token for `urn:agora:media` and the
+app's partition (`service.partition`, else `service.name`).
+
 ```ts title="config/media.ts (an app)"
+import { defineConfig } from '@adonis-agora/media'
+
+export default defineConfig({
+  topology: 'tenant',
+  delivery: { path: '/media/:id' },
+  collections: [{ name: 'covers', access: { read: 'public' } }],
+})
+```
+
+Or set them yourself, for another client, another issuer or a shared secret. Each field you set wins
+over authkit-client's, one by one, and `tenant: { auto: false }` turns authkit-client off for media:
+
+```ts title="config/media.ts (an app, explicit)"
 import env from '#start/env'
 import { authkitTenantToken, controlPlaneUrl } from '@adonis-agora/authkit-client'
 import { defineConfig } from '@adonis-agora/media'
@@ -145,13 +163,18 @@ export default defineConfig({
 
 | Option | What it is |
 | --- | --- |
-| `tenant.url` | The control plane, with its prefix: a URL (`https://hub.example.com/_media`) or `controlPlaneUrl(...)`, which reads it from the issuer's discovery document and looks it up again when the control plane stops answering. |
-| `tenant.partition` | This app's name on the control plane. Its token must be for this same app. |
-| `tenant.token` | This app's token: `authkitTenantToken(...)`, a shared secret, or `{ get() }`. |
+| `tenant.url` | The control plane, with its prefix: a URL (`https://hub.example.com/_media`) or `controlPlaneUrl(...)`, which reads it from the issuer's discovery document and looks it up again when the control plane stops answering. Default: authkit-client's. |
+| `tenant.partition` | This app's name on the control plane. Its token must be for this same app. Default: authkit-client's. |
+| `tenant.token` | This app's token: `authkitTenantToken(...)`, a shared secret, or `{ get() }`. Default: authkit-client's. |
+| `tenant.auto` | `false`: never take `url`, `token` or `partition` from authkit-client. |
 | `tenant.urls` | Where file URLs point: `app` (default) or `control-plane`. See [URLs](#urls). |
 | `tenant.timeoutMs` | Per request. Default `10000`. |
 | `tenant.uploadTimeoutMs` | Per upload. Default `120000`. |
 | `tenant.retries` | Retries of a read after a network error or a `5xx`. Default `1`. Writes are never retried. |
+
+With neither authkit-client nor the field, a web process fails its boot, naming the missing fields
+and both fixes. `node ace agora:doctor` (`media.topology`) shows where each one came from:
+`tenant url/token/partition: authkit-client (auto)`, or `explicit`.
 
 A tenant has no `disk`, `disks`, `store`, `stores`, `imageProcessor`, `uploads`, `tenancy`,
 `consoleCommands` or `accountConsole`: `defineConfig` refuses them. What it keeps:

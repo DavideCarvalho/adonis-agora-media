@@ -394,7 +394,14 @@ export interface MediaConfig {
  * {@link MediaConfig.accounts}: where a standalone app reads and writes people's own files. The same
  * fields as {@link MediaTenantConfig}, without `urls`.
  */
-export type MediaAccountsConfig = Omit<MediaTenantConfig, 'urls'>;
+export type MediaAccountsConfig = Omit<
+  MediaTenantConfig,
+  'urls' | 'auto' | 'url' | 'partition' | 'token'
+> & {
+  url: ControlPlaneUrlSource;
+  partition: string;
+  token: TenantTokenSource;
+};
 
 /** {@link MediaConfig.controlPlane}. */
 export interface MediaControlPlaneConfig {
@@ -411,21 +418,31 @@ export interface MediaControlPlaneConfig {
   accounts?: ControlPlaneAccountsOptions;
 }
 
-/** {@link MediaConfig.tenant}. */
+/**
+ * {@link MediaConfig.tenant}. `url`, `partition` and `token` may be left out when
+ * `@adonis-agora/authkit-client` is booted with its `service` configured: its `tenantOf('urn:agora:media')`
+ * supplies them (each one set here wins).
+ */
 export interface MediaTenantConfig {
   /**
    * The control plane's URL including its prefix (`https://hub.example.com/_media`), or
    * `controlPlaneUrl({ issuer, resource: 'urn:agora:media' })` from `@adonis-agora/authkit-client`
-   * (found in the issuer's discovery document).
+   * (found in the issuer's discovery document). Default: authkit-client's, when it is booted.
    */
-  url: ControlPlaneUrlSource;
-  /** This app's name on the control plane (the partition its token carries). */
-  partition: string;
+  url?: ControlPlaneUrlSource;
+  /**
+   * This app's name on the control plane (the partition its token carries). Default:
+   * authkit-client's `service.partition`, else `service.name`.
+   */
+  partition?: string;
   /**
    * This app's token: `authkitTenantToken({ issuer, clientId, clientSecret, resource:
    * 'urn:agora:media' })` from `@adonis-agora/authkit-client`, a shared secret, or `{ get() }`.
+   * Default: authkit-client's service token for `urn:agora:media`.
    */
-  token: TenantTokenSource;
+  token?: TenantTokenSource;
+  /** `false`: never fill `url`/`partition`/`token` from `@adonis-agora/authkit-client`. */
+  auto?: boolean;
   /**
    * Where `media.library.url()` and image URLs point: `app` (default), this app's delivery route
    * (`delivery.path`), which reads the bytes from the control plane; `control-plane`, the storage
@@ -456,11 +473,17 @@ const TENANT_FORBIDDEN = [
 ] as const;
 
 /** The client fields shared by `tenant` and `accounts`. */
-function assertControlPlaneClient(key: 'tenant' | 'accounts', client: MediaAccountsConfig): void {
-  if (!client.partition || !PARTITION_PATTERN.test(client.partition)) {
+function assertControlPlaneClient(
+  key: 'tenant' | 'accounts',
+  client: MediaTenantConfig,
+  options: { partial?: boolean } = {},
+): void {
+  // `partial`: a tenant's config before authkit-client filled it in; only what is set is checked.
+  const check = (field: 'partition' | 'token') => !options.partial || client[field] !== undefined;
+  if (check('partition') && (!client.partition || !PARTITION_PATTERN.test(client.partition))) {
     throw new Error(`media: ${key}.partition is required (1-64 characters of A-Z a-z 0-9 _ . -)`);
   }
-  if (!client.token) {
+  if (check('token') && !client.token) {
     throw new Error(
       `media: ${key}.token is required (authkitTenantToken({ issuer, clientId, clientSecret, resource: 'urn:agora:media' }) or a shared secret)`,
     );
@@ -479,16 +502,25 @@ function assertControlPlaneClient(key: 'tenant' | 'accounts', client: MediaAccou
   }
 }
 
-/** Refuses a topology that cannot work, at boot, with the change to make. */
-export function assertMediaTopology(config: MediaConfig): void {
+/**
+ * Refuses a topology that cannot work, at boot, with the change to make. `partial`: the config as
+ * written, before `@adonis-agora/authkit-client` supplies a tenant's `url`/`partition`/`token`
+ * (`defineConfig`); the provider checks the filled-in config in full.
+ */
+export function assertMediaTopology(
+  config: MediaConfig,
+  options: { partial?: boolean } = {},
+): void {
   const topology = config.topology ?? 'standalone';
   if (!['standalone', 'control-plane', 'tenant'].includes(topology)) {
     throw new Error(`media: unknown topology "${String(topology)}"`);
   }
   if (topology === 'tenant') {
-    const tenant = config.tenant;
-    if (!tenant?.url) throw new Error('media: tenant.url is required on a tenant');
-    assertControlPlaneClient('tenant', tenant);
+    const tenant: MediaTenantConfig = config.tenant ?? {};
+    if (!options.partial && !tenant.url) {
+      throw new Error('media: tenant.url is required on a tenant');
+    }
+    assertControlPlaneClient('tenant', tenant, options);
     if (config.accounts !== undefined) {
       throw new Error(
         'media: `accounts` does not apply to a tenant: its media.accounts uses `tenant`',
@@ -626,7 +658,7 @@ export interface MediaConsoleCommandsConfig {
  * {@link InferTransformers} can extract them from `typeof config` — no `as const` needed.
  */
 export function defineConfig<const T extends MediaConfig>(config: T = {} as T): T {
-  assertMediaTopology(config);
+  assertMediaTopology(config, { partial: true });
   return config;
 }
 

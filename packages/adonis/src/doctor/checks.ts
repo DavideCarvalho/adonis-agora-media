@@ -16,6 +16,11 @@ import {
   resolveConsoleSideAuth,
 } from '../federation/console_auth.js';
 import { appKeyOf, CONSOLE_CRYPTO_KEY } from '../federation/redis_channel.js';
+import {
+  describeTenantSources,
+  resolveMediaTenant,
+  splitTenantError,
+} from '../topology/authkit_tenant.js';
 import { DEFAULT_CONTROL_PLANE_PREFIX, MEDIA_SCOPES } from '../topology/protocol.js';
 import { type MediaTenantClient, tenantClientOf } from '../topology/tenant_client.js';
 import type { AgoraDoctorCheck, AgoraDoctorResult } from './agora_doctor.js';
@@ -359,9 +364,34 @@ export const dbSchemaDoctorCheck: AgoraDoctorCheck = {
 };
 
 /** Every media check, in report order. Ids are frozen for 1.x. */
-/** `media.topology`: the topology in config/media.ts is one that can work. */
-export function checkTopology(media: MediaConfig | undefined): AgoraDoctorResult {
-  if (media === undefined) return { status: 'skip', message: 'config/media.ts is not present.' };
+type DoctorContainer = Parameters<typeof resolveMediaTenant>[1];
+
+/**
+ * `media.topology`: the topology in config/media.ts is one that can work. On a tenant, says where
+ * `url`/`token`/`partition` come from: `explicit`, or `authkit-client (auto)`.
+ */
+export async function checkTopology(
+  configured: MediaConfig | undefined,
+  container?: DoctorContainer,
+): Promise<AgoraDoctorResult> {
+  if (configured === undefined) {
+    return { status: 'skip', message: 'config/media.ts is not present.' };
+  }
+  let media: MediaConfig = configured;
+  let sources: string | undefined;
+  try {
+    const resolved = await resolveMediaTenant(configured, container);
+    media = resolved.config;
+    if (resolved.sources) sources = describeTenantSources(resolved.sources);
+  } catch (error) {
+    const { message, fix } = splitTenantError((error as Error).message);
+    return {
+      status: 'error',
+      message,
+      ...(fix !== undefined ? { fix } : {}),
+      docs: `${DOCS}/topology`,
+    };
+  }
   try {
     assertMediaTopology(media);
   } catch (error) {
@@ -377,7 +407,7 @@ export function checkTopology(media: MediaConfig | undefined): AgoraDoctorResult
     const url = typeof media.tenant?.url === 'string' ? media.tenant.url : 'its discovered URL';
     return {
       status: 'ok',
-      message: `Tenant "${media.tenant?.partition}": media lives on the control plane at ${url}.`,
+      message: `Tenant "${media.tenant?.partition}": media lives on the control plane at ${url} (${sources}).`,
     };
   }
   if (topology === 'control-plane') {
@@ -413,15 +443,17 @@ interface Whoami {
  * partition with `media:read` and `media:write`.
  */
 export async function checkControlPlane(
-  media: MediaConfig | undefined,
-  options: { fetch?: typeof fetch } = {},
+  configured: MediaConfig | undefined,
+  options: { fetch?: typeof fetch; container?: DoctorContainer } = {},
 ): Promise<AgoraDoctorResult> {
-  if (media?.topology !== 'tenant' || !media.tenant) {
+  if (configured?.topology !== 'tenant') {
     return { status: 'skip', message: 'This app is not a media tenant.' };
   }
+  let media: MediaConfig & { tenant: NonNullable<MediaConfig['tenant']> };
   let client: MediaTenantClient;
   try {
-    client = tenantClientOf(media, options);
+    media = (await resolveMediaTenant(configured, options.container)).config as typeof media;
+    client = tenantClientOf(media, options.fetch ? { fetch: options.fetch } : {});
   } catch (error) {
     return { status: 'error', message: (error as Error).message, docs: `${DOCS}/topology` };
   }
@@ -810,14 +842,21 @@ export const mediaDoctorChecks: AgoraDoctorCheck[] = [
     id: 'media.topology',
     lib: 'media',
     title: 'Topology',
-    run: (app) => checkTopology(app.config.get<MediaConfig | undefined>('media', undefined)),
+    run: (app) =>
+      checkTopology(
+        app.config.get<MediaConfig | undefined>('media', undefined),
+        app.container as never,
+      ),
   },
   {
     id: 'media.control-plane',
     lib: 'media',
     title: 'Control plane reachable and token accepted',
     cost: 'deep',
-    run: (app) => checkControlPlane(app.config.get<MediaConfig | undefined>('media', undefined)),
+    run: (app) =>
+      checkControlPlane(app.config.get<MediaConfig | undefined>('media', undefined), {
+        container: app.container as never,
+      }),
   },
   {
     id: 'media.console-commands',

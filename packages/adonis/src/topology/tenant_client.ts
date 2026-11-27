@@ -232,7 +232,14 @@ export function tenantClientOf(
 ): MediaTenantClient {
   const tenant = config.tenant;
   if (!tenant) throw new Error('media: not a tenant (no `tenant` in config/media.ts)');
-  return clientOf(tenant, options);
+  const { url, partition, token } = tenant;
+  // Filled in by the provider (`resolveMediaTenant`) when authkit-client supplies them.
+  if (url === undefined || partition === undefined || token === undefined) {
+    throw new Error(
+      'media: tenant.url, tenant.partition and tenant.token are required on a tenant',
+    );
+  }
+  return clientOf({ ...tenant, url, partition, token }, options);
 }
 
 /** The client `accounts` describes (a standalone app's account files), or none. */
