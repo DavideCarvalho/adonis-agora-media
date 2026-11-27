@@ -147,6 +147,9 @@ export default defineConfig({
 })
 ```
 
+`node ace configure @adonis-agora/media --topology=tenant` publishes `config/media.ts` in this form
+(with the explicit `tenant` fields commented out) and skips the migrations, which a tenant does not use.
+
 Or set them yourself, for another client, another issuer or a shared secret. Each field you set wins
 over authkit-client's, one by one, and `tenant: { auto: false }` turns authkit-client off for media:
 
