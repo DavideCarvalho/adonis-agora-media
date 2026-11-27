@@ -39,7 +39,7 @@ Without a policy, the handler derives the key from `keyFor` — by default `uplo
 ```ts
 async onInitiate(ctx: HttpContext, input) {
   const user = ctx.auth.getUserOrFail()
-  return { key: `tenants/${user.tenantId}/lessons/${ctx.params.id}/${cuid()}.mp4` }
+  return { key: `tenants/${user.tenantId}/lessons/${ctx.params.id}/${randomUUID()}.mp4` }
 }
 ```
 
@@ -50,7 +50,8 @@ async onInitiate(ctx: HttpContext, input) {
 A realistic one: a lesson video, uploaded by an authenticated user, tracked by a row in the app's own table so the UI can show "processing" before the bytes finish arriving.
 
 ```ts title="app/media/lesson_video_policy.ts"
-import { cuid } from '@adonisjs/core/helpers'
+import { randomUUID } from 'node:crypto'
+import { errors } from '@adonisjs/bouncer'
 import type { HttpContext } from '@adonisjs/core/http'
 import type {
   CompleteResolution,
@@ -69,7 +70,7 @@ export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext
     const lesson = await Lesson.findOrFail(ctx.params.lessonId)
     await ctx.bouncer.authorize('uploadLessonVideo', lesson) // ← authorization lives HERE
 
-    const key = `tenants/${user.tenantId}/lessons/${lesson.id}/${cuid()}.mp4`
+    const key = `tenants/${user.tenantId}/lessons/${lesson.id}/${randomUUID()}.mp4`
 
     // Our own tracking row, created before the multipart upload opens.
     const row = await LessonUpload.create({
@@ -133,7 +134,7 @@ export default class LessonVideoPolicy implements DirectUploadPolicy<HttpContext
   }
 
   mapError(_ctx: HttpContext, error: unknown, info: PolicyErrorInfo<Ctx>) {
-    if (error instanceof AuthorizationException) {
+    if (error instanceof errors.E_AUTHORIZATION_FAILURE) {
       return { status: 403, body: { error: 'You cannot upload to this lesson' } }
     }
     if (error instanceof LessonNotFound) {
