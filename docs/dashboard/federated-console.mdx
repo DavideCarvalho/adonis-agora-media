@@ -372,10 +372,26 @@ With `proxyObjects`, the console fetches the object itself and serves it from it
 Previews, thumbnails and **Open** then work for a viewer who is not signed in to the other app,
 and under a Content Security Policy that only allows this origin's images.
 
-The other app must accept the console's request. With Agora calls between apps, the console sends a
-service token for that app:
+The other app must accept the console's request. With Agora calls between apps
+(`@adonis-agora/authkit-client` with `service: { name, clientId, clientSecret }` on the console
+app, and the other app known to it by discovery or in its `apps`), a plain `fetch` to that app's
+origin already carries a service token for it (`urn:agora:app:entre-textos`), so `true` is enough:
 
 ```ts title="config/media_dashboard.ts (the console app)"
+apps: {
+  'entre-textos': {
+    // …
+    origin: 'https://entretextos.example.com',
+    proxyObjects: true,
+  },
+},
+```
+
+`origin` must be exactly the origin authkit-client knows the app by. Without calls between apps, or
+to send a token of your own, pass the headers yourself (an `Authorization` header set here is never
+replaced):
+
+```ts title="config/media_dashboard.ts (the console app, explicit token)"
 import { authkitTenantToken } from '@adonis-agora/authkit-client'
 
 const etToken = authkitTenantToken({
@@ -438,7 +454,7 @@ apps: {
   'entre-textos': {
     // …
     origin: 'https://entretextos.example.com',
-    proxyObjects: { headers: async () => ({ authorization: `Bearer ${await etToken()}` }) },
+    proxyObjects: true,
     proxyActions: { apiPath: '/media/api' },
   },
 },
@@ -447,7 +463,7 @@ apps: {
 | Option | What it is |
 | --- | --- |
 | `apiPath` | Where the app's console API is mounted on its `origin` (its `apiBasePath`; `/` for the root). Default `/media/dashboard/api`. |
-| `headers` | What the app needs to accept the request. Default: the `proxyObjects` headers. Sent only to `origin`. |
+| `headers` | What the app needs to accept the request. Default: the `proxyObjects` headers (none with `proxyObjects: true`, where authkit-client's calls between apps add the token). Sent only to `origin`. |
 | `timeoutMs` | How long to wait for the app to answer an action. Default `30000`. |
 
 `proxyActions` turns actions on for that app whatever the console's own `actions` says, so the
