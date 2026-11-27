@@ -129,6 +129,9 @@
     "skills"
   ],
   "sideEffects": false,
+  "publishConfig": {
+    "tag": "v0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm run copy:stubs",
     "copy:stubs": "mkdir -p dist/stubs/config dist/stubs/database/migrations dist/assets && cp -r stubs/config/. dist/stubs/config/ && cp -r stubs/database/migrations/. dist/stubs/database/migrations/ && rm -rf dist/assets/spa && cp -r ../dashboard/dist/spa dist/assets/spa",
