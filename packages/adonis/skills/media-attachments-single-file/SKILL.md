@@ -160,8 +160,17 @@ Source: `docs/attachments.mdx` (Resolving URLs).
 `@adonis-agora/media/single-file` is the narrow seam for "replace this owner's one file and
 give me a URL", importable unconditionally with feature detection:
 
-```ts no-check
-import { isSingleFileStoreAvailable, removeSingleFile, storeSingleFile } from '@adonis-agora/media/single-file'
+```ts
+import type User from '#models/user'
+import type { MediaManager } from '@adonis-agora/media'
+import {
+  isSingleFileStoreAvailable,
+  storeSingleFile,
+  storeSingleFileWith,
+} from '@adonis-agora/media/single-file'
+
+declare const user: User
+declare const upload: { clientName: string; type: string; bytes: Buffer } // your upload, read into memory
 
 if (await isSingleFileStoreAvailable()) {
   const { url, thumbUrl, id, placeholder } = await storeSingleFile({
@@ -169,7 +178,7 @@ if (await isSingleFileStoreAvailable()) {
     ownerId: String(user.id),
     collection: 'avatar',
     fileName: upload.clientName,
-    mimeType: upload.type!,
+    mimeType: upload.type,
     contents: upload.bytes, // a Buffer
   })
   // thumbUrl is null — not an error — when the 'thumb' conversion isn't configured
@@ -177,7 +186,8 @@ if (await isSingleFileStoreAvailable()) {
 }
 
 // tests or multi-manager apps pass the manager explicitly:
-import { storeSingleFileWith } from '@adonis-agora/media/single-file'
+declare const testManager: MediaManager
+declare const pngBytes: Buffer
 await storeSingleFileWith(testManager, { ownerType: 'User', ownerId: '1', collection: 'avatar',
   fileName: 'me.png', mimeType: 'image/png', contents: pngBytes })
 ```
