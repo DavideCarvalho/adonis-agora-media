@@ -205,7 +205,7 @@
     "@types/node": "26.6.6",
     "aws-sdk-client-mock": "4.1.0",
     "better-sqlite3": "13.2.0",
-    "ioredis": "6.0.0",
+    "ioredis": "6.1.0",
     "luxon": "3.7.2",
     "mediabunny": "1.66.2",
     "mysql2": "3.24.6",
