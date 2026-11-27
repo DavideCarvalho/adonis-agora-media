@@ -6,7 +6,7 @@ description: >-
   resume), the MediaUploader component with headless render prop, the framework-free
   createMediaUploadClient from @adonis-agora/media-react/client (uploadTus/uploadDirect/
   uploadProxy, session primitives, xhrPartUploader part transport, MediaHttpError,
-  chunkSize/concurrency/retries options), UploadMeta rules (key is proxy-only), typed
+  chunkSize/concurrency/retries options), UploadMeta rules (key is ignored, server-side), typed
   TComplete results. Use when building upload UIs against @adonis-agora/media server
   routes.
 license: MIT
@@ -105,7 +105,13 @@ import { MediaUploader } from '@adonis-agora/media-react'
   mode="direct"
   accept="video/*"
   render={({ status, progress, selectFile }) => (
-    <button type="button" onClick={() => selectFile()}>{status} {progress}</button>
+    <label>
+      {status} {progress}
+      <input type="file" onChange={(e) => {
+        const file = e.target.files?.[0]
+        if (file) selectFile(file)
+      }} />
+    </label>
   )}
 />
 ```
@@ -183,25 +189,27 @@ Mechanism: presigned URLs are signed with SigV4 over host/path/query — an adde
 `getHeaders` are deliberately merged into requests against YOUR app only.
 Source: `docs/react/index.mdx` (warn callout), `docs/react/client.mdx` (The part transport warn).
 
-### [HIGH] Passing meta.key to TUS or direct uploads expecting it honored
+### [HIGH] Passing meta.key expecting it honored
 
 Wrong:
 
 ```ts
-await upload(file, { filename: 'clip.mp4', key: 'users/1/clip.mp4' }) // mode: 'tus'
+await upload(file, { filename: 'clip.mp4', key: 'users/1/clip.mp4' })
 ```
 
 Correct:
 
 ```ts
-// proxy takes a key; TUS/direct derive keys SERVER-side (optionally via a DirectUploadPolicy)
-await uploadProxy(file, { filename: 'clip.mp4', key: 'users/1/clip.mp4' })
-await uploadTus(file, { filename: 'clip.mp4' })
+// every strategy derives the key SERVER-side (proxy from meta.filename; direct optionally
+// via a DirectUploadPolicy) — read the chosen key back from the result
+const result = await client.uploadProxy(file, { filename: 'clip.mp4' })
+result.key
 ```
 
-Mechanism: `key` (and `disk`) in `UploadMeta` apply to PROXY only — TUS and direct derive
-the object key server-side, and `meta.key` is silently ignored there. A client-chosen key
-would be a hole you'd have to close anyway.
+Mechanism: `meta.key` is deprecated and ignored by every strategy — TUS, direct and proxy
+all derive the object key server-side (the proxy route answers the key it chose). Only
+`meta.disk` is still honored, and only by proxy (from the server's `uploads.routes.disks`
+allow-list). A client-chosen key would be a hole you'd have to close anyway.
 Source: `docs/react/index.mdx` (UploadMeta table).
 
 ### [HIGH] Treating the TComplete generic as validation

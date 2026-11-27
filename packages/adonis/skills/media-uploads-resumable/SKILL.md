@@ -48,12 +48,13 @@ export default defineConfig({
   uploads: {
     mode: 'auto',              // auto picks direct on a multipart-capable disk, else proxy
     partSize: 8 * 1024 * 1024, // S3 floor is 5 MiB, cap 10,000 parts
-    routes: { enabled: true, prefix: '/media/uploads' }, // opt-in, UNGUARDED routes
+    routes: { enabled: true, prefix: '/media/uploads', middleware: [middleware.auth()] }, // opt-in
 
     resumable: {               // opt-in — makes media.resumable exist
       store: 'lucid',
       stores: { lucid: uploadSessions.lucid() }, // durable, multi-process sessions
-      routes: { enabled: true, prefix: '/media/uploads/tus', maxSize: 5 * 1024 ** 3 },
+      routes: { enabled: true, prefix: '/media/uploads/tus', maxSize: 5 * 1024 ** 3,
+                middleware: [middleware.auth()] },
     },
 
     direct: {                  // opt-in — makes media.direct exist
@@ -110,7 +111,7 @@ const session = await media.resumable.createUpload({
 
 let { offset } = await media.resumable.writeChunk(session.id, 0, chunk1)
 ;({ offset } = await media.resumable.writeChunk(session.id, offset, chunk2))
-await media.resumable.status(session.id) // { offset, size, expiresAt }
+await media.resumable.status(session.id) // { offset, size, contentType, expiresAt }
 
 const { key, disk, size } = await media.resumable.complete(session.id)
 ```
@@ -222,10 +223,11 @@ uploads: {
 }
 ```
 
-Mechanism: the built-in routes are unguarded by design — `routes.middleware` defaults to
-`[]` and the handlers perform no authorization whatsoever, so the endpoints are open to the
-internet. Use middleware for "are you logged in" and policy hooks for "may you upload to
-THIS resource".
+Mechanism: `routes.middleware` defaults to `[]` and the handlers perform no authorization
+whatsoever. Without middleware (and without `allowUnguarded: true`) a route group does not
+mount in production — the boot throws naming the option to set — and outside production it
+mounts open, with a warning. Use middleware for "are you logged in" and policy hooks for "may
+you upload to THIS resource".
 Source: `docs/uploads/direct-sessions.mdx` (routes.middleware), `docs/uploads/direct-upload-policy.mdx` (warn callout).
 
 ### [CRITICAL] Re-reading finished upload bytes through library.attach()

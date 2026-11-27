@@ -5,9 +5,10 @@ description: >-
   @adonis-agora/media/dashboard defineConfig (basePath, apiBasePath, authorize gate, actions gate, disks,
   middleware, enabled), the embedded dashboard_provider, sign-in through the app via
   authorize ({ redirectTo }), authorizeByToken, DashboardService + DashboardError +
-  MediaManagerLike programmatic API, and objectInsights providers.
-  Use when mounting or gating the console, sending signed-out operators to the app's login,
-  building custom admin routes over storage, or adding object insights.
+  MediaManagerLike programmatic API, objectInsights providers, and the federated console
+  (apps, authenticated console commands). Use when mounting or gating the console, sending
+  signed-out operators to the app's login, building custom admin routes over storage,
+  adding object insights, or showing other apps' media.
 license: MIT
 metadata:
   type: core
@@ -141,6 +142,48 @@ Providers return data, not components (the SPA is prebuilt); throwing providers 
 and logged; links pass through `sanitizeInsight` (`javascript:`/`data:` hrefs dropped).
 
 Source: `docs/dashboard/index.mdx` (Object insights).
+
+### Pattern 4 — show other apps' media (the federated console, `apps`)
+
+The console reads each other app's records from its tables and asks the app itself, over Redis,
+to list disks, sign URLs and run actions (that app sets `consoleCommands` in its
+`config/media.ts`, see `media-setup`):
+
+```ts title="config/media_dashboard.ts"
+import { stores, uploadSessions } from '@adonis-agora/media'
+import { defineConfig } from '@adonis-agora/media/dashboard'
+
+export default defineConfig({
+  authorize: (ctx) => ctx.auth.user?.isAdmin === true,
+  appLabel: 'Hub',
+  apps: {
+    'entre-textos': {
+      label: 'Entre Textos',
+      store: stores.lucid({ connection: 'pg', schema: 'entretextos' }), // only read
+      uploadSessions: uploadSessions.lucid({ connection: 'pg', schema: 'entretextos' }),
+      controlPlane: { connection: 'main', prefix: 'entretextos' }, // the app's consoleCommands.prefix
+      // actions: false,  // browse only
+    },
+  },
+})
+```
+
+Every command is authenticated. Automatic modes, nothing to set: `@adonis-agora/crypto` booted
+(sealed with the key `console-media` in the app's crypto partition: the entry's `partition`,
+default its key), or authkit-client's `service` configured (the console's app-call token; grant
+the console app `media:console:*` on the app in authkit). Otherwise `controlPlane.secret` (the
+app's `consoleCommands.secret`), or bring your own: `controlPlane.token` (+ `publicKey` without
+crypto) checked by the app's `verifyTenant`, or an explicit `controlPlane.crypto`.
+`crypto: false` / `token: false` turn the automatic modes off.
+
+An entry's `actions` defaults to `true`, but the app decides: its `consoleCommands.actions` is off
+by default, so mutations answer `403` until the app opts in. `actions: false` on the entry makes it
+browse-only. Each command carries the viewer's capabilities (`media:objects:read` /
+`media:objects:write`, from `authorize`, all of them when it does not say); the app refuses one
+without them (`capabilities-required`). An entry that may run actions with no way to authenticate
+fails the boot (web); `node ace agora:doctor` shows each side's mode (`media.console-commands`).
+
+Source: `docs/dashboard/federated-console.mdx`, `packages/adonis/src/federation/console.ts`.
 
 ## Common mistakes
 

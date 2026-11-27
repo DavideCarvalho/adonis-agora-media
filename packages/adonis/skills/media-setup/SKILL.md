@@ -7,8 +7,9 @@ description: >-
   media singleton from @adonis-agora/media/services/main, disk resolution precedence
   (per-call > collection > top-level disk > Drive default), lazy optional peers
   (@adonisjs/lucid, sharp, @aws-sdk/client-s3, mediabunny), StoreNotConfiguredError,
-  DriveNotReadyError, and the embedded console provider. Use when setting up media,
-  choosing a MediaStore, wiring disks, or fixing boot errors.
+  DriveNotReadyError, the embedded console provider, topology: 'tenant' (zero-config
+  via authkit-client) and consoleCommands for a federated console. Use when setting up
+  media, choosing a MediaStore, wiring disks, running as a tenant, or fixing boot errors.
 license: MIT
 metadata:
   type: core
@@ -165,6 +166,74 @@ Accessors: `media.library` (collections), `media.attachments` (column attachment
 and the opt-in coordinators `media.uploads` / `media.resumable` / `media.direct`.
 
 Source: `docs/getting-started.mdx` (Step 2), `packages/adonis/src/media_manager.ts`.
+
+### Pattern 4 — keep the media on a control plane (`topology: 'tenant'`)
+
+With `@adonis-agora/authkit-client` >= 1.1.0 configured with its `service` (`name`, `clientId`,
+`clientSecret`, optional `partition`, in `config/authkit_client.ts`), the topology is all you
+write: media fills `tenant.url`, `tenant.token` and `tenant.partition` from
+`authkit.client.tenantOf('urn:agora:media')` (partition: `service.partition`, else `service.name`).
+
+```ts title="config/media.ts (a tenant app)"
+export default defineConfig({
+  topology: 'tenant',
+  delivery: { path: '/media/:id' },
+  collections: [{ name: 'covers', access: { read: 'public' } }],
+})
+```
+
+Bring your own (another client, another IdP, a shared secret): each field you set wins over
+authkit-client's, one by one, and `tenant: { auto: false }` turns the detection off.
+
+```ts
+import { authkitTenantToken, controlPlaneUrl } from '@adonis-agora/authkit-client'
+
+defineConfig({
+  topology: 'tenant',
+  tenant: {
+    url: controlPlaneUrl({ issuer, resource: 'urn:agora:media' }), // or 'https://hub.example.com/_media'
+    partition: 'entre-textos',
+    token: authkitTenantToken({ issuer, clientId, clientSecret, resource: 'urn:agora:media' }),
+    // or a shared secret string, or { get() } / an async function of your own
+  },
+})
+```
+
+Without authkit-client (or without its `service`) and without the explicit fields, the app fails
+to boot naming the missing `tenant.*` fields and both fixes; `node ace agora:doctor`
+(`media.topology`) shows where each came from (`authkit-client (auto)` or `explicit`). A tenant
+keeps no media itself: `defineConfig` refuses `disk`, `disks`, `store`, `stores`,
+`imageProcessor`, `uploads`, `tenancy`, `consoleCommands` and `accountConsole` there.
+`media.library` keeps its API and runs on the control plane (`topology: 'control-plane'`, which
+needs `verifyTenant`).
+
+Source: `docs/topology.mdx` (A tenant app), `packages/adonis/src/topology/authkit_tenant.ts`.
+
+### Pattern 5 — answer another app's federated console (`consoleCommands`)
+
+An app shown in another app's media console (its `config/media_dashboard.ts` → `apps`) answers it
+over Redis (`@adonisjs/redis`) from `config/media.ts`:
+
+```ts title="config/media.ts"
+export default defineConfig({
+  consoleCommands: { connection: 'main', prefix: 'entretextos' }, // browse only
+  // consoleCommands: { connection: 'main', prefix: 'entretextos', actions: true }, // allow changes
+})
+```
+
+Every command is authenticated, reads included. Nothing to set when `@adonis-agora/crypto` runs in
+the app (commands sealed with its key `console-media`) or when authkit-client's `service` is
+configured (the console sends an authkit app-call token; grant the console app
+`media:console:*`, or `media:console:read` to browse only, on this app in authkit). Otherwise set
+`secret` (16+ chars, shared with the console's `controlPlane.secret`), or bring your own with
+`verifyTenant` (any IdP) / an explicit `crypto: { cipher }`. `crypto: false` and
+`verifyTenant: false` turn the automatic modes off. `actions` defaults to **off**: mutations are
+refused (`403`) until you opt in. Commands without the viewer's `capabilities` are refused
+(`capabilities-required`). With no way to authenticate, a web process fails to boot naming the
+options; `node ace agora:doctor` reports it (`media.console-commands`).
+
+Source: `docs/dashboard/federated-console.mdx` (The other app, Authenticating the console),
+`packages/adonis/src/define_config.ts` (`MediaConsoleCommandsConfig`).
 
 ## Common mistakes
 
