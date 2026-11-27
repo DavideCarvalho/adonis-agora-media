@@ -386,8 +386,9 @@ export default defineConfig({
 ```
 
 `media.library` keeps using this app's own disks and store, and `media.accounts` works as in a
-tenant. `accounts` takes the same fields as `tenant` except `urls`. The app's token only needs
-`media:read`.
+tenant. `accounts` takes the same fields as `tenant` except `urls` and `auto`. Unlike `tenant`,
+authkit-client does not fill them in: set `url`, `partition` and `token` here. The app's token only
+needs `media:read`.
 
 ## The console
 
