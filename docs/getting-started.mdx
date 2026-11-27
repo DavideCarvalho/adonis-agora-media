@@ -58,6 +58,8 @@ Make sure `@adonisjs/drive` is installed and a `config/drive.ts` exists first.
   Both migrations are optional. They back the `lucid` media store and the `lucid` upload-session store respectively; if you stay on the in-memory equivalents (the default in the stub), delete the ones you don't need. Otherwise run `node ace migration:run`.
 </Callout>
 
+For an app whose media lives on a control plane, run `node ace configure @adonis-agora/media --topology=tenant`: `config/media.ts` is then the one-line tenant form and no migration is published. See [A tenant app](/docs/media/topology#a-tenant-app).
+
 The published `config/media.ts` works out of the box with the in-memory store and a sharp processor:
 
 ```ts title="config/media.ts"

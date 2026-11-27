@@ -13,6 +13,9 @@ import { stubsRoot } from './stubs/main.js';
  * 5. publishes the Lucid migrations for the optional `lucid` store and the resumable (TUS) session
  *    store (run `node ace migration:run`; delete either if you only use the in-memory equivalents).
  *
+ * With `--topology=tenant`, `config/media.ts` is the one-line tenant form instead and no migration
+ * is published (a tenant keeps no media of its own).
+ *
  * Requires `@adonisjs/drive` to be installed and configured first (`node ace add @adonisjs/drive`).
  */
 export async function configure(command: Configure) {
@@ -26,6 +29,16 @@ export async function configure(command: Configure) {
   });
 
   const stubs = stubsRoot();
+
+  // `--topology=tenant`: an app whose media lives on a control plane, in the one-line form (url,
+  // token and partition come from @adonis-agora/authkit-client). A tenant has no store, uploads or
+  // tenancy of its own, so the migrations below do not apply to it.
+  if (command.parsedFlags?.topology === 'tenant') {
+    await codemods.makeUsingStub(stubs, 'config/media_tenant.stub', {});
+    await codemods.makeUsingStub(stubs, 'config/media_dashboard.stub', {});
+    return;
+  }
+
   await codemods.makeUsingStub(stubs, 'config/media.stub', {});
   await codemods.makeUsingStub(stubs, 'config/media_dashboard.stub', {});
   await codemods.makeUsingStub(stubs, 'database/migrations/create_media_table.stub', {});

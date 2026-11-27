@@ -41,7 +41,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AppFactory } from '@adonisjs/core/factories/app';
 
@@ -53,6 +53,8 @@ const distStubs = join(pkgRoot, 'dist/stubs');
 /** Every stub `configure` publishes. Destinations come from each stub's own header, not from here. */
 const STUBS = [
   'config/media.stub',
+  // `--topology=tenant` publishes this one to config/media.ts instead of the stub above.
+  'config/media_tenant.stub',
   'config/media_dashboard.stub',
   'database/migrations/create_media_table.stub',
   'database/migrations/create_media_upload_sessions_table.stub',
@@ -106,6 +108,16 @@ const COMMENTED_EXAMPLES = {
       ["  // delivery: { mode: 'proxy', signedTtlSeconds: 300 },"],
       ['  // uploads: {', '  // },'],
     ],
+  },
+  'config/media_tenant.stub': {
+    suffix: 'all-options',
+    blocks: [
+      [
+        "  // tenant: { url: env.get('MEDIA_URL'), token: env.get('MEDIA_TOKEN'), partition: env.get('MEDIA_PARTITION') },",
+      ],
+    ],
+    // The app's `#start/env`, which the commented import above it reads; a scratch app has none.
+    preamble: 'declare const env: { get(key: string): string }\n',
   },
   'config/media_dashboard.stub': {
     suffix: 'all-options',
@@ -289,12 +301,19 @@ try {
 
   const app = await bootApp(appRoot);
 
+  const written = new Set();
   for (const stubPath of STUBS) {
     // What the consumer installs is `dist/stubs`; `stubs/` is only its source.
     assertPublishedCopyIsIdentical(stubPath);
     const fromDist = await renderStub(app, stubPath, distStubs);
 
-    // The stub's OWN header decided this path; nothing here computes it.
+    // The stub's OWN header decided this path; nothing here computes it. Two stubs can share one
+    // (`config/media_tenant.stub` is the --topology=tenant `config/media.ts`): the later one is
+    // compiled beside it under its stub's name rather than overwriting the first.
+    if (written.has(fromDist.to)) {
+      fromDist.to = fromDist.to.replace(/[^/]+\.ts$/, `${basename(stubPath, '.stub')}.ts`);
+    }
+    written.add(fromDist.to);
     mkdirSync(dirname(fromDist.to), { recursive: true });
     writeFileSync(fromDist.to, fromDist.contents);
 

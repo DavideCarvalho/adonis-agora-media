@@ -1,0 +1,18 @@
+{{{
+  exports({ to: app.configPath('media.ts') })
+}}}
+// import env from '#start/env'
+import { defineConfig } from '@adonis-agora/media'
+
+/**
+ * Configuration for @adonis-agora/media in a tenant app: it keeps no media of its own, every call
+ * runs on the control plane (the Hub). A tenant takes no disk, store, imageProcessor or uploads.
+ *
+ * url, token and partition come from @adonis-agora/authkit-client (\`service\` in
+ * config/authkit_client.ts). To set them yourself (each field you set wins), uncomment the env
+ * import above and the tenant line below.
+ */
+export default defineConfig({
+  // tenant: { url: env.get('MEDIA_URL'), token: env.get('MEDIA_TOKEN'), partition: env.get('MEDIA_PARTITION') },
+  topology: 'tenant',
+})
