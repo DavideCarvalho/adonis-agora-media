@@ -68,7 +68,7 @@
     "@tanstack/intent": "0.5.6",
     "@testing-library/react": "16.3.3",
     "@types/node": "26.6.10",
-    "@types/react": "19.3.1",
+    "@types/react": "19.3.2",
     "jsdom": "31.0.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
