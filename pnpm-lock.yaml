@@ -278,7 +278,7 @@ importers:
         version: 3.1176.0
       '@mediabunny/server':
         specifier: 1.66.4
-        version: 1.66.4(mediabunny@1.66.3)
+        version: 1.66.4(mediabunny@1.66.4)
       '@smithy/util-stream':
         specifier: 4.8.2
         version: 4.8.2
@@ -304,8 +304,8 @@ importers:
         specifier: 3.7.2
         version: 3.7.2
       mediabunny:
-        specifier: 1.66.3
-        version: 1.66.3
+        specifier: 1.66.4
+        version: 1.66.4
       mysql2:
         specifier: 3.24.6
         version: 3.24.6(@types/node@26.6.7)
@@ -3733,8 +3733,8 @@ packages:
     resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
     engines: {node: '>= 0.8'}
 
-  mediabunny@1.66.3:
-    resolution: {integrity: sha512-ugNU19umLxfjMaJLWKYUaFTWtmg+k0rwF6bmL5YfSX+BbCHGAOTxsecRzuHKX/OA+tO81pkI/2pNIo8nZdJZmA==}
+  mediabunny@1.66.4:
+    resolution: {integrity: sha512-VIPwwaVpY5mUnf9mAOJlBii4P1nHK05X8//veRjJrddn514BSOuYaMrUy1UReLMVVsm85id6eMu0z5K71Kkf+g==}
 
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
@@ -5825,15 +5825,15 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@mediabunny/prores@1.66.4(mediabunny@1.66.3)':
+  '@mediabunny/prores@1.66.4(mediabunny@1.66.4)':
     dependencies:
-      mediabunny: 1.66.3
+      mediabunny: 1.66.4
       turbores: 1.2.6
 
-  '@mediabunny/server@1.66.4(mediabunny@1.66.3)':
+  '@mediabunny/server@1.66.4(mediabunny@1.66.4)':
     dependencies:
-      '@mediabunny/prores': 1.66.4(mediabunny@1.66.3)
-      mediabunny: 1.66.3
+      '@mediabunny/prores': 1.66.4(mediabunny@1.66.4)
+      mediabunny: 1.66.4
       node-av: 6.2.0
     transitivePeerDependencies:
       - werift
@@ -7740,7 +7740,7 @@ snapshots:
 
   media-typer@1.1.1: {}
 
-  mediabunny@1.66.3:
+  mediabunny@1.66.4:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
